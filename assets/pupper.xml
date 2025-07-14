@@ -1,0 +1,155 @@
+<!-- 
+  Pupper Model - Final Corrected Version
+-->
+<mujoco model="pupper_env">
+    <compiler angle="radian" autolimits="true"/>
+
+    <option timestep="0.001" gravity="0 0 -9.81" 
+            iterations="5" ls_iterations="10" noslip_iterations="2">
+        <flag eulerdamp="disable"/>
+    </option>
+
+    <default>
+        <default class="pupper">
+            <joint armature="0.01" damping="0.5239" solimplimit="0.9 0.99 0.001" solreflimit="0.02 1"/>
+            <geom type="mesh" contype="0" conaffinity="0" rgba="0.8 0.6 .4 1"/>
+            <general biastype="affine" gainprm="35.0 0 0" biasprm="0 -35.0 0"/>
+            <default class="pupper/collision/foot">
+                <geom type="sphere" 
+                      contype="1" conaffinity="1" 
+                      group="3"
+                      friction="1.0 0.2 0.1" 
+                      solimp="0.9 0.99 0.001" 
+                      solref="0.02 1"
+                      rgba="1 0 0 1"/>
+            </default>
+        </default>
+    </default>
+
+    <asset>
+        <mesh name="body" file="mesh/body.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Hip_L" file="mesh/Hip_L.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Hip_R" file="mesh/Hip_R.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Upper_Leg_L" file="mesh/Upper_Leg_L.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Upper_Leg_R" file="mesh/Upper_Leg_R.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Lower_Leg_L" file="mesh/Lower_Leg_L.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Lower_Leg_R" file="mesh/Lower_Leg_R.stl" scale="0.001 0.001 0.001"/>
+    </asset>
+
+    <worldbody>
+        <body name="torso" pos="0 0 0.2" childclass="pupper">
+            <freejoint name="root"/>
+            <camera name="track" pos="1.958 -2.348 0.591" xyaxes="0.768 0.641 0.000 -0.101 0.122 0.987" mode="trackcom"/>
+            <inertial pos="0.00109 -0.074 0" mass="0.7833" diaginertia="0.0003688 0.002508 0.002674"/>
+            <geom name="torso_geom" mesh="body"/>
+            <site name="imu_frame" pos="0 0 0" size="0.01" type="sphere" rgba="1 0 0 0.5"/>
+
+            <!-- ==================== Front-Right Leg ==================== -->
+            <body name="leg_front_right" pos="-0.046891 -0.203946 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_front_right" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="fr_block_geom" mesh="Hip_R"/>
+                <body name="upper_leg_front_right" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_front_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="fr_geom" mesh="Upper_Leg_R"/>
+                    <body name="lower_leg_front_right" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_front_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="fr_l2_geom" mesh="Lower_Leg_R"/>
+                        
+                        <!-- FINAL FIX: 將 site 的名字改回 "foot_front_right"，以匹配 Python 環境的需求。-->
+                        <site name="foot_front_right" pos="0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_front_right_collision" class="pupper/collision/foot" 
+                              pos="0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+            
+            <!-- ==================== Front-Left Leg ==================== -->
+            <body name="leg_front_left" pos="0.047109 -0.203946 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_front_left" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="fl_block_geom" mesh="Hip_L"/>
+                <body name="upper_leg_front_left" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_front_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="fl_geom" mesh="Upper_Leg_L"/>
+                    <body name="lower_leg_front_left" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_front_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="fl_l2_geom" mesh="Lower_Leg_L"/>
+                        <site name="foot_front_left" pos="-0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_front_left_collision" class="pupper/collision/foot" 
+                              pos="-0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+            
+            <!-- ==================== Hind-Right Leg ==================== -->
+            <body name="leg_hind_right" pos="-0.046896 -0.004096 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_hind_right" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="br_block_geom" mesh="Hip_R"/>
+                <body name="upper_leg_hind_right" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_hind_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="br_geom" mesh="Upper_Leg_R"/>
+                    <body name="lower_leg_hind_right" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_hind_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="br_l2_geom" mesh="Lower_Leg_R"/>
+                        <site name="foot_hind_right" pos="0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_hind_right_collision" class="pupper/collision/foot" 
+                              pos="0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+            
+            <!-- ==================== Hind-Left Leg ==================== -->
+            <body name="leg_hind_left" pos="0.047104 -0.004096 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_hind_left" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="bl_block_geom" mesh="Hip_L"/>
+                <body name="upper_leg_hind_left" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_hind_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="bl_geom" mesh="Upper_Leg_L"/>
+                    <body name="lower_leg_hind_left" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_hind_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="bl_l2_geom" mesh="Lower_Leg_L"/>
+                        <site name="foot_hind_left" pos="-0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_hind_left_collision" class="pupper/collision/foot" 
+                              pos="-0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <general class="pupper" joint="abduction_front_right"/>
+        <general class="pupper" joint="hip_front_right"/>
+        <general class="pupper" joint="knee_front_right"/>
+        <general class="pupper" joint="abduction_front_left"/>
+        <general class="pupper" joint="hip_front_left"/>
+        <general class="pupper" joint="knee_front_left"/>
+        <general class="pupper" joint="abduction_hind_right"/>
+        <general class="pupper" joint="hip_hind_right"/>
+        <general class="pupper" joint="knee_hind_right"/>
+        <general class="pupper" joint="abduction_hind_left"/>
+        <general class="pupper" joint="hip_hind_left"/>
+        <general class="pupper" joint="knee_hind_left"/>
+    </actuator>
+    
+    <sensor>
+        <!-- Sensor section remains unchanged -->
+    </sensor>
+
+    <keyframe>
+        <key name="home"
+            qpos="0 0 0.2 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+            ctrl="0 0 0 0 0 0 0 0 0 0 0 0" />
+    </keyframe>
+</mujoco>
