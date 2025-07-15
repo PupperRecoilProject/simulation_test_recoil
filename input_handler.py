@@ -34,6 +34,10 @@ class InputHandler:
         if key == glfw.KEY_C:
             self.state.clear_command()
             return
+        if key == glfw.KEY_TAB and action == glfw.PRESS: # 按下 Tab 鍵
+            self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages
+            print(f"切換到顯示頁面: {self.state.display_page + 1} / {self.state.num_display_pages}")
+            return
 
         # --- 運動指令調整 (vx, vy, wz) ---
         step = self.config.velocity_adjust_step

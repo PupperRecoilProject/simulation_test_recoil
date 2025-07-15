@@ -27,6 +27,13 @@ class SimulationState:
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 預設馬達數量
     latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
 
+    # 顯示頁面控制
+    display_page: int = 0
+    # 通常我們會有 2-3 頁來顯示 ONNX 輸入分解
+    # 可以根據你的 ONNX 模型觀察空間的大小來調整這個數字
+    num_display_pages: int = 2 # 假設我們分為兩頁來顯示 ONNX 輸入分解
+
+
     def __post_init__(self):
         """在初始化後，根據設定檔設定初始值。"""
         # 從設定檔中複製初始調校參數
@@ -39,10 +46,10 @@ class SimulationState:
         # 根據設定檔中的馬達數量初始化陣列
         self.latest_action_raw = np.zeros(self.config.num_motors)
         self.latest_final_ctrl = np.zeros(self.config.num_motors)
+        print("✅ SimulationState 初始化完成。")
 
     def reset_control_state(self, sim_time: float):
         """重置與控制相關的狀態。"""
-        self.command.fill(0.0)
         self.control_timer = sim_time
         self.reset_requested = False
         print("✅ 控制狀態已重置。")

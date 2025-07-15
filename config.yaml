@@ -7,12 +7,17 @@ onnx_model_path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
 
 # 核心參數 (Core Parameters)
 num_motors: 12
-physics_timestep: 0.002
+physics_timestep: 0.004
 control_freq: 50.0
-warmup_duration: 3.0
+warmup_duration: 0.0
 
 # 鍵盤控制 (Keyboard Control)
-velocity_adjust_step: 0.25 # m/s or rad/s per key press
+velocity_adjust_step: 0.1 # m/s or rad/s per key press
+
+# ONNX 模型命令輸入縮放因子
+# 順序: [vy 縮放, vx 縮放, wz 縮放]
+command_scaling_factors: [1.0, 1.0, 1.0] 
+
 
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)

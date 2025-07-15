@@ -21,6 +21,7 @@ class AppConfig:
     control_dt: float
     warmup_duration: float
     velocity_adjust_step: float
+    command_scaling_factors: List[float]
     initial_tuning_params: TuningParamsConfig
     observation_recipes: Dict[int, List[str]]
 
@@ -48,6 +49,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         control_dt=1.0 / config_data['control_freq'],
         warmup_duration=config_data['warmup_duration'],
         velocity_adjust_step=config_data['velocity_adjust_step'],
+        command_scaling_factors=config_data['command_scaling_factors'],
         initial_tuning_params=tuning_params,
         observation_recipes=config_data['observation_recipes']
     )

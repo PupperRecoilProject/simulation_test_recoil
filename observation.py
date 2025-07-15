@@ -3,15 +3,17 @@
 import numpy as np
 import mujoco
 import sys
+from config import AppConfig
 
 class ObservationBuilder:
     """根據配方從 MuJoCo 環境中提取並組合觀察向量。"""
-    def __init__(self, recipe: list, data, model, torso_id, default_pose):
+    def __init__(self, recipe: list, data, model, torso_id, default_pose, config: AppConfig):
         self.recipe = recipe
         self.data = data
         self.model = model
         self.torso_id = torso_id
         self.default_pose = default_pose
+        self.config = config
         self._component_generators = self._register_components()
 
         for component in self.recipe:
@@ -70,7 +72,10 @@ class ObservationBuilder:
         return self._rotate_vec_by_quat_inv(np.array([0, 0, -1]), inv_torso_rot)
 
     def _get_commands(self, command, **kwargs):
-        return command * np.array([2., 2., 0.25])
+        """獲取縮放後的使用者指令 (vy, vx, wz)。維度: 3"""
+        # 現在從 config 中獲取縮放因子
+        return command * np.array(self.config.command_scaling_factors) 
+
 
     def _get_joint_positions(self, **kwargs):
         return self.data.qpos[7:] - self.default_pose

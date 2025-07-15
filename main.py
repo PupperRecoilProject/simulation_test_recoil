@@ -36,34 +36,36 @@ def main():
 
     # 3.2 計算基礎觀察維度
     #     我們需要一個 "虛擬" 的 ObservationBuilder 來計算維度
-    temp_obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose)
+    temp_obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     dummy_obs = temp_obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors))
     base_obs_dim = len(dummy_obs)
     del temp_obs_builder
 
     # 3.3 正式初始化策略和觀察建構器
     policy = ONNXPolicy(config, base_obs_dim)
-    obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose)
+    obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
 
     # 4. 初始化渲染器
     #    計算配方中各元件的維度，供 DebugOverlay 使用
-    #    (這部分可以進一步優化，但目前先保持簡單)
-    recipe_dims = {
+    #    這是所有可能作為觀察元件的名稱及其預期維度
+    ALL_OBS_COMPONENT_DIMS = { 
         'z_angular_velocity': 1, 'gravity_vector': 3, 'commands': 3,
         'joint_positions': 12, 'joint_velocities': 12, 'foot_contact_states': 4,
         'linear_velocity': 3, 'angular_velocity': 3,
         'last_action': 12, 'phase_signal': 1
     }
-    used_recipe_dims = {key: recipe_dims[key] for key in recipe if key in recipe_dims}
+    # 只取出當前配方中實際使用的元件及其維度
+    used_recipe_dims = {key: ALL_OBS_COMPONENT_DIMS[key] for key in recipe if key in ALL_OBS_COMPONENT_DIMS}
     overlay = DebugOverlay(recipe, used_recipe_dims)
 
     # 5. 定義重置函式
     def reset_all():
-        """重置所有相關的模擬和控制狀態。"""
+        """重置所有相關的模擬和控制狀態 (不包含清除指令)。"""
         print("\n--- 正在重置模擬 ---")
-        sim.reset()
-        policy.reset()
-        state.reset_control_state(sim.data.time)
+        sim.reset() # 重置 MuJoCo 物理世界
+        policy.reset() # 重置 ONNX 策略的內部狀態 (歷史觀察、上次動作)
+        state.reset_control_state(sim.data.time) # 重置控制計時器和請求狀態
+        # 注意: 此處不再包含 state.command.fill(0.0)
 
     # 首次運行時執行重置
     reset_all()
@@ -81,11 +83,11 @@ def main():
         if state.control_timer <= sim_time:
             # a. 判斷模式
             if sim_time < config.warmup_duration:
-                state.mode_text = "熱身模式 (Warmup)"
+                state.mode_text = "Warmup"
                 action_raw = np.zeros(config.num_motors)
                 onnx_input = np.array([])
             else:
-                state.mode_text = "ONNX 策略模式"
+                state.mode_text = "ONNX Control"
                 # b. 產生觀察
                 base_obs = obs_builder.get_observation(state.command, policy.last_action)
                 # c. 獲取動作
