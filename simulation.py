@@ -51,7 +51,7 @@ class Simulation:
         self.cam.distance, self.cam.elevation, self.cam.azimuth = 2.5, -20, 90
         
         self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
-        self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
+        self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_100)
         print("✅ MuJoCo 模擬環境與視窗初始化完成。")
 
     def register_callbacks(self, keyboard_handler):
