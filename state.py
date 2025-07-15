@@ -1,3 +1,4 @@
+# state.py
 import numpy as np
 from dataclasses import dataclass, field
 from config import AppConfig
@@ -20,19 +21,21 @@ class SimulationState:
     tuning_params: TuningParams = field(init=False)
     reset_requested: bool = False
     control_timer: float = 0.0
-    mode_text: str = "Initializing"
+    
+    # 模式文字，用於顯示在畫面上
+    sim_mode_text: str = "Initializing"
+    
+    # 新增: 當前的輸入模式 (KEYBOARD 或 GAMEPAD)
+    input_mode: str = "KEYBOARD"
     
     # 儲存與 ONNX 和控制相關的最新數據，供 DebugOverlay 使用
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
-    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 預設馬達數量
+    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
     latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
 
     # 顯示頁面控制
     display_page: int = 0
-    # 通常我們會有 2-3 頁來顯示 ONNX 輸入分解
-    # 可以根據你的 ONNX 模型觀察空間的大小來調整這個數字
-    num_display_pages: int = 2 # 假設我們分為兩頁來顯示 ONNX 輸入分解
-
+    num_display_pages: int = 2
 
     def __post_init__(self):
         """在初始化後，根據設定檔設定初始值。"""
@@ -58,3 +61,10 @@ class SimulationState:
         """清除使用者運動指令。"""
         self.command.fill(0.0)
         print(f"運動指令已清除。目前指令: {self.command}")
+
+    def toggle_input_mode(self, new_mode: str):
+        """切換輸入模式並清除當前指令以避免衝突。"""
+        if self.input_mode != new_mode:
+            self.input_mode = new_mode
+            self.clear_command() # 切換模式時清空指令，防止行為殘留
+            print(f"模式已切換至: {self.input_mode}")

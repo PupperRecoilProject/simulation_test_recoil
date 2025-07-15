@@ -11,18 +11,30 @@ physics_timestep: 0.004
 control_freq: 50.0
 warmup_duration: 0.0
 
-# 鍵盤控制 (Keyboard Control)
-velocity_adjust_step: 0.1 # m/s or rad/s per key press
-
 # ONNX 模型命令輸入縮放因子
 # 順序: [vy 縮放, vx 縮放, wz 縮放]
 command_scaling_factors: [1.0, 1.0, 1.0] 
 
+# ==================================
+# === 輸入控制設定 (Input Control Settings)
+# ==================================
+keyboard_velocity_adjust_step: 0.1 # m/s or rad/s per key press
+
+gamepad_sensitivity:
+  vx: 1.0   # 前後速度靈敏度 (左搖桿 Y)
+  vy: 1.0   # 左右速度靈敏度 (左搖桿 X)
+  wz: -1.5  # 轉向角速度靈敏度 (右搖桿 X), 負值表示右推右轉
+
+param_adjust_steps:
+  kp: 5.0
+  kd: 0.1
+  action_scale: 0.05
+  bias: 5.0
 
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
-# 這些值會在程式啟動時載入，但可以在執行時透過鍵盤即時修改
+# 這些值會在程式啟動時載入，但可以在執行時透過鍵盤或搖桿即時修改
 initial_tuning_params:
   kp: 35.0
   kd: 0.50

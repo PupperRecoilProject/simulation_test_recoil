@@ -1,6 +1,7 @@
+# config.py
 import yaml
-from dataclasses import dataclass, field
-from typing import Dict, List, Any
+from dataclasses import dataclass
+from typing import Dict, List
 
 @dataclass
 class TuningParamsConfig:
@@ -20,8 +21,13 @@ class AppConfig:
     control_freq: float
     control_dt: float
     warmup_duration: float
-    velocity_adjust_step: float
     command_scaling_factors: List[float]
+    
+    # 輸入控制相關設定
+    keyboard_velocity_adjust_step: float
+    gamepad_sensitivity: Dict[str, float]
+    param_adjust_steps: Dict[str, float]
+
     initial_tuning_params: TuningParamsConfig
     observation_recipes: Dict[int, List[str]]
 
@@ -31,7 +37,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     """
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            config_data = yaml.safe_load(f)
+            config_data = yaml.safe_load(f) # 讀取並解析 YAML 檔案
     except FileNotFoundError:
         raise FileNotFoundError(f"設定檔 '{path}' 不存在。請確保檔案路徑正確。")
     except Exception as e:
@@ -46,10 +52,15 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         num_motors=config_data['num_motors'],
         physics_timestep=config_data['physics_timestep'],
         control_freq=config_data['control_freq'],
-        control_dt=1.0 / config_data['control_freq'],
+        control_dt=1.0 / config_data['control_freq'], # 自動計算控制時間間隔
         warmup_duration=config_data['warmup_duration'],
-        velocity_adjust_step=config_data['velocity_adjust_step'],
         command_scaling_factors=config_data['command_scaling_factors'],
+        
+        # 載入新的輸入設定
+        keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
+        gamepad_sensitivity=config_data['gamepad_sensitivity'],
+        param_adjust_steps=config_data['param_adjust_steps'],
+        
         initial_tuning_params=tuning_params,
         observation_recipes=config_data['observation_recipes']
     )
@@ -57,12 +68,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     print("✅ 設定檔載入成功。")
     return config_obj
 
-# 允許直接執行此檔案來測試設定檔是否能被正確載入和解析
 if __name__ == '__main__':
-    config = load_config()
+    config = load_config() # 執行此檔案時進行測試
     print("--- 載入的設定 ---")
     print(config)
-    print("\n存取範例:")
-    print(f"  模型路徑: {config.onnx_model_path}")
-    print(f"  初始 Kp: {config.initial_tuning_params.kp}")
-    print(f"  48維配方: {config.observation_recipes[48]}")
