@@ -8,30 +8,31 @@ from policy import ONNXPolicy
 from observation import ObservationBuilder
 from rendering import DebugOverlay
 from keyboard_input_handler import KeyboardInputHandler
-from xbox_input_handler import XboxInputHandler
+from xbox_input_handler import XboxInputHandler # <--- 恢復導入
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
     print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
 
-    config = load_config() # 1. 載入設定
-    state = SimulationState(config) # 2. 初始化核心組件
+    config = load_config()
+    state = SimulationState(config)
     sim = Simulation(config)
     
-    # 3. 初始化輸入處理器
+    # --- 恢復正常初始化流程 ---
     keyboard_handler = KeyboardInputHandler(state)
-    sim.register_callbacks(keyboard_handler) # 註冊鍵盤回調
-    xbox_handler = XboxInputHandler(state)
+    sim.register_callbacks(keyboard_handler)
     
+    xbox_handler = XboxInputHandler(state) # <--- 恢復
+
     if xbox_handler.is_available():
-        state.toggle_input_mode("GAMEPAD") # 如果搖桿可用，預設為搖桿模式
+        state.toggle_input_mode("GAMEPAD") # <--- 恢復
         print("🎮 搖桿已就緒，預設為搖桿控制模式。按 'M' 鍵切換回鍵盤。")
     else:
         print("⚠️ 未偵測到搖桿，將使用鍵盤控制模式。")
-
-    # 4. 智慧觀察與策略初始化
+    # --- 恢復結束 ---
+    
     try:
-        policy = ONNXPolicy(config, 1) # 暫時用 base_obs_dim=1 初始化來讀取模型維度
+        policy = ONNXPolicy(config, 1)
         model_input_dim = policy.model_input_dim
     except Exception as e:
         sys.exit(f"❌ 策略初始化失敗: {e}")
@@ -45,31 +46,28 @@ def main():
     dummy_obs = temp_obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors))
     base_obs_dim = len(dummy_obs)
     del temp_obs_builder
-    del policy # 刪除臨時策略實例
+    del policy
 
     policy = ONNXPolicy(config, base_obs_dim)
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
 
-    # 5. 初始化渲染器
     ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 'phase_signal':1}
     used_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
     overlay = DebugOverlay(recipe, used_dims)
 
     def reset_all():
-        """重置所有相關的模擬和控制狀態。"""
         print("\n--- 正在重置模擬 ---")
         sim.reset()
         policy.reset()
         state.reset_control_state(sim.data.time)
         state.clear_command()
 
-    reset_all() # 首次運行時執行重置
+    reset_all()
     print("\n--- 模擬開始 ---")
 
-    # 6. 主模擬迴圈
     while not sim.should_close():
         if state.input_mode == "GAMEPAD":
-            xbox_handler.update_state() # 輪詢搖桿狀態
+            xbox_handler.update_state() # <--- 恢復
 
         if state.reset_requested:
             reset_all()
@@ -91,12 +89,11 @@ def main():
             state.latest_action_raw, state.latest_final_ctrl = action_raw, final_ctrl
             state.control_timer += config.control_dt
 
-        sim.step(state) # 物理步進
-        sim.render(state, overlay) # 渲染 (包含 poll_events)
+        sim.step(state)
+        sim.render(state, overlay)
 
-    # 7. 清理
     sim.close()
-    xbox_handler.close()
+    xbox_handler.close() # <--- 恢復
     print("\n模擬結束，程式退出。")
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
+# policy.py
 import numpy as np
 import onnxruntime as ort
 import sys
+import os # <--- 導入 os 模組來處理路徑
 from collections import deque
 from config import AppConfig
 
@@ -20,8 +22,31 @@ class ONNXPolicy:
         self.base_obs_dim = base_obs_dim
         
         print(f"正在載入 ONNX 模型: {config.onnx_model_path}")
+
+        # --- 開始修改：啟用 ONNX 優化模型快取 ---
+        sess_options = ort.SessionOptions()
+
+        # 產生優化後模型的儲存路徑，例如： models/my_model.onnx -> models/my_model.optimized.ort
+        cache_path = os.path.splitext(config.onnx_model_path)[0] + ".optimized.ort"
+        
+        # 檢查快取檔案是否存在
+        if os.path.exists(cache_path):
+            print(f"⚡️ 發現優化模型快取，將從 '{cache_path}' 快速載入。")
+        else:
+            print(f"🐢 首次載入，將創建優化模型快取於 '{cache_path}' (可能需要一些時間)...")
+
+        sess_options.optimized_model_filepath = cache_path
+        # 啟用所有可用的 CPU 優化
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # --- 結束修改 ---
+
         try:
-            self.sess = ort.InferenceSession(config.onnx_model_path, providers=['CPUExecutionProvider'])
+            # 將 session options 傳入 InferenceSession
+            self.sess = ort.InferenceSession(
+                config.onnx_model_path, 
+                sess_options=sess_options, # <--- 使用我們建立的選項
+                providers=['CPUExecutionProvider']
+            )
         except Exception as e:
             sys.exit(f"❌ 錯誤: 無法載入 ONNX 模型 '{config.onnx_model_path}': {e}")
 
@@ -33,7 +58,6 @@ class ONNXPolicy:
 
         self._determine_history_length()
 
-        # 初始化觀察歷史佇列和上一個動作
         self.obs_history = deque(
             [np.zeros(self.base_obs_dim, dtype=np.float32)] * self.history_length, 
             maxlen=self.history_length
@@ -54,7 +78,7 @@ class ONNXPolicy:
         else:
             print("🤖 模型僅使用當前觀察 (歷史長度 = 1)。")
 
-    def get_action(self, base_obs: np.ndarray) -> np.ndarray:
+    def get_action(self, base_obs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         根據當前的基礎觀察，更新歷史並執行模型推論，回傳動作。
 
@@ -62,18 +86,14 @@ class ONNXPolicy:
             base_obs (np.ndarray): 由 ObservationBuilder 產生的當前幀基礎觀察。
 
         Returns:
-            np.ndarray: ONNX 模型輸出的原始動作。
+            tuple[np.ndarray, np.ndarray]: (模型輸入向量, 模型輸出的原始動作)
         """
-        # 將最新的觀察加入歷史佇列
         self.obs_history.append(base_obs)
         
-        # 將歷史佇列中的所有觀察拼接成單一向量，作為模型輸入
         onnx_input = np.concatenate(list(self.obs_history)).reshape(1, -1)
         
-        # 執行推論
         action_raw = self.sess.run([self.output_name], {self.input_name: onnx_input})[0].flatten()
         
-        # 更新 last_action，供下一個時間步的觀察使用
         self.last_action[:] = action_raw
         
         return onnx_input, action_raw
