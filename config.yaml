@@ -7,7 +7,7 @@ onnx_model_path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
 
 # 核心參數 (Core Parameters)
 num_motors: 12
-physics_timestep: 0.004
+physics_timestep: 0.002 # <-- 建議修改：提高模擬精度以增強穩定性
 control_freq: 50.0
 warmup_duration: 0.0
 
@@ -34,7 +34,6 @@ param_adjust_steps:
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
-# 這些值會在程式啟動時載入，但可以在執行時透過鍵盤或搖桿即時修改
 initial_tuning_params:
   kp: 35.0
   kd: 0.50
@@ -44,8 +43,6 @@ initial_tuning_params:
 # ==================================
 # === 觀察配方 (Observation Recipes)
 # ==================================
-# Key: ONNX 模型期望的輸入維度
-# Value: 構成該維度的觀察元件列表
 observation_recipes:
   31:
     - 'z_angular_velocity'
@@ -61,3 +58,13 @@ observation_recipes:
     - 'joint_positions'
     - 'joint_velocities'
     - 'last_action'
+
+# ================================================================= #
+# === 懸浮控制器設定 (Floating Controller Settings) - 精細調校版 ===
+# ================================================================= #
+floating_controller:
+  target_height: 0.35     # 懸浮的目標高度 (米)
+  kp_vertical: 80.0       # 垂直 P (再次降低以求平滑)
+  kd_vertical: 18.0       # 垂直 D (保持與Kp的關係)
+  kp_attitude: 20.0       # 姿態 P (再次降低)
+  kd_attitude: 4.0        # 姿態 D (相應調整)

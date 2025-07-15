@@ -8,7 +8,8 @@ from policy import ONNXPolicy
 from observation import ObservationBuilder
 from rendering import DebugOverlay
 from keyboard_input_handler import KeyboardInputHandler
-from xbox_input_handler import XboxInputHandler # <--- 恢復導入
+from xbox_input_handler import XboxInputHandler
+from floating_controller import FloatingController
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
@@ -18,18 +19,19 @@ def main():
     state = SimulationState(config)
     sim = Simulation(config)
     
-    # --- 恢復正常初始化流程 ---
+    floating_controller = FloatingController(config, sim.model, sim.data)
+    state.floating_controller_ref = floating_controller
+
     keyboard_handler = KeyboardInputHandler(state)
     sim.register_callbacks(keyboard_handler)
+    xbox_handler = XboxInputHandler(state)
     
-    xbox_handler = XboxInputHandler(state) # <--- 恢復
-
     if xbox_handler.is_available():
-        state.toggle_input_mode("GAMEPAD") # <--- 恢復
-        print("🎮 搖桿已就緒，預設為搖桿控制模式。按 'M' 鍵切換回鍵盤。")
+        state.input_mode = "GAMEPAD"
+        print("🎮 搖桿已就緒，預設為搖桿控制模式。按 'M' 鍵切換。")
     else:
-        print("⚠️ 未偵測到搖桿，將使用鍵盤控制模式。")
-    # --- 恢復結束 ---
+        state.input_mode = "KEYBOARD"
+        print("⚠️ 未偵測到搖桿，使用鍵盤控制模式。")
     
     try:
         policy = ONNXPolicy(config, 1)
@@ -45,8 +47,7 @@ def main():
     temp_obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     dummy_obs = temp_obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors))
     base_obs_dim = len(dummy_obs)
-    del temp_obs_builder
-    del policy
+    del temp_obs_builder, policy
 
     policy = ONNXPolicy(config, base_obs_dim)
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
@@ -59,6 +60,12 @@ def main():
         print("\n--- 正在重置模擬 ---")
         sim.reset()
         policy.reset()
+        
+        # === 修改點：從 data.eq_active 讀取和寫入 ===
+        if floating_controller.is_functional:
+            sim.data.eq_active[floating_controller.weld_id] = 0
+
+        state.control_mode = "WALKING"
         state.reset_control_state(sim.data.time)
         state.clear_command()
 
@@ -67,10 +74,14 @@ def main():
 
     while not sim.should_close():
         if state.input_mode == "GAMEPAD":
-            xbox_handler.update_state() # <--- 恢復
+            xbox_handler.update_state()
 
         if state.reset_requested:
             reset_all()
+
+        torso_xpos = sim.data.body('torso').xpos
+        state.latest_pos = torso_xpos
+        state.latest_quat = sim.data.body('torso').xquat
 
         sim_time = sim.data.time
         if state.control_timer <= sim_time:
@@ -78,7 +89,11 @@ def main():
                 state.sim_mode_text = "Warmup"
                 action_raw, onnx_input = np.zeros(config.num_motors), np.array([])
             else:
-                state.sim_mode_text = "ONNX Control"
+                if state.control_mode == "WALKING":
+                    state.sim_mode_text = "ONNX Control"
+                else: # FLOATING
+                    state.sim_mode_text = "Floating (Fixed)"
+
                 base_obs = obs_builder.get_observation(state.command, policy.last_action)
                 onnx_input, action_raw = policy.get_action(base_obs)
             
@@ -86,14 +101,16 @@ def main():
             sim.apply_control(final_ctrl, state.tuning_params)
 
             state.latest_onnx_input = onnx_input.flatten()
-            state.latest_action_raw, state.latest_final_ctrl = action_raw, final_ctrl
+            state.latest_action_raw = action_raw
+            state.latest_final_ctrl = final_ctrl
+            
             state.control_timer += config.control_dt
 
         sim.step(state)
         sim.render(state, overlay)
 
     sim.close()
-    xbox_handler.close() # <--- 恢復
+    xbox_handler.close()
     print("\n模擬結束，程式退出。")
 
 if __name__ == "__main__":

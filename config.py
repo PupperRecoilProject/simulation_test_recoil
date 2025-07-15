@@ -12,6 +12,15 @@ class TuningParamsConfig:
     bias: float
 
 @dataclass
+class FloatingConfig:
+    """從設定檔載入的懸浮控制器參數資料類別。"""
+    target_height: float
+    kp_vertical: float
+    kd_vertical: float
+    kp_attitude: float
+    kd_attitude: float
+
+@dataclass
 class AppConfig:
     """儲存所有應用程式設定的資料類別。"""
     mujoco_model_file: str
@@ -23,13 +32,13 @@ class AppConfig:
     warmup_duration: float
     command_scaling_factors: List[float]
     
-    # 輸入控制相關設定
     keyboard_velocity_adjust_step: float
     gamepad_sensitivity: Dict[str, float]
     param_adjust_steps: Dict[str, float]
 
     initial_tuning_params: TuningParamsConfig
     observation_recipes: Dict[int, List[str]]
+    floating_controller: FloatingConfig
 
 def load_config(path: str = "config.yaml") -> AppConfig:
     """
@@ -37,14 +46,14 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     """
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            config_data = yaml.safe_load(f) # 讀取並解析 YAML 檔案
+            config_data = yaml.safe_load(f)
     except FileNotFoundError:
         raise FileNotFoundError(f"設定檔 '{path}' 不存在。請確保檔案路徑正確。")
     except Exception as e:
         raise IOError(f"讀取或解析設定檔 '{path}' 時發生錯誤: {e}")
 
-    # 將字典轉換為 dataclass 物件，提供更好的型別提示和屬性存取
     tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
+    floating_cfg = FloatingConfig(**config_data['floating_controller'])
     
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
@@ -52,23 +61,18 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         num_motors=config_data['num_motors'],
         physics_timestep=config_data['physics_timestep'],
         control_freq=config_data['control_freq'],
-        control_dt=1.0 / config_data['control_freq'], # 自動計算控制時間間隔
+        control_dt=1.0 / config_data['control_freq'],
         warmup_duration=config_data['warmup_duration'],
         command_scaling_factors=config_data['command_scaling_factors'],
         
-        # 載入新的輸入設定
         keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
         gamepad_sensitivity=config_data['gamepad_sensitivity'],
         param_adjust_steps=config_data['param_adjust_steps'],
         
         initial_tuning_params=tuning_params,
-        observation_recipes=config_data['observation_recipes']
+        observation_recipes=config_data['observation_recipes'],
+        floating_controller=floating_cfg
     )
     
     print("✅ 設定檔載入成功。")
     return config_obj
-
-if __name__ == '__main__':
-    config = load_config() # 執行此檔案時進行測試
-    print("--- 載入的設定 ---")
-    print(config)
