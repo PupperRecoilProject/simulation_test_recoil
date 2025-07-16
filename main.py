@@ -14,7 +14,6 @@ from serial_communicator import SerialCommunicator
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
-    # 必須先導入 Pygame 相關的類別，讓它的歡迎訊息先打印
     from xbox_controller import XboxController 
     print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
     
@@ -24,19 +23,14 @@ def main():
     
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
-
     serial_comm = SerialCommunicator()
-
     keyboard_handler = KeyboardInputHandler(state)
     keyboard_handler.register_callbacks(sim.window)
-
     xbox_handler = XboxInputHandler(state)
     if xbox_handler.is_available():
         state.toggle_input_mode("GAMEPAD")
     
-    # --- 策略初始化 ---
     try:
-        # 假設一個維度來獲取配方，然後計算基礎觀察維度
         assumed_dim = next(iter(config.observation_recipes))
         recipe = config.observation_recipes[assumed_dim]
     except StopIteration:
@@ -44,16 +38,13 @@ def main():
 
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-    
     policy = ONNXPolicy(config, base_obs_dim)
     
-    # 驗證模型維度是否與配方產生的維度一致
     if policy.model_input_dim != base_obs_dim:
         if policy.model_input_dim in config.observation_recipes:
             print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
             recipe = config.observation_recipes[policy.model_input_dim]
             obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
-            # 重新計算 base_obs_dim 並重新初始化 policy 以確保歷史堆疊長度正確
             base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
             policy = ONNXPolicy(config, base_obs_dim)
         else:
@@ -69,24 +60,21 @@ def main():
         policy.reset()
         if state.control_mode == "FLOATING":
             state.set_control_mode("WALKING")
+        elif state.control_mode == "JOINT_TEST":
+            state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
 
     reset_all()
-    print("\n--- 模擬開始 (F: 懸浮, T: 序列埠, M: 輸入模式) ---")
+    print("\n--- 模擬開始 (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式) ---")
 
     while not sim.should_close():
-        if state.input_mode == "GAMEPAD":
-            xbox_handler.update_state()
-
-        if state.reset_requested:
-            reset_all()
+        if state.input_mode == "GAMEPAD": xbox_handler.update_state()
+        if state.reset_requested: reset_all()
 
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()
-        if serial_comm.is_connected:
-            state.serial_latest_messages = serial_comm.get_latest_messages()
-
+        if serial_comm.is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
         if state.serial_command_to_send:
             serial_comm.send_command(state.serial_command_to_send)
             state.serial_command_to_send = ""
@@ -94,16 +82,21 @@ def main():
         if state.control_mode != "SERIAL_MODE":
             sim_time = sim.data.time
             if state.control_timer <= sim_time:
-                state.sim_mode_text = state.control_mode
-                base_obs = obs_builder.get_observation(state.command, policy.last_action)
-                onnx_input, action_raw = policy.get_action(base_obs)
+                final_ctrl = np.zeros(config.num_motors)
                 
-                # --- 確保使用正確的 action_scale ---
-                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
+                if state.control_mode == "WALKING" or state.control_mode == "FLOATING":
+                    state.sim_mode_text = state.control_mode
+                    base_obs = obs_builder.get_observation(state.command, policy.last_action)
+                    onnx_input, action_raw = policy.get_action(base_obs)
+                    final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
+                    state.latest_onnx_input = onnx_input.flatten()
+                    state.latest_action_raw = action_raw
+                
+                elif state.control_mode == "JOINT_TEST":
+                    state.sim_mode_text = "Joint Test"
+                    final_ctrl = sim.default_pose + state.joint_test_offsets
                 
                 sim.apply_control(final_ctrl, state.tuning_params)
-                state.latest_onnx_input = onnx_input.flatten()
-                state.latest_action_raw = action_raw
                 state.latest_final_ctrl = final_ctrl
                 state.control_timer += config.control_dt
 

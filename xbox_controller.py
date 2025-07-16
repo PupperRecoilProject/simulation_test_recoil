@@ -51,7 +51,7 @@ class XboxController:
                 # Axis 3: 右搖桿 Y (-1 to 1, 上為負)
                 if event.axis == 0: self.state['left_analog_x'] = event.value
                 elif event.axis == 1: self.state['left_analog_y'] = event.value
-                elif event.axis == 4: self.state['right_analog_x'] = event.value
+                elif event.axis == 2: self.state['right_analog_x'] = event.value
                 elif event.axis == 3: self.state['right_analog_y'] = event.value
 
             elif event.type == pygame.JOYBUTTONDOWN:

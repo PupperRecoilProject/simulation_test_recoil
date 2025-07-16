@@ -4,7 +4,7 @@ from state import SimulationState
 
 class KeyboardInputHandler:
     """
-    處理所有鍵盤輸入事件，包括對序列埠模式的特殊處理。
+    處理所有鍵盤輸入事件，包括對序列埠和關節測試模式的特殊處理。
     """
     def __init__(self, state: SimulationState):
         self.state = state
@@ -21,8 +21,8 @@ class KeyboardInputHandler:
             self.state.serial_command_buffer += chr(codepoint)
 
     def key_callback(self, window, key, scancode, action, mods):
-        """處理按鍵事件，包括普通按鍵和特殊按鍵如 Enter, Backspace。"""
-        # --- 處理 SERIAL_MODE 下的按鍵 ---
+        """處理按鍵事件，根據不同模式分派邏輯。"""
+        # --- 模式 1: 序列埠模式 ---
         if self.state.control_mode == "SERIAL_MODE":
             if action == glfw.PRESS or action == glfw.REPEAT:
                 if key == glfw.KEY_ENTER:
@@ -34,9 +34,25 @@ class KeyboardInputHandler:
                     self.state.set_control_mode("WALKING")
             return
 
-        # --- 處理非 SERIAL_MODE 下的按鍵 ---
-        if action != glfw.PRESS:
+        # --- 模式 2: 關節測試模式 ---
+        if self.state.control_mode == "JOINT_TEST":
+            if action == glfw.PRESS:
+                if key == glfw.KEY_1:
+                    self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
+                elif key == glfw.KEY_2:
+                    self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
+                elif key == glfw.KEY_UP:
+                    self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
+                elif key == glfw.KEY_DOWN:
+                    self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
+                elif key == glfw.KEY_C:
+                    self.state.joint_test_offsets.fill(0.0)
+                elif key == glfw.KEY_G: # 使用 G 鍵退出測試模式
+                    self.state.set_control_mode("WALKING")
             return
+
+        # --- 模式 3: 正常模式 (WALKING/FLOATING) ---
+        if action != glfw.PRESS: return
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
         if key == glfw.KEY_R: self.state.reset_requested = True; return
@@ -47,9 +63,11 @@ class KeyboardInputHandler:
             new_mode = "FLOATING" if self.state.control_mode == "WALKING" else "WALKING"
             self.state.set_control_mode(new_mode)
             return
-
         if key == glfw.KEY_T:
             self.state.set_control_mode("SERIAL_MODE")
+            return
+        if key == glfw.KEY_G: # 使用 G 鍵進入測試模式
+            self.state.set_control_mode("JOINT_TEST")
             return
 
         if self.state.input_mode != "KEYBOARD": return

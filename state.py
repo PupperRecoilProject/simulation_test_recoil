@@ -28,7 +28,7 @@ class SimulationState:
     # --- 模式狀態 ---
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
-    control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE"
+    control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE", "JOINT_TEST"
 
     # --- UI & 跨模組資料 ---
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -44,19 +44,21 @@ class SimulationState:
     serial_command_to_send: str = ""
     serial_latest_messages: list = field(default_factory=list)
 
+    # --- 新增：關節手動測試模式相關狀態 ---
+    joint_test_index: int = 0  # 當前選擇要測試的關節索引 (0-11)
+    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 12個關節的手動偏移量
+
     # --- 物件引用 ---
     floating_controller_ref: 'FloatingController' = None
 
     def __post_init__(self):
         """在初始化後，根據設定檔設定初始值。"""
-        # 從設定檔中複製初始調校參數到動態的 tuning_params
         self.tuning_params = TuningParams(
             kp=self.config.initial_tuning_params.kp,
             kd=self.config.initial_tuning_params.kd,
             action_scale=self.config.initial_tuning_params.action_scale,
             bias=self.config.initial_tuning_params.bias
         )
-        # 根據設定檔中的馬達數量初始化陣列
         self.latest_action_raw = np.zeros(self.config.num_motors)
         self.latest_final_ctrl = np.zeros(self.config.num_motors)
         print("✅ SimulationState 初始化完成。")
@@ -80,15 +82,18 @@ class SimulationState:
         """切換主控制模式，並呼叫對應的啟用/禁用函式。"""
         if self.control_mode == new_mode: return
 
-        # --- 離開舊模式 ---
+        # --- 離開舊模式時的清理工作 ---
         if self.control_mode == "FLOATING":
             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.disable()
-
-        # --- 進入新模式 ---
+        
+        # --- 進入新模式的準備工作 ---
         self.control_mode = new_mode
         print(f"控制模式已切換至: {self.control_mode}")
 
         if new_mode == "FLOATING":
             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.enable(self.latest_pos)
+        elif new_mode == "JOINT_TEST":
+            # 進入關節測試模式時，清空之前的手動偏移量
+            self.joint_test_offsets.fill(0.0)
