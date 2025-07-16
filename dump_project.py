@@ -17,7 +17,7 @@ EXCLUDE_EXTENSIONS = {
     '.img', '.iso', '.zip', '.tar', '.gz', '.rar',
     '.pdf', '.docx', '.xlsx', '.pptx',
     '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
-    '.lock', '.log', '.swp', '.swo'
+    '.lock', '.log', '.swp', '.swo', '.stl', '.onnx'
 }
 
 # 3. (可選) 如果你只想包含特定類型的檔案，可以設定這個清單
