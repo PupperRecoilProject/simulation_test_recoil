@@ -1,6 +1,9 @@
 import os
 import sys
 
+# (如需產生目錄樹結構，請在命令提示字元或 PowerShell 執行: tree /F /A > tree_structure.txt)
+
+
 # --- 組態設定 (可依需求修改) ---
 
 # 1. 要忽略的資料夾名稱 (使用集合 set 查詢速度較快)

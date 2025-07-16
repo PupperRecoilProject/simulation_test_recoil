@@ -29,7 +29,8 @@ class SimulationState:
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
     control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE", "JOINT_TEST"
-
+    single_step_mode: bool = False # 是否啟用單步執行模式
+    
     # --- UI & 跨模組資料 ---
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))

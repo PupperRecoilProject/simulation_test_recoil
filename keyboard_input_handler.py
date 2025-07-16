@@ -53,6 +53,20 @@ class KeyboardInputHandler:
 
         # --- 模式 3: 正常模式 (WALKING/FLOATING) ---
         if action != glfw.PRESS: return
+        
+        # --- 新增：P 鍵切換暫停/播放 ---
+        if key == glfw.KEY_P:
+            self.state.single_step_mode = not self.state.single_step_mode
+            status = "PAUSED (Press N for next step)" if self.state.single_step_mode else "PLAYING"
+            print(f"\n--- SIMULATION {status} ---")
+            return
+
+        # --- 新增：N 鍵，僅在單步模式下有效 ---
+        if self.state.single_step_mode and key == glfw.KEY_N:
+            # 我們將在 main.py 中處理這個事件，這裡只需要一個標記
+            self.state.execute_one_step = True
+            return
+        
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
         if key == glfw.KEY_R: self.state.reset_requested = True; return
@@ -92,6 +106,6 @@ class KeyboardInputHandler:
         elif key == glfw.KEY_P: params.bias += p_step['bias']
         elif key == glfw.KEY_SEMICOLON: params.bias -= p_step['bias']
         
-        params.kp = max(0, params.kp)
-        params.kd = max(0, params.kd)
+        #params.kp = max(0, params.kp)
+        #params.kd = max(0, params.kd)
         params.action_scale = max(0, params.action_scale)
