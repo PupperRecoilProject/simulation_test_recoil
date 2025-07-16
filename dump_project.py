@@ -15,7 +15,7 @@ EXCLUDE_DIRS = {
 EXCLUDE_EXTENSIONS = {
     '.pyc', '.pyo', '.o', '.so', '.dll', '.exe',
     '.img', '.iso', '.zip', '.tar', '.gz', '.rar',
-    '.pdf', '.docx', '.xlsx', '.pptx',
+    '.pdf', '.docx', '.xlsx', '.pptx', '.ort',
     '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
     '.lock', '.log', '.swp', '.swo', '.stl', '.onnx'
 }
