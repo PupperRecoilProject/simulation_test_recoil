@@ -3,7 +3,6 @@ import sys
 import numpy as np
 import mujoco
 
-# 導入我們自己建立的所有模組
 from config import load_config
 from state import SimulationState
 from simulation import Simulation
@@ -17,7 +16,6 @@ from serial_communicator import SerialCommunicator
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
-    # 必須先導入 Pygame 相關的類別，讓它的歡迎訊息先打印
     from xbox_controller import XboxController 
     print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
     
@@ -25,7 +23,6 @@ def main():
     state = SimulationState(config)
     sim = Simulation(config)
     
-    # 初始化所有控制器和處理器
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
 
@@ -38,9 +35,7 @@ def main():
     if xbox_handler.is_available():
         state.toggle_input_mode("GAMEPAD")
     
-    # --- 策略初始化 ---
     try:
-        # 假設一個維度來獲取配方，然後計算基礎觀察維度
         assumed_dim = next(iter(config.observation_recipes))
         recipe = config.observation_recipes[assumed_dim]
     except StopIteration:
@@ -48,10 +43,8 @@ def main():
 
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-    
     policy = ONNXPolicy(config, base_obs_dim)
     
-    # 驗證模型維度是否與配方產生的維度一致
     if policy.model_input_dim != base_obs_dim:
         if policy.model_input_dim in config.observation_recipes:
             print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
@@ -78,27 +71,21 @@ def main():
         state.clear_command()
 
     reset_all()
-    print("\n--- 模擬開始 (P: 暫停/播放, N: 下一步) ---")
+    print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
     print("    (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式)")
 
-    # 在主迴圈外初始化 execute_one_step
     state.execute_one_step = False
 
     while not sim.should_close():
-        # --- 單步模式的核心邏輯 ---
-        # 如果是單步模式，且沒有收到“下一步”的信號，就跳過所有計算，只渲染
         if state.single_step_mode and not state.execute_one_step:
-            sim.render(state, overlay) # 持續渲染以保持視窗響應
-            continue # 跳過本輪迴圈的剩餘部分
-        # 如果收到了“下一步”的信號，執行完後立刻清除信號
+            sim.render(state, overlay)
+            continue
         if state.execute_one_step:
             state.execute_one_step = False
-        # --- 邏輯結束 ---
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         if state.reset_requested: reset_all()
 
-        # --- 更新 state 中的通用資訊 ---
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()
         if serial_comm.is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
@@ -106,46 +93,34 @@ def main():
             serial_comm.send_command(state.serial_command_to_send)
             state.serial_command_to_send = ""
 
-        # --- 主控制與物理模擬 ---
         if state.control_mode != "SERIAL_MODE":
-            
-            # 打印當前步驟的標題，方便在終端機中觀察
             if state.single_step_mode:
                 print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
-            # 1. 觀察 (Sensing)
             base_obs = obs_builder.get_observation(state.command, policy.last_action)
-            
             if state.single_step_mode:
-                # 在單步模式下，我們直接從 data 中提取 joint_positions 來打印，以確保是最新值
                 current_joint_angles = sim.data.qpos[7:]
                 current_joint_positions = current_joint_angles - sim.default_pose
                 print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
 
-            # 2. 決策 (Policy)
             onnx_input, action_raw = policy.get_action(base_obs)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_raw
-            
             if state.single_step_mode:
                  print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
-            # 3. 命令 (Action)
             if state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
-            else: # WALKING or FLOATING
+            else:
                 state.sim_mode_text = state.control_mode
                 final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
             state.latest_final_ctrl = final_ctrl
-            
             if state.single_step_mode:
                 print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
 
-            # 4. 執行 (Execution)
             sim.apply_control(final_ctrl, state.tuning_params)
             
-            # 步進一個控制週期的時間
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
@@ -153,11 +128,9 @@ def main():
             if state.single_step_mode:
                 next_joint_angles = sim.data.qpos[7:]
                 print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
-
-        # 渲染畫面
+        
         sim.render(state, overlay)
 
-    # 清理所有資源
     sim.close()
     xbox_handler.close()
     serial_comm.close()

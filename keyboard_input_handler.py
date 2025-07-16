@@ -22,6 +22,20 @@ class KeyboardInputHandler:
 
     def key_callback(self, window, key, scancode, action, mods):
         """處理按鍵事件，根據不同模式分派邏輯。"""
+        # --- 全局控制按鍵 (在任何模式下都有效) ---
+        if action == glfw.PRESS:
+            # --- SPACE 鍵切換暫停/播放 ---
+            if key == glfw.KEY_SPACE:
+                self.state.single_step_mode = not self.state.single_step_mode
+                status = "PAUSED (Press N for next step)" if self.state.single_step_mode else "PLAYING"
+                print(f"\n--- SIMULATION {status} ---")
+                return # 處理完畢，直接返回
+
+            # --- N 鍵，僅在單步模式下有效 ---
+            if self.state.single_step_mode and key == glfw.KEY_N:
+                self.state.execute_one_step = True
+                return # 處理完畢，直接返回
+
         # --- 模式 1: 序列埠模式 ---
         if self.state.control_mode == "SERIAL_MODE":
             if action == glfw.PRESS or action == glfw.REPEAT:
@@ -37,36 +51,16 @@ class KeyboardInputHandler:
         # --- 模式 2: 關節測試模式 ---
         if self.state.control_mode == "JOINT_TEST":
             if action == glfw.PRESS:
-                if key == glfw.KEY_1:
-                    self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
-                elif key == glfw.KEY_2:
-                    self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
-                elif key == glfw.KEY_UP:
-                    self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
-                elif key == glfw.KEY_DOWN:
-                    self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
-                elif key == glfw.KEY_C:
-                    self.state.joint_test_offsets.fill(0.0)
-                elif key == glfw.KEY_G: # 使用 G 鍵退出測試模式
-                    self.state.set_control_mode("WALKING")
+                if key == glfw.KEY_1: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
+                elif key == glfw.KEY_2: self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
+                elif key == glfw.KEY_UP: self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
+                elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
+                elif key == glfw.KEY_C: self.state.joint_test_offsets.fill(0.0)
+                elif key == glfw.KEY_G: self.state.set_control_mode("WALKING")
             return
 
         # --- 模式 3: 正常模式 (WALKING/FLOATING) ---
         if action != glfw.PRESS: return
-        
-        # --- 新增：P 鍵切換暫停/播放 ---
-        if key == glfw.KEY_P:
-            self.state.single_step_mode = not self.state.single_step_mode
-            status = "PAUSED (Press N for next step)" if self.state.single_step_mode else "PLAYING"
-            print(f"\n--- SIMULATION {status} ---")
-            return
-
-        # --- 新增：N 鍵，僅在單步模式下有效 ---
-        if self.state.single_step_mode and key == glfw.KEY_N:
-            # 我們將在 main.py 中處理這個事件，這裡只需要一個標記
-            self.state.execute_one_step = True
-            return
-        
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
         if key == glfw.KEY_R: self.state.reset_requested = True; return
@@ -77,12 +71,8 @@ class KeyboardInputHandler:
             new_mode = "FLOATING" if self.state.control_mode == "WALKING" else "WALKING"
             self.state.set_control_mode(new_mode)
             return
-        if key == glfw.KEY_T:
-            self.state.set_control_mode("SERIAL_MODE")
-            return
-        if key == glfw.KEY_G: # 使用 G 鍵進入測試模式
-            self.state.set_control_mode("JOINT_TEST")
-            return
+        if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
+        if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
 
         if self.state.input_mode != "KEYBOARD": return
         
@@ -103,9 +93,9 @@ class KeyboardInputHandler:
         elif key == glfw.KEY_J: params.kd -= p_step['kd']
         elif key == glfw.KEY_Y: params.action_scale += p_step['action_scale']
         elif key == glfw.KEY_H: params.action_scale -= p_step['action_scale']
-        elif key == glfw.KEY_P: params.bias += p_step['bias']
+        elif key == glfw.KEY_P: params.bias += p_step['bias'] # P 鍵保留其調整 Bias 的功能
         elif key == glfw.KEY_SEMICOLON: params.bias -= p_step['bias']
         
-        #params.kp = max(0, params.kp)
-        #params.kd = max(0, params.kd)
+        params.kp = max(0, params.kp)
+        params.kd = max(0, params.kd)
         params.action_scale = max(0, params.action_scale)

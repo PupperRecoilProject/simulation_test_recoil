@@ -43,9 +43,8 @@ class DebugOverlay:
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, buffer_text, None, context)
     
     def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
-        """渲染關節手動測試模式的專用介面，使用分欄顯示。"""
+        """渲染關節手動測試模式的專用介面。"""
         mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
-
         help_text = (
             "--- JOINT TEST MODE ---\n\n"
             "Press '1' / '2' to Select Joint\n"
@@ -54,45 +53,27 @@ class DebugOverlay:
             "Press 'G' to Return to Walking Mode"
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
-
         joint_names = [
             "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
             "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
             "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
             "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
         ]
-        
-        # --- 修正點：將列表分成兩半，分別建立左右兩欄的文字 ---
         num_joints_per_col = 6
-        left_col_text = ""
-        right_col_text = ""
-
+        left_col_text, right_col_text = "", ""
         for i, name in enumerate(joint_names):
             prefix = ">> " if i == state.joint_test_index else "   "
             offset_val = state.joint_test_offsets[i]
             final_val = sim.default_pose[i] + offset_val
             line_text = f"{prefix}{name:<15}: Offset={offset_val:+.2f}, Final={final_val:+.2f}\n"
-            
-            if i < num_joints_per_col:
-                left_col_text += line_text
-            else:
-                right_col_text += line_text
-        
-        # 分別在左上角和中上部渲染兩欄文字
+            if i < num_joints_per_col: left_col_text += line_text
+            else: right_col_text += line_text
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        
-        # 為了在中上部渲染，我們需要手動指定一個矩形區域
-        # 這裡我們簡單地將第二欄放在一個固定的偏移位置
-        # 獲取視窗寬高以便計算位置
-        width = viewport.width
-        height = viewport.height
-        # 建立一個新的 MjrRect 來定義第二欄的渲染區域
-        right_col_rect = mujoco.MjrRect(int(width * 0.3), 0, int(width * 0.3), height) # 從寬度30%處開始
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.3), 0, int(viewport.width * 0.3), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
-        # (這個函式保持不變)
         def format_vec(label: str, vec, precision=3, label_width=24):
             if vec is None or vec.size == 0: return f"{label:<{label_width}}None"
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
@@ -101,6 +82,7 @@ class DebugOverlay:
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
+            "  SPACE: Pause/Play | N: Next Step\n" # <-- 已更新
             "  F: Float | G: Joint Test | T: Serial\n"
             "  ESC: Exit       | R: Reset\n"
             "  M: Input Mode   | TAB: Info Page\n"
