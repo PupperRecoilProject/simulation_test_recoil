@@ -50,12 +50,19 @@ class ONNXPolicy:
 
     def _determine_history_length(self):
         """根據模型輸入維度和基礎觀察維度，自動計算歷史長度。"""
+        if self.base_obs_dim == 0:
+            print("⚠️ 警告: 基礎觀察維度為 0，無法計算歷史長度。")
+            self.history_length = 0
+            return
+            
         if self.model_input_dim % self.base_obs_dim != 0:
-            sys.exit(
-                f"❌ 致命錯誤: 基礎觀察維度 ({self.base_obs_dim}) 無法整除模型輸入維度 "
-                f"({self.model_input_dim})。無法確定歷史長度。"
+            print(
+                f"⚠️ 警告: 基礎觀察維度 ({self.base_obs_dim}) 無法整除模型輸入維度 "
+                f"({self.model_input_dim})。歷史堆疊功能可能不準確。"
             )
-        self.history_length = self.model_input_dim // self.base_obs_dim
+            self.history_length = 1
+        else:
+            self.history_length = self.model_input_dim // self.base_obs_dim
         
         if self.history_length > 1:
             print(f"🤖 自動偵測到模型使用歷史堆疊，長度為: {self.history_length} 幀。")
@@ -64,8 +71,15 @@ class ONNXPolicy:
 
     def get_action(self, base_obs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """根據當前的基礎觀察，更新歷史並執行模型推論，回傳動作。"""
+        if self.history_length == 0:
+            return np.array([]), np.zeros(self.config.num_motors)
+
         self.obs_history.append(base_obs)
-        onnx_input = np.concatenate(list(self.obs_history)).reshape(1, -1)
+        onnx_input = np.concatenate(list(self.obs_history)).astype(np.float32).reshape(1, -1)
+        
+        if onnx_input.shape[1] != self.model_input_dim:
+            return onnx_input, np.zeros(self.config.num_motors)
+            
         action_raw = self.sess.run([self.output_name], {self.input_name: onnx_input})[0].flatten()
         self.last_action[:] = action_raw
         return onnx_input, action_raw
@@ -73,7 +87,8 @@ class ONNXPolicy:
     def reset(self):
         """重置觀察歷史和上一個動作。"""
         self.obs_history.clear()
-        for _ in range(self.history_length):
-            self.obs_history.append(np.zeros(self.base_obs_dim, dtype=np.float32))
+        if self.history_length > 0:
+            for _ in range(self.history_length):
+                self.obs_history.append(np.zeros(self.base_obs_dim, dtype=np.float32))
         self.last_action.fill(0.0)
         print("✅ ONNX 策略狀態已重置。")

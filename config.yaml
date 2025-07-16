@@ -29,16 +29,16 @@ param_adjust_steps:
   kp: 0.5
   kd: 0.05
   action_scale: 0.05
-  bias: 0.5
+  bias: 5
 
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
 initial_tuning_params:
-  kp: 4.0
-  kd: 0.40
+  kp: 35.0
+  kd: 0.50
   action_scale: 0.5
-  bias: -0.0
+  bias: -45.0
 
 # ==================================
 # === 觀察配方 (Observation Recipes)

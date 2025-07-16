@@ -26,9 +26,9 @@ class SimulationState:
     control_timer: float = 0.0
     
     # --- 模式狀態 ---
-    sim_mode_text: str = "Initializing" # 用於UI顯示的模式文字
-    input_mode: str = "KEYBOARD"        # 輸入設備模式: KEYBOARD / GAMEPAD
-    control_mode: str = "WALKING"       # 控制模式: WALKING / FLOATING
+    sim_mode_text: str = "Initializing"
+    input_mode: str = "KEYBOARD"
+    control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE"
 
     # --- UI & 跨模組資料 ---
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -38,18 +38,25 @@ class SimulationState:
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     display_page: int = 0
     num_display_pages: int = 2
-    
+
+    # --- 序列埠模式相關狀態 ---
+    serial_command_buffer: str = ""
+    serial_command_to_send: str = ""
+    serial_latest_messages: list = field(default_factory=list)
+
     # --- 物件引用 ---
     floating_controller_ref: 'FloatingController' = None
 
     def __post_init__(self):
         """在初始化後，根據設定檔設定初始值。"""
+        # 從設定檔中複製初始調校參數到動態的 tuning_params
         self.tuning_params = TuningParams(
             kp=self.config.initial_tuning_params.kp,
             kd=self.config.initial_tuning_params.kd,
             action_scale=self.config.initial_tuning_params.action_scale,
             bias=self.config.initial_tuning_params.bias
         )
+        # 根據設定檔中的馬達數量初始化陣列
         self.latest_action_raw = np.zeros(self.config.num_motors)
         self.latest_final_ctrl = np.zeros(self.config.num_motors)
         print("✅ SimulationState 初始化完成。")
@@ -61,7 +68,7 @@ class SimulationState:
 
     def clear_command(self):
         self.command.fill(0.0)
-        print(f"運動指令已清除。")
+        print("運動指令已清除。")
 
     def toggle_input_mode(self, new_mode: str):
         if self.input_mode != new_mode:
@@ -69,10 +76,19 @@ class SimulationState:
             self.clear_command()
             print(f"輸入模式已切換至: {self.input_mode}")
             
-    def toggle_control_mode(self, current_pos: np.ndarray, current_quat: np.ndarray):
-        """切換固定懸浮模式 (WALKING <-> FLOATING)。"""
-        if self.floating_controller_ref and self.floating_controller_ref.is_functional:
-            is_now_floating = self.floating_controller_ref.toggle_floating_mode(current_pos, current_quat)
-            self.control_mode = "FLOATING" if is_now_floating else "WALKING"
-        else:
-            print("❌ 懸浮控制器不可用，無法切換模式。")
+    def set_control_mode(self, new_mode: str):
+        """切換主控制模式，並呼叫對應的啟用/禁用函式。"""
+        if self.control_mode == new_mode: return
+
+        # --- 離開舊模式 ---
+        if self.control_mode == "FLOATING":
+            if self.floating_controller_ref and self.floating_controller_ref.is_functional:
+                self.floating_controller_ref.disable()
+
+        # --- 進入新模式 ---
+        self.control_mode = new_mode
+        print(f"控制模式已切換至: {self.control_mode}")
+
+        if new_mode == "FLOATING":
+            if self.floating_controller_ref and self.floating_controller_ref.is_functional:
+                self.floating_controller_ref.enable(self.latest_pos)

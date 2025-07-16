@@ -15,22 +15,37 @@ class ObservationBuilder:
         self._component_generators = self._register_components()
         for component in self.recipe:
             if component not in self._component_generators:
-                sys.exit(f"❌ 致命錯誤: 觀察配方中的元件 '{component}' 沒有對應的產生器函式。")
+                print(f"⚠️ 警告: 觀察配方中的元件 '{component}' 沒有對應的產生器函式，將被忽略。")
 
     def _register_components(self):
+        """註冊所有已知的觀察元件及其對應的產生器函式。"""
         return {
-            'z_angular_velocity': self._get_z_angular_velocity, 'gravity_vector': self._get_gravity_vector,
-            'commands': self._get_commands, 'joint_positions': self._get_joint_positions,
-            'last_action': self._get_last_action, 'linear_velocity': self._get_linear_velocity,
-            'angular_velocity': self._get_full_angular_velocity, 'joint_velocities': self._get_joint_velocities,
-            'foot_contact_states': self._get_foot_contact_states, 'phase_signal': self._get_phase_signal,
+            'z_angular_velocity': self._get_z_angular_velocity,
+            'gravity_vector': self._get_gravity_vector,
+            'commands': self._get_commands,
+            'joint_positions': self._get_joint_positions,
+            'last_action': self._get_last_action,
+            'linear_velocity': self._get_linear_velocity,
+            'angular_velocity': self._get_full_angular_velocity,
+            'joint_velocities': self._get_joint_velocities,
+            'foot_contact_states': self._get_foot_contact_states,
+            'phase_signal': self._get_phase_signal,
         }
 
     def get_observation(self, command, last_action) -> np.ndarray:
-        obs_list = [gen(command=command, last_action=last_action) for gen in [self._component_generators[name] for name in self.recipe]]
+        """根據配方列表，依序呼叫產生器函式並拼接成最終的觀察向量。"""
+        obs_list = []
+        for name in self.recipe:
+            if name in self._component_generators:
+                obs_list.append(self._component_generators[name](command=command, last_action=last_action))
+        
+        if not obs_list:
+            return np.array([], dtype=np.float32)
+
         return np.concatenate(obs_list).astype(np.float32)
 
     def _get_torso_inverse_rotation(self):
+        """輔助函式：計算軀幹姿態的逆四元數。"""
         torso_quat = self.data.xquat[self.torso_id]
         norm = np.sum(np.square(torso_quat))
         if norm < 1e-8: torso_quat = np.array([1., 0, 0, 0])
@@ -38,6 +53,7 @@ class ObservationBuilder:
         return np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / np.sum(np.square(torso_quat))
 
     def _rotate_vec_by_quat_inv(self, v, q_inv):
+        """輔助函式：使用逆四元數將世界座標系向量轉換為局部座標系。"""
         u, s = q_inv[1:], q_inv[0]
         return 2 * np.dot(u, v) * u + (s * s - np.dot(u, u)) * v + 2 * s * np.cross(u, v)
 
@@ -76,11 +92,12 @@ class ObservationBuilder:
 
     def _get_linear_velocity(self, **kwargs):
         inv_torso_rot = self._get_torso_inverse_rotation()
-        return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, :3], inv_torso_rot)
+        # cvel order is [angular_vel, linear_vel]
+        return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 3:], inv_torso_rot)
 
     def _get_full_angular_velocity(self, **kwargs):
         inv_torso_rot = self._get_torso_inverse_rotation()
-        return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 3:], inv_torso_rot)
+        return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, :3], inv_torso_rot)
         
     def _get_phase_signal(self, **kwargs):
         return np.array([self.data.time % 1.0], dtype=np.float32)

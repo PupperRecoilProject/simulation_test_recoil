@@ -1,7 +1,7 @@
 # config.py
 import yaml
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Any
 
 @dataclass
 class TuningParamsConfig:
@@ -12,8 +12,8 @@ class TuningParamsConfig:
     bias: float
 
 @dataclass
-class FloatingConfig:
-    """從設定檔載入的懸浮控制器參數資料類別。"""
+class FloatingControllerConfig:
+    """懸浮控制器的設定。"""
     target_height: float
     kp_vertical: float
     kd_vertical: float
@@ -38,7 +38,7 @@ class AppConfig:
 
     initial_tuning_params: TuningParamsConfig
     observation_recipes: Dict[int, List[str]]
-    floating_controller: FloatingConfig
+    floating_controller: FloatingControllerConfig
 
 def load_config(path: str = "config.yaml") -> AppConfig:
     """
@@ -53,7 +53,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         raise IOError(f"讀取或解析設定檔 '{path}' 時發生錯誤: {e}")
 
     tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
-    floating_cfg = FloatingConfig(**config_data['floating_controller'])
+    floating_config = FloatingControllerConfig(**config_data['floating_controller'])
     
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
@@ -71,8 +71,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         
         initial_tuning_params=tuning_params,
         observation_recipes=config_data['observation_recipes'],
-        floating_controller=floating_cfg
+        floating_controller=floating_config
     )
     
-    print("✅ 設定檔載入成功。")
+    print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
     return config_obj
