@@ -26,19 +26,19 @@ gamepad_sensitivity:
   wz: -1.5  # 轉向角速度靈敏度 (右搖桿 X), 負值表示右推右轉
 
 param_adjust_steps:
-  kp: 5.0
-  kd: 0.1
+  kp: 0.5
+  kd: 0.05
   action_scale: 0.05
-  bias: 5.0
+  bias: 0.5
 
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
 initial_tuning_params:
-  kp: 35.0
-  kd: 0.50
+  kp: 4.0
+  kd: 0.40
   action_scale: 0.5
-  bias: -45.0
+  bias: -0.0
 
 # ==================================
 # === 觀察配方 (Observation Recipes)
