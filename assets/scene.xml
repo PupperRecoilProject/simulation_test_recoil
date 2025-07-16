@@ -22,6 +22,21 @@
     <camera name="default" pos="0.846 -1.465 0.916" xyaxes="0.866 0.500 0.000 -0.171 0.296 0.940"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
     
+  <keyframe>
+    <!-- 為Pupper定義一個'home'站立姿態 -->
+    <!-- qpos: [root_pos(3), root_quat(4), FR(3), FL(3), RR(3), RL(3)] -->
+    <!-- 原始Pupper模型的home: [0 0.4 -0.8] for each leg (abduction, hip, knee) -->
+    <key name="home" qpos="
+    0 0 0.2
+    1 0 0 0
+    0 0.0 0.0
+    0 0.0 0.0
+    0 0.0 0.0
+    0 0.0 0.0"
+      ctrl="0 0 0  0 0 0  0 0 0  0 0 0"/>
+  </keyframe>
+
+
     <!-- =========================================================== -->
     <!-- === 新增部分 1：Mocap Body (我們的空中錨點) === -->
     <!-- mocap="true" 表示它的位置由我們手動設定 -->

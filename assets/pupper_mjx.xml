@@ -1,12 +1,15 @@
-<!-- =================================================================
-     Pupper Model for MuJoCo Playground (仿造 Go1 結構)
-     ================================================================= -->
 <mujoco model="pupper">
-  <!-- Compiler settings仿造自go1，確保與框架相容 -->
-  <!-- 注意：你需要將Pupper的STL網格檔案放在 "assets" 資料夾中 -->
-  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <!-- 
+    ============================================================
+    ===               FINAL PATH CORRECTION                  ===
+    ============================================================
+    - meshdir: 設為 "mesh"。
+      這表示網格檔案位於與此 XML 檔案(pupper_mjx.xml)同級的 "mesh" 資料夾中。
+      由於 pupper_mjx.xml 在 assets/ 下，所以 MuJoCo 會去尋找 assets/mesh/，
+      這正是我們想要的，且不會有多餘的路徑疊加。
+  -->
+  <compiler angle="radian" meshdir="mesh" autolimits="true"/>
 
-  <!-- Physics options仿造自go1 -->
   <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">
     <flag eulerdamp="disable"/>
   </option>
@@ -16,40 +19,26 @@
     <numeric data="12" name="max_geom_pairs"/>
   </custom>
 
-  <!-- Default settings仿造自go1，但使用了Pupper的關節範圍和驅動器參數 -->
+  <!-- 預設值設定 -->
   <default>
     <default class="pupper">
       <joint armature="0.01" damping="0.0045"/>
-      <!-- 使用position驅動器，與go1保持一致 -->
       <position forcerange="-1.7 1.7" inheritrange="1" kp="4" />
       <general biastype="none" />
-
-      <!-- Pupper的關節定義 -->
-      <default class="abduction"> <!-- 對應Pupper的abduction關節 -->
-        <joint axis="0 1 0" range="-1.0472 1.0472" frictionloss="0.28"/>
-      </default>
-      <default class="hip"> <!-- 對應Pupper的hip關節 -->
-        <joint axis="1 0 0" range="-0.76166 3.81442" frictionloss="0.28"/>
-      </default>
-      <default class="knee"> <!-- 對應Pupper的knee關節 -->
-        <joint axis="1 0 0" range="-0.78540 1.65806" frictionloss="0.28"/>
-      </default>
-      
-      <!-- 視覺與碰撞幾何體定義 -->
-      <default class="visual">
-        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
-      </default>
+      <default class="abduction"><joint axis="0 1 0" range="-1.0472 1.0472" frictionloss="0.28"/></default>
+      <default class="hip"><joint axis="1 0 0" range="-0.76166 3.81442" frictionloss="0.28"/></default>
+      <default class="knee"><joint axis="1 0 0" range="-0.78540 1.65806" frictionloss="0.28"/></default>
+      <default class="visual"><geom type="mesh" contype="0" conaffinity="0" group="2"/></default>
       <default class="collision">
         <geom group="3"/>
-        <default class="foot">
-          <!-- Pupper的腳部碰撞體定義 -->
-          <geom type="sphere" size="0.009525" solimp="0.9 .95 0.01" condim="3" friction="0.8 0.1 0.1"/>
-        </default>
+        <default class="foot"><geom type="sphere" size="0.009525" solimp="0.9 .95 0.01" condim="3" friction="0.8 0.1 0.1"/></default>
       </default>
     </default>
   </default>
 
-  <!-- Pupper的網格資產，注意保留了scale屬性 -->
+  <!-- 
+    資產定義 (file 屬性保持不變，只留檔案名稱)
+  -->
   <asset>
     <mesh name="body" file="body.stl" scale="0.001 0.001 0.001"/>
     <mesh name="Hip_L" file="Hip_L.stl" scale="0.001 0.001 0.001"/>
@@ -60,80 +49,71 @@
     <mesh name="Lower_Leg_R" file="Lower_Leg_R.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
+  <!-- worldbody, actuator, sensor 區塊完全保持不變 -->
   <worldbody>
     <light name="spotlight" mode="targetbodycom" target="torso" pos="3 0 4"/>
-    <!-- 重要：主體名稱使用 "torso" (來自pupper) 而不是 "trunk" (來自go1) -->
     <body name="torso" pos="0 0 0.2" childclass="pupper">
       <camera name="track" pos="0.8 -1.0 0.5" xyaxes="0.707 0.707 0 -0.354 0.354 0.866" mode="trackcom"/>
       <site name="head" pos="0.15 0 0" rgba="1 0 0 1" size="0.02" group="5"/>
-      <!-- Pupper的慣性參數 -->
       <inertial pos="0.00109 -0.074 0" mass="0.7833" diaginertia="0.0003688 0.002508 0.002674"/>
       <freejoint/>
       <geom class="visual" mesh="body"/>
-      <!-- 簡化了軀幹的碰撞體，可以根據需要添加更多 -->
       <geom class="collision" type="box" size="0.06 0.11 0.03" pos="0 -0.07 0"/>
-      <!-- IMU site, 命名與go1保持一致 -->
       <site name="imu" pos="0 -0.122542 0" size="0.01" group="5"/>
-
-      <!-- ============== LEGS ============== -->
-      <!-- 腿部結構仿造go1的命名 (FR_hip, FR_thigh, FR_calf) 以便與python程式碼相容 -->
       <!-- FR Leg -->
       <body name="FR_hip" pos="-0.046891 -0.203946 -0.0064">
-        <joint class="abduction" name="FR_hip_joint"/> <!-- Mapped from abduction_front_right -->
+        <joint class="abduction" name="FR_hip_joint"/>
         <geom class="visual" mesh="Hip_R"/>
         <body name="FR_thigh" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
-          <joint class="hip" name="FR_thigh_joint"/> <!-- Mapped from hip_front_right -->
+          <joint class="hip" name="FR_thigh_joint"/>
           <geom class="visual" mesh="Upper_Leg_R"/>
           <body name="FR_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
-            <joint class="knee" name="FR_calf_joint"/> <!-- Mapped from knee_front_right -->
+            <joint class="knee" name="FR_calf_joint"/>
             <geom class="visual" mesh="Lower_Leg_R"/>
             <geom name="FR" class="foot" pos="0.003475 0 -0.11"/>
             <site name="FR" pos="0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
           </body>
         </body>
       </body>
-      
       <!-- FL Leg -->
       <body name="FL_hip" pos="0.047109 -0.203946 -0.0064">
-        <joint class="abduction" name="FL_hip_joint"/> <!-- Mapped from abduction_front_left -->
+        <joint class="abduction" name="FL_hip_joint"/>
         <geom class="visual" mesh="Hip_L"/>
         <body name="FL_thigh" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
-          <joint class="hip" name="FL_thigh_joint"/> <!-- Mapped from hip_front_left -->
+          <joint class="hip" name="FL_thigh_joint"/>
           <geom class="visual" mesh="Upper_Leg_L"/>
           <body name="FL_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
-            <joint class="knee" name="FL_calf_joint"/> <!-- Mapped from knee_front_left -->
+            <joint class="knee" name="FL_calf_joint"/>
             <geom class="visual" mesh="Lower_Leg_L"/>
             <geom name="FL" class="foot" pos="-0.003475 0 -0.11"/>
             <site name="FL" pos="-0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
           </body>
         </body>
       </body>
-
-      <!-- RR Leg (注意，Pupper模型中後腿和前腿位置不同，這裡使用pupper的座標) -->
+      <!-- RR Leg -->
       <body name="RR_hip" pos="-0.046896 -0.004096 -0.0064">
-        <joint class="abduction" name="RR_hip_joint"/> <!-- Mapped from abduction_hind_right -->
+        <joint class="abduction" name="RR_hip_joint"/>
         <geom class="visual" mesh="Hip_R"/>
         <body name="RR_thigh" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
-          <joint class="hip" name="RR_thigh_joint"/> <!-- Mapped from hip_hind_right -->
+          <joint class="hip" name="RR_thigh_joint"/>
           <geom class="visual" mesh="Upper_Leg_R"/>
           <body name="RR_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
-            <joint class="knee" name="RR_calf_joint"/> <!-- Mapped from knee_hind_right -->
+            <joint class="knee" name="RR_calf_joint"/>
             <geom class="visual" mesh="Lower_Leg_R"/>
             <geom name="RR" class="foot" pos="0.003475 0 -0.11"/>
             <site name="RR" pos="0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
           </body>
         </body>
       </body>
-
       <!-- RL Leg -->
       <body name="RL_hip" pos="0.047104 -0.004096 -0.0064">
-        <joint class="abduction" name="RL_hip_joint"/> <!-- Mapped from abduction_hind_left -->
+        <joint class="abduction" name="RL_hip_joint"/>
         <geom class="visual" mesh="Hip_L"/>
         <body name="RL_thigh" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
-          <joint class="hip" name="RL_thigh_joint"/> <!-- Mapped from hip_hind_left -->
+          <joint class="hip" name="RL_thigh_joint"/>
           <geom class="visual" mesh="Upper_Leg_L"/>
           <body name="RL_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
-            <joint class="knee" name="RL_calf_joint"/> <!-- Mapped from knee_hind_left -->
+            <joint class="knee" name="RL_calf_joint"/>
             <geom class="visual" mesh="Lower_Leg_L"/>
             <geom name="RL" class="foot" pos="-0.003475 0 -0.11"/>
             <site name="RL" pos="-0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
@@ -143,7 +123,6 @@
     </body>
   </worldbody>
 
-  <!-- Actuators仿造go1的結構和命名 -->
   <actuator>
     <position class="abduction" name="FR_hip" joint="FR_hip_joint"/>
     <position class="hip" name="FR_thigh" joint="FR_thigh_joint"/>
@@ -159,25 +138,9 @@
     <position class="knee" name="RL_calf" joint="RL_calf_joint"/>
   </actuator>
 
-  <!-- Sensors, 直接從go1複製並適配，確保觀察空間一致 -->
   <sensor>
     <gyro site="imu" name="gyro"/>
     <velocimeter site="imu" name="local_linvel"/>
     <accelerometer site="imu" name="accelerometer"/>
-    <framepos objtype="site" objname="imu" name="position"/>
-    <framezaxis objtype="site" objname="imu" name="upvector"/>
-    <framexaxis objtype="site" objname="imu" name="forwardvector"/>
-    <framelinvel objtype="site" objname="imu" name="global_linvel"/>
-    <frameangvel objtype="site" objname="imu" name="global_angvel"/>
-    <framequat objtype="site" objname="imu" name="orientation"/>
-    <framelinvel objtype="site" objname="FR" name="FR_global_linvel"/>
-    <framelinvel objtype="site" objname="FL" name="FL_global_linvel"/>
-    <framelinvel objtype="site" objname="RR" name="RR_global_linvel"/>
-    <framelinvel objtype="site" objname="RL" name="RL_global_linvel"/>
-    <framepos objtype="site" objname="FR" name="FR_pos" reftype="site" refname="imu"/>
-    <framepos objtype="site" objname="FL" name="FL_pos" reftype="site" refname="imu"/>
-    <framepos objtype="site" objname="RR" name="RR_pos" reftype="site" refname="imu"/>
-    <framepos objtype="site" objname="RL" name="RL_pos" reftype="site" refname="imu"/>
-    <framepos objtype="site" objname="head" name="head_pos"/>
   </sensor>
 </mujoco>

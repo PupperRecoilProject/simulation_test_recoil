@@ -1,40 +1,96 @@
-<mujoco model="pupper scene">
-  <!-- 包含上面定義的Pupper機器人模型 -->
+<mujoco model="Pupper Scene MJX">
+  <!-- 
+    ============================================================
+    ===               1. 包含機器人模型                      ===
+    ============================================================
+    使用 <include> 標籤將外部的機器人定義檔案載入到當前場景。
+    這使得場景和機器人的定義可以分開管理，非常方便。
+  -->
   <include file="pupper_mjx.xml"/>
 
+  <!-- 
+    ============================================================
+    ===               2. 全局設定 (Visual & Statistic)       ===
+    ============================================================
+  -->
   <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
 
   <visual>
+    <!-- 燈光設定 -->
     <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
-    <rgba force="1 0 0 1"/>
+    <!-- 全局攝影機視角 -->
     <global azimuth="120" elevation="-20"/>
-    <map force="0.01"/>
-    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
-    <quality shadowsize="8192"/>
+    <!-- 渲染品質 -->
+    <quality shadowsize="4096"/> <!-- 陰影貼圖大小，4096 是個不錯的品質與效能平衡點 -->
   </visual>
 
+  <!-- 
+    ============================================================
+    ===               3. 資產定義 (Asset)                      ===
+    ============================================================
+    定義場景中使用的材質、貼圖等。
+  -->
   <asset>
-    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0"
+    <!-- 優化點: 將天空和地板的顏色改為非純白，以提供更好的視覺對比 -->
+    <texture type="skybox" builtin="gradient" rgb1=".6 .7 .8" rgb2=".2 .3 .4" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1=".2 .3 .4" rgb2=".1 .2 .3" markrgb=".8 .8 .8"
       width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
   </asset>
 
+  <!-- 
+    ============================================================
+    ===               4. 世界物體 (World Body)                 ===
+    ============================================================
+    定義場景中的靜態物體，例如地板。
+  -->
   <worldbody>
-    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" priority="1" friction="0.6" condim="3" contype="1" conaffinity="0"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" condim="3" contype="1" conaffinity="0"/>
+    
+    <!-- 
+      Mocap Body: 一個特殊的物體，其位置不受物理模擬影響，
+      而是由外部設定。我們用它作為一個固定的"空中錨點"。
+    -->
+    <body name="anchor" pos="0 0 0.35" mocap="true">
+      <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>
+    </body>
   </worldbody>
 
+  <!-- 
+    ============================================================
+    ===               5. 約束 (Equality Constraint)          ===
+    ============================================================
+    定義物體之間的約束關係。
+  -->
+  <equality>
+    <!--
+      Weld 約束: 將機器人的 torso 和空中的 anchor "焊接" 在一起。
+      - active="false": 這個約束預設是關閉的。
+      - 用途: 我們可以在程式中動態地開啟這個約束，將機器人固定在空中，
+               方便觀察動作或進行除錯，而不用擔心它會倒下。
+    -->
+    <weld name="torso_anchor_weld" body1="torso" body2="anchor" solimp="0.9 0.95 0.001" solref="0.02 1" active="false"/>
+  </equality>
+  
+  <!-- 
+    ============================================================
+    ===               6. 關鍵幀 (Keyframe)                     ===
+    ============================================================
+    儲存特定的模型狀態 (qpos, ctrl 等)，方便重置到指定姿態。
+  -->
   <keyframe>
-    <!-- 為Pupper定義一個'home'站立姿態 -->
-    <!-- qpos: [root_pos(3), root_quat(4), FR(3), FL(3), RR(3), RL(3)] -->
-    <!-- 原始Pupper模型的home: [0 0.4 -0.8] for each leg (abduction, hip, knee) -->
+    <!--
+      'home' 關鍵幀: 定義了機器人的初始姿態。
+      - qpos: [根關節位置(3), 根關節姿態(4), 12個關節的角度]
+      - 優化點: 提供了一個稍微蹲伏的姿態，比完全伸直的腿更實用。
+        這個姿態是 (abduction=0.0, hip=0.8, knee=-1.6)
+    -->
     <key name="home" qpos="
-    0 0 0.2
+    0 0 0.3
     1 0 0 0
-    0 0.0 0.0
-    0 0.0 0.0
-    0 0.0 0.0
-    0 0.0 0.0"
-      ctrl="0 0 0  0 0 0  0 0 0  0 0 0"/>
+    0.0  0.8 -1.6
+    0.0  0.8 -1.6
+    0.0  0.8 -1.6
+    0.0  0.8 -1.6"/>
   </keyframe>
 </mujoco>
