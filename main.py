@@ -68,7 +68,6 @@ def main():
         # =========================================================
         # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
         # =========================================================
-        state.latest_final_ctrl[:] = sim.default_pose
         state.hard_reset_requested = False
 
     def soft_reset():
@@ -81,7 +80,6 @@ def main():
         # =========================================================
         # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
         # =========================================================
-        state.latest_final_ctrl[:] = sim.default_pose
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
 
@@ -100,6 +98,7 @@ def main():
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         
+        # --- 修改：區分兩種重置 ---
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
@@ -111,28 +110,40 @@ def main():
             state.serial_command_to_send = ""
 
         if state.control_mode != "SERIAL_MODE":
+            if state.single_step_mode:
+                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
+
             base_obs = obs_builder.get_observation(state.command, policy.last_action)
+            if state.single_step_mode:
+                current_joint_angles = sim.data.qpos[7:]
+                current_joint_positions = current_joint_angles - sim.default_pose
+                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
+
             onnx_input, action_raw = policy.get_action(base_obs)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_raw
+            if state.single_step_mode:
+                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
             if state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
-            elif state.control_mode == "MANUAL_CTRL":
-                state.sim_mode_text = "Manual Ctrl"
-                final_ctrl = state.manual_final_ctrl
             else:
                 state.sim_mode_text = state.control_mode
-                delta_action = action_raw * state.tuning_params.action_scale
-                final_ctrl = state.latest_final_ctrl + delta_action
-            
+                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
             state.latest_final_ctrl = final_ctrl
+            if state.single_step_mode:
+                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
+
             sim.apply_position_control(final_ctrl, state.tuning_params)
             
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
+
+            if state.single_step_mode:
+                next_joint_angles = sim.data.qpos[7:]
+                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
         
         sim.render(state, overlay)
 

@@ -133,13 +133,6 @@ class Simulation:
         """檢查視窗是否應該關閉。"""
         return glfw.window_should_close(self.window)
         
-    def apply_control(self, ctrl_cmd: np.ndarray, params: TuningParams):
-        """將控制指令和調校參數應用到 MuJoCo 模型。"""
-        self.model.actuator_gainprm[:, 0] = params.kp
-        self.model.dof_damping[6:] = params.kd
-        self.model.actuator_biasprm[:, 1] = params.bias
-        self.data.ctrl[:] = ctrl_cmd
-        
     def apply_position_control(self, target_pos: np.ndarray, params: TuningParams):
         """使用MuJoCo內建的PD控制器"""
         # 設定致動器增益 a = Kp
