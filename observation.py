@@ -1,7 +1,6 @@
 # observation.py
 import numpy as np
 import mujoco
-import sys
 from config import AppConfig
 
 class ObservationBuilder:
@@ -10,6 +9,7 @@ class ObservationBuilder:
         self.data = data
         self.model = model
         self.torso_id = torso_id
+        # 在絕對角度模式下，default_pose 主要用於重置和關節測試模式
         self.default_pose = default_pose
         self.config = config
         self._component_generators = self._register_components()
@@ -59,7 +59,7 @@ class ObservationBuilder:
 
     def _get_z_angular_velocity(self, **kwargs):
         inv_torso_rot = self._get_torso_inverse_rotation()
-        local_rpy_rate = self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 3:], inv_torso_rot)
+        local_rpy_rate = self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 0:3], inv_torso_rot)
         return np.array([local_rpy_rate[2]]) * 0.25
 
     def _get_gravity_vector(self, **kwargs):
@@ -70,7 +70,11 @@ class ObservationBuilder:
         return command * np.array(self.config.command_scaling_factors) 
 
     def _get_joint_positions(self, **kwargs):
-        return self.data.qpos[7:] - self.default_pose
+        # =================================================================
+        # === 【核心修改】直接返回關節的【絕對角度】                    ===
+        # === 這樣 AI 觀察到的就是真實的物理世界的角度值。            ===
+        # =================================================================
+        return self.data.qpos[7:]
 
     def _get_joint_velocities(self, **kwargs):
         return self.data.qvel[6:] * 0.05
@@ -88,11 +92,11 @@ class ObservationBuilder:
         return contacts
 
     def _get_last_action(self, last_action, **kwargs):
+        # 在絕對角度模式下，last_action 就是上一個目標絕對角度
         return last_action
 
     def _get_linear_velocity(self, **kwargs):
         inv_torso_rot = self._get_torso_inverse_rotation()
-        # cvel order is [angular_vel, linear_vel]
         return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 3:], inv_torso_rot)
 
     def _get_full_angular_velocity(self, **kwargs):

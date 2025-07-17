@@ -28,6 +28,8 @@ class DebugOverlay:
             self.render_serial_console(viewport, context, state)
         elif state.control_mode == "JOINT_TEST":
             self.render_joint_test_overlay(viewport, context, state, sim)
+        elif state.control_mode == "MANUAL_CTRL":
+            self.render_manual_ctrl_overlay(viewport, context, state, sim)
         else:
             self.render_simulation_overlay(viewport, context, state, sim)
 
@@ -69,9 +71,53 @@ class DebugOverlay:
             if i < num_joints_per_col: left_col_text += line_text
             else: right_col_text += line_text
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.3), 0, int(viewport.width * 0.3), viewport.height)
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
+    def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+        """渲染手動 Final Ctrl 模式的專用介面。"""
+        mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
+        
+        # 【新增】根據懸浮狀態顯示不同的標題
+        floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
+        help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
+
+        help_text = (
+            f"{help_title}\n\n"
+            "Press 'F' to Toggle Floating\n\n" # 新增提示
+            "Press '1' / '2' to Select Joint\n"
+            "Press UP / DOWN to Adjust Target Angle\n"
+            "Press 'C' to Reset All Targets to 0\n\n"
+            "Press 'G' to Return to Walking Mode"
+        )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        
+        joint_names = [
+            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
+            "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
+            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
+            "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
+        ]
+        num_joints_per_col = 6
+        left_col_text, right_col_text = "", ""
+        
+        current_joint_positions = sim.data.qpos[7:]
+        
+        for i, name in enumerate(joint_names):
+            prefix = ">> " if i == state.manual_ctrl_index else "   "
+            target_val = state.manual_final_ctrl[i]
+            actual_val = current_joint_positions[i]
+            error = target_val - actual_val
+            
+            line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n"
+            
+            if i < num_joints_per_col: left_col_text += line_text
+            else: right_col_text += line_text
+            
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+    
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
         def format_vec(label: str, vec, precision=3, label_width=24):
@@ -79,13 +125,14 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
+        # 【文字修正】更新幫助文字
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
-            "  SPACE: Pause/Play | N: Next Step\n" # <-- 已更新
-            "  F: Float | G: Joint Test | T: Serial\n"
+            "  SPACE: Pause/Play | N: Next Step\n"
+            "  F: Float | G: Joint Test | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset\n"
-            "  X: Soft Reset (in Float/Test mode)\n" # <-- 新增此行
+            "  X: Soft Reset (in Float/Test mode)\n"
             "  M: Input Mode   | TAB: Info Page\n"
             "  C: Clear Cmd (Keyboard)\n\n"
             "[Keyboard Mode]\n"

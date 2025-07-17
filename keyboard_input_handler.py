@@ -54,6 +54,38 @@ class KeyboardInputHandler:
                 elif key == glfw.KEY_G: self.state.set_control_mode("WALKING")
             return
 
+        if self.state.control_mode == "MANUAL_CTRL":
+            if action == glfw.PRESS or action == glfw.REPEAT:
+                # 【新增】在手動模式下，F 鍵用於切換懸浮狀態
+                if key == glfw.KEY_F and action == glfw.PRESS:
+                    # 切換懸浮旗標
+                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
+                    is_floating = self.state.manual_mode_is_floating
+                    
+                    # 根據新的狀態，啟用或禁用懸浮控制器
+                    if is_floating:
+                        if self.state.floating_controller_ref:
+                            self.state.floating_controller_ref.enable(self.state.latest_pos)
+                    else:
+                        if self.state.floating_controller_ref:
+                            self.state.floating_controller_ref.disable()
+                    return # 處理完畢，返回
+
+                # --- 原有的手動控制邏輯 ---
+                if key == glfw.KEY_1 and action == glfw.PRESS:
+                    self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
+                elif key == glfw.KEY_2 and action == glfw.PRESS:
+                    self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
+                elif key == glfw.KEY_UP:
+                    self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
+                elif key == glfw.KEY_DOWN:
+                    self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS:
+                    self.state.manual_final_ctrl.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS:
+                    self.state.set_control_mode("WALKING")
+            return
+
         if action != glfw.PRESS: return
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
@@ -61,7 +93,6 @@ class KeyboardInputHandler:
         if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
         if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
         
-        # --- 新增：X 鍵觸發軟重置 ---
         if key == glfw.KEY_X:
             self.state.soft_reset_requested = True
             return
@@ -72,6 +103,7 @@ class KeyboardInputHandler:
             return
         if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
         if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
+        if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
 
         if self.state.input_mode != "KEYBOARD": return
         

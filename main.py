@@ -26,6 +26,7 @@ def main():
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
     serial_comm = SerialCommunicator()
+    
     keyboard_handler = KeyboardInputHandler(state)
     keyboard_handler.register_callbacks(sim.window)
     xbox_handler = XboxInputHandler(state)
@@ -48,7 +49,6 @@ def main():
             recipe = config.observation_recipes[policy.model_input_dim]
             obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
             base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-            policy = ONNXPolicy(config, base_obs_dim)
         else:
             sys.exit(f"❌ 致命錯誤: 模型期望維度 ({policy.model_input_dim}) 與配方產生的觀察維度 ({base_obs_dim}) 不符，且找不到匹配配方！")
 
@@ -65,25 +65,23 @@ def main():
             state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
+        state.latest_final_ctrl[:] = sim.default_pose
         state.hard_reset_requested = False
 
     def soft_reset():
         """僅重置機器人姿態和控制器狀態，不重置模擬時間和物理世界。"""
         print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
-        # 重置關節角度和速度
         sim.data.qpos[7:] = sim.default_pose
         sim.data.qvel[6:] = 0
-        # 重置控制器和指令
         policy.reset()
         state.clear_command()
-        # 確保物理狀態被同步
+        state.latest_final_ctrl[:] = sim.default_pose
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
 
-
-    hard_reset() # 程式啟動時執行一次完全重置
+    hard_reset()
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
 
     state.execute_one_step = False
 
@@ -96,7 +94,6 @@ def main():
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         
-        # --- 修改：區分兩種重置 ---
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
@@ -108,40 +105,28 @@ def main():
             state.serial_command_to_send = ""
 
         if state.control_mode != "SERIAL_MODE":
-            if state.single_step_mode:
-                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
-
             base_obs = obs_builder.get_observation(state.command, policy.last_action)
-            if state.single_step_mode:
-                current_joint_angles = sim.data.qpos[7:]
-                current_joint_positions = current_joint_angles - sim.default_pose
-                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
-
             onnx_input, action_raw = policy.get_action(base_obs)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_raw
-            if state.single_step_mode:
-                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
             if state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
+            elif state.control_mode == "MANUAL_CTRL":
+                state.sim_mode_text = "Manual Ctrl"
+                final_ctrl = state.manual_final_ctrl
             else:
                 state.sim_mode_text = state.control_mode
-                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
+                delta_action = action_raw * state.tuning_params.action_scale
+                final_ctrl = state.latest_final_ctrl + delta_action
+            
             state.latest_final_ctrl = final_ctrl
-            if state.single_step_mode:
-                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
-
             sim.apply_control(final_ctrl, state.tuning_params)
             
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
-
-            if state.single_step_mode:
-                next_joint_angles = sim.data.qpos[7:]
-                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
         
         sim.render(state, overlay)
 
