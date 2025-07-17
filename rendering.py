@@ -85,6 +85,7 @@ class DebugOverlay:
             "  SPACE: Pause/Play | N: Next Step\n" # <-- 已更新
             "  F: Float | G: Joint Test | T: Serial\n"
             "  ESC: Exit       | R: Reset\n"
+            "  X: Soft Reset (in Float/Test mode)\n" # <-- 新增此行
             "  M: Input Mode   | TAB: Info Page\n"
             "  C: Clear Cmd (Keyboard)\n\n"
             "[Keyboard Mode]\n"

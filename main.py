@@ -25,12 +25,9 @@ def main():
     
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
-
     serial_comm = SerialCommunicator()
-
     keyboard_handler = KeyboardInputHandler(state)
     keyboard_handler.register_callbacks(sim.window)
-
     xbox_handler = XboxInputHandler(state)
     if xbox_handler.is_available():
         state.toggle_input_mode("GAMEPAD")
@@ -59,20 +56,34 @@ def main():
     used_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
     overlay = DebugOverlay(recipe, used_dims)
 
-    def reset_all():
-        print("\n--- 正在重置模擬 ---")
+    def hard_reset():
+        """完全重置整個模擬環境。"""
+        print("\n--- 正在執行完全重置 (Hard Reset) ---")
         sim.reset()
         policy.reset()
         if state.control_mode == "FLOATING":
             state.set_control_mode("WALKING")
-        elif state.control_mode == "JOINT_TEST":
-            state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
+        state.hard_reset_requested = False
 
-    reset_all()
+    def soft_reset():
+        """僅重置機器人姿態和控制器狀態，不重置模擬時間和物理世界。"""
+        print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
+        # 重置關節角度和速度
+        sim.data.qpos[7:] = sim.default_pose
+        sim.data.qvel[6:] = 0
+        # 重置控制器和指令
+        policy.reset()
+        state.clear_command()
+        # 確保物理狀態被同步
+        mujoco.mj_forward(sim.model, sim.data)
+        state.soft_reset_requested = False
+
+
+    hard_reset() # 程式啟動時執行一次完全重置
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式)")
+    print("    (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
 
     state.execute_one_step = False
 
@@ -84,7 +95,10 @@ def main():
             state.execute_one_step = False
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
-        if state.reset_requested: reset_all()
+        
+        # --- 修改：區分兩種重置 ---
+        if state.hard_reset_requested: hard_reset()
+        if state.soft_reset_requested: soft_reset()
 
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()

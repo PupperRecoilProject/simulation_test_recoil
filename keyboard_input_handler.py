@@ -22,21 +22,17 @@ class KeyboardInputHandler:
 
     def key_callback(self, window, key, scancode, action, mods):
         """處理按鍵事件，根據不同模式分派邏輯。"""
-        # --- 全局控制按鍵 (在任何模式下都有效) ---
         if action == glfw.PRESS:
-            # --- SPACE 鍵切換暫停/播放 ---
             if key == glfw.KEY_SPACE:
                 self.state.single_step_mode = not self.state.single_step_mode
                 status = "PAUSED (Press N for next step)" if self.state.single_step_mode else "PLAYING"
                 print(f"\n--- SIMULATION {status} ---")
-                return # 處理完畢，直接返回
+                return
 
-            # --- N 鍵，僅在單步模式下有效 ---
             if self.state.single_step_mode and key == glfw.KEY_N:
                 self.state.execute_one_step = True
-                return # 處理完畢，直接返回
+                return
 
-        # --- 模式 1: 序列埠模式 ---
         if self.state.control_mode == "SERIAL_MODE":
             if action == glfw.PRESS or action == glfw.REPEAT:
                 if key == glfw.KEY_ENTER:
@@ -48,7 +44,6 @@ class KeyboardInputHandler:
                     self.state.set_control_mode("WALKING")
             return
 
-        # --- 模式 2: 關節測試模式 ---
         if self.state.control_mode == "JOINT_TEST":
             if action == glfw.PRESS:
                 if key == glfw.KEY_1: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
@@ -59,13 +54,17 @@ class KeyboardInputHandler:
                 elif key == glfw.KEY_G: self.state.set_control_mode("WALKING")
             return
 
-        # --- 模式 3: 正常模式 (WALKING/FLOATING) ---
         if action != glfw.PRESS: return
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
-        if key == glfw.KEY_R: self.state.reset_requested = True; return
+        if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
         if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
         if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
+        
+        # --- 新增：X 鍵觸發軟重置 ---
+        if key == glfw.KEY_X:
+            self.state.soft_reset_requested = True
+            return
         
         if key == glfw.KEY_F:
             new_mode = "FLOATING" if self.state.control_mode == "WALKING" else "WALKING"
@@ -93,7 +92,7 @@ class KeyboardInputHandler:
         elif key == glfw.KEY_J: params.kd -= p_step['kd']
         elif key == glfw.KEY_Y: params.action_scale += p_step['action_scale']
         elif key == glfw.KEY_H: params.action_scale -= p_step['action_scale']
-        elif key == glfw.KEY_P: params.bias += p_step['bias'] # P 鍵保留其調整 Bias 的功能
+        elif key == glfw.KEY_P: params.bias += p_step['bias']
         elif key == glfw.KEY_SEMICOLON: params.bias -= p_step['bias']
         
         params.kp = max(0, params.kp)
