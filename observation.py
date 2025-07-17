@@ -74,7 +74,8 @@ class ObservationBuilder:
         # === 【核心修改】直接返回關節的【絕對角度】                    ===
         # === 這樣 AI 觀察到的就是真實的物理世界的角度值。            ===
         # =================================================================
-        return self.data.qpos[7:]
+        return self.data.qpos[7:] - self.default_pose
+
 
     def _get_joint_velocities(self, **kwargs):
         return self.data.qvel[6:] * 0.05

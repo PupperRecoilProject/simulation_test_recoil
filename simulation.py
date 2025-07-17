@@ -139,6 +139,17 @@ class Simulation:
         self.model.dof_damping[6:] = params.kd
         self.model.actuator_biasprm[:, 1] = params.bias
         self.data.ctrl[:] = ctrl_cmd
+        
+    def apply_position_control(self, target_pos: np.ndarray, params: TuningParams):
+        """使用MuJoCo內建的PD控制器"""
+        # 設定致動器增益 a = Kp
+        self.model.actuator_gainprm[:, 0] = params.kp
+        # 設定偏置 b1 = -Kp
+        self.model.actuator_biasprm[:, 1] = -params.kp
+        # 設定偏置 b2 = -Kd
+        self.model.actuator_biasprm[:, 2] = -params.kd
+        # 注意：現在控制輸入是目標角度！
+        self.data.ctrl[:] = target_pos
 
     def step(self, state: SimulationState):
         """執行物理模擬，直到模擬時間趕上控制計時器。"""

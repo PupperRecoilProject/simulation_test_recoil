@@ -2096,7 +2096,7 @@ def run_simulation(model, data, policy, obs_builder, duration):
         recent_actions.append(action_raw.copy())
         
         final_ctrl = action_raw * 1.0
-        data.ctrl[:] = final_ctrl
+        [:] = final_ctrl
         mujoco.mj_step(model, data)
 
     if not recent_actions:

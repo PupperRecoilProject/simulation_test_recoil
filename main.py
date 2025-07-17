@@ -65,6 +65,9 @@ def main():
             state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
+        # =========================================================
+        # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
+        # =========================================================
         state.latest_final_ctrl[:] = sim.default_pose
         state.hard_reset_requested = False
 
@@ -75,6 +78,9 @@ def main():
         sim.data.qvel[6:] = 0
         policy.reset()
         state.clear_command()
+        # =========================================================
+        # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
+        # =========================================================
         state.latest_final_ctrl[:] = sim.default_pose
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
@@ -122,7 +128,7 @@ def main():
                 final_ctrl = state.latest_final_ctrl + delta_action
             
             state.latest_final_ctrl = final_ctrl
-            sim.apply_control(final_ctrl, state.tuning_params)
+            sim.apply_position_control(final_ctrl, state.tuning_params)
             
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:

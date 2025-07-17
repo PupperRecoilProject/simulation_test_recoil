@@ -78,13 +78,12 @@ class DebugOverlay:
         """渲染手動 Final Ctrl 模式的專用介面。"""
         mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
         
-        # 【新增】根據懸浮狀態顯示不同的標題
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
 
         help_text = (
             f"{help_title}\n\n"
-            "Press 'F' to Toggle Floating\n\n" # 新增提示
+            "Press 'F' to Toggle Floating\n\n"
             "Press '1' / '2' to Select Joint\n"
             "Press UP / DOWN to Adjust Target Angle\n"
             "Press 'C' to Reset All Targets to 0\n\n"
@@ -115,6 +114,10 @@ class DebugOverlay:
             else: right_col_text += line_text
             
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
+        # =================================================================
+        # === 【核心修正】調整右欄文字的起始位置，避免與左欄重疊        ===
+        # =================================================================
+        # 將右欄的起始 x 座標從 viewport 寬度的 45% 處開始
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
     
@@ -125,7 +128,6 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
-        # 【文字修正】更新幫助文字
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
