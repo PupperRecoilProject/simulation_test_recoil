@@ -38,7 +38,7 @@ initial_tuning_params:
   kp: 5.0
   kd: 0.50
   action_scale: 0.5
-  bias: -15.0
+  bias: -0.0
 
 # ==================================
 # === 觀察配方 (Observation Recipes)

@@ -70,13 +70,15 @@ class DebugOverlay:
             line_text = f"{prefix}{name:<15}: Offset={offset_val:+.2f}, Final={final_val:+.2f}\n"
             if i < num_joints_per_col: left_col_text += line_text
             else: right_col_text += line_text
+        
+        # 關節測試模式的佈局維持原樣
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
     def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染手動 Final Ctrl 模式的專用介面。"""
-        mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
+        # 移除所有背景遮罩
         
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
@@ -89,7 +91,8 @@ class DebugOverlay:
             "Press 'C' to Reset All Targets to 0\n\n"
             "Press 'G' to Return to Walking Mode"
         )
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        # 幫助文字繪製在右上角
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
         
         joint_names = [
             "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
@@ -102,6 +105,7 @@ class DebugOverlay:
         
         current_joint_positions = sim.data.qpos[7:]
         
+        # 遍歷所有關節，分別生成左右兩欄的文字字串
         for i, name in enumerate(joint_names):
             prefix = ">> " if i == state.manual_ctrl_index else "   "
             target_val = state.manual_final_ctrl[i]
@@ -110,16 +114,25 @@ class DebugOverlay:
             
             line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n"
             
-            if i < num_joints_per_col: left_col_text += line_text
-            else: right_col_text += line_text
-            
+            if i < num_joints_per_col:
+                left_col_text += line_text
+            else:
+                right_col_text += line_text
+        
+        # =========================================================================
+        # === 【核心修復】分別繪製左右兩欄，並為右欄創建一個偏移的繪圖區域      ===
+        # =========================================================================
+        
+        # 1. 直接將左欄文字繪製在螢幕左上角
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        # =================================================================
-        # === 【核心修正】調整右欄文字的起始位置，避免與左欄重疊        ===
-        # =================================================================
-        # 將右欄的起始 x 座標從 viewport 寬度的 45% 處開始
-        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
+        
+        # 2. 為右欄創建一個新的、水平偏移的繪圖區域
+        #    這個區域從螢幕寬度的 45% 處開始
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
+        
+        # 3. 將右欄文字繪製在這個【新的、偏移過的】區域的左上角
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+        # =========================================================================
     
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
