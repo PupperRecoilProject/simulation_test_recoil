@@ -143,6 +143,17 @@ class Simulation:
         self.model.actuator_biasprm[:, 2] = -params.kd
         # 注意：現在控制輸入是目標角度！
         self.data.ctrl[:] = target_pos
+        # =========================================================================
+        # === 【核心修復】將 tuning_params.bias 應用為一個額外的力矩偏置         ===
+        # =========================================================================
+        # 創建一個長度為12的向量，每個元素的值都是當前的 bias
+        force_bias = np.full(self.config.num_motors, params.bias)
+        
+        # 將這個偏置力矩向量應用到12個關節的自由度上。
+        # data.qfrc_applied 的前6個元素對應浮動基座，後12個對應關節。
+        # 因為此函式在主迴圈中每一步都會被呼叫，所以會不斷刷新這個值，無需手動清零。
+        self.data.qfrc_applied[6:] = force_bias
+        # =========================================================================
 
     def step(self, state: SimulationState):
         """執行物理模擬，直到模擬時間趕上控制計時器。"""
