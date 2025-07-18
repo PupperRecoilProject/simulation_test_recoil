@@ -2,7 +2,7 @@
      Pupper Model - Final Version with Global PD(Kp, Kv) Settings
      ================================================================= -->
 <mujoco model="pupper_global_pd">
-  <compiler angle="radian" meshdir="assets/mesh" autolimits="true"/> <!-- assets to assets/mesh -->
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
   <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">
     <flag eulerdamp="disable"/>
   </option>
