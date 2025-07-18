@@ -24,15 +24,15 @@ class SimulationState:
     tuning_params: TuningParams = field(init=False)
     
     # --- 重置旗標 ---
-    hard_reset_requested: bool = False # R 鍵觸發的完全重置
-    soft_reset_requested: bool = False # X 鍵觸發的空中姿態重置
+    hard_reset_requested: bool = False
+    soft_reset_requested: bool = False
 
     control_timer: float = 0.0
     
     # --- 模式狀態 ---
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
-    control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE", "JOINT_TEST", "MANUAL_CTRL"
+    control_mode: str = "WALKING"
 
     # --- UI & 跨模組資料 ---
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -55,11 +55,14 @@ class SimulationState:
     # --- 手動 Final Ctrl 模式相關狀態 ---
     manual_ctrl_index: int = 0
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
-    manual_mode_is_floating: bool = False # 【新增】記錄手動模式下是否懸浮
+    manual_mode_is_floating: bool = False
 
-    # --- 新增：設備連接狀態 ---
+    # --- 設備連接狀態 ---
     serial_is_connected: bool = False
     gamepad_is_connected: bool = False
+
+    # --- 主頁面參數調整索引 ---
+    tuning_param_index: int = 0 # 0:kp, 1:kd, 2:action_scale, 3:bias
 
     # --- 物件引用 ---
     floating_controller_ref: 'FloatingController' = None
@@ -99,20 +102,17 @@ class SimulationState:
         """切換主控制模式，並呼叫對應的啟用/禁用函式。"""
         if self.control_mode == new_mode: return
 
-        # --- 離開舊模式時的清理工作 ---
         if self.control_mode == "FLOATING":
             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.disable()
-        # 【新增】離開 MANUAL_CTRL 模式時，如果處於懸浮狀態，則禁用它
         elif self.control_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
              if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.disable()
-             self.manual_mode_is_floating = False # 重置旗標
+             self.manual_mode_is_floating = False
         
         self.control_mode = new_mode
         print(f"控制模式已切換至: {self.control_mode}")
 
-        # --- 進入新模式時的設定工作 ---
         if new_mode == "FLOATING":
             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.enable(self.latest_pos)

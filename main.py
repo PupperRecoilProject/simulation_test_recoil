@@ -26,15 +26,11 @@ def main():
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
     
-    # 【修改】僅初始化物件，不在啟動時自動掃描連接
     serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
     
-    # 【修改】將 serial_comm 和 xbox_handler 的實例傳入，以便鍵盤處理器可以呼叫它們
     keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler)
     keyboard_handler.register_callbacks(sim.window)
-    
-    # 【移除】不再需要在啟動時自動掃描和切換到 GAMEPAD 模式
     
     try:
         assumed_dim = next(iter(config.observation_recipes))
@@ -69,7 +65,6 @@ def main():
         state.reset_control_state(sim.data.time)
         state.clear_command()
         
-        # 【新增】在重置時，清理所有模式特定的狀態，增強穩健性
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
@@ -84,7 +79,6 @@ def main():
         policy.reset()
         state.clear_command()
 
-        # 【新增】在重置時，清理所有模式特定的狀態，增強穩健性
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
@@ -95,7 +89,7 @@ def main():
     hard_reset()
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
     print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
-    print("    (U: 掃描序列埠, J: 掃描搖桿)") # 新增提示
+    print("    (U: 掃描序列埠, J: 掃描搖桿)")
 
     state.execute_one_step = False
 

@@ -12,6 +12,8 @@ class XboxInputHandler:
         self.config = state.config
         self.controller = XboxController()
         self.last_input_state = {}
+        self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
+        self.num_params = len(self.param_keys)
     
     def scan_and_connect(self) -> bool:
         """呼叫底層控制器進行掃描和連接。"""
@@ -40,28 +42,33 @@ class XboxInputHandler:
         self.state.command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1
         self.state.command[2] = current_input['right_analog_x'] * self.config.gamepad_sensitivity['wz']
 
-        p_step, params = self.config.param_adjust_steps, self.state.tuning_params
-
         if current_input['button_select'] and not self.last_input_state.get('button_select', 0):
             self.state.hard_reset_requested = True
+            
+        if current_input['button_l1'] and not self.last_input_state.get('button_l1', 0):
+            self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
+        
+        if current_input['button_r1'] and not self.last_input_state.get('button_r1', 0):
+            self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
+
         dpad_y = current_input['dpad'][1]
         last_dpad_y = self.last_input_state.get('dpad', (0,0))[1]
-        if dpad_y == 1 and last_dpad_y != 1: params.kp += p_step['kp']
-        if dpad_y == -1 and last_dpad_y != -1: params.kp -= p_step['kp']
-        dpad_x = current_input['dpad'][0]
-        last_dpad_x = self.last_input_state.get('dpad', (0,0))[0]
-        if dpad_x == 1 and last_dpad_x != 1: params.kd += p_step['kd']
-        if dpad_x == -1 and last_dpad_x != -1: params.kd -= p_step['kd']
-        if current_input['button_r1'] and not self.last_input_state.get('button_r1', 0): params.action_scale += p_step['action_scale']
-        if current_input['button_l1'] and not self.last_input_state.get('button_l1', 0): params.action_scale -= p_step['action_scale']
-        if current_input['button_y'] and not self.last_input_state.get('button_y', 0): params.bias += p_step['bias']
-        if current_input['button_a'] and not self.last_input_state.get('button_a', 0): params.bias -= p_step['bias']
+
+        if dpad_y != last_dpad_y:
+            param_to_adjust = self.param_keys[self.state.tuning_param_index]
+            step = self.config.param_adjust_steps.get(param_to_adjust, 0.1)
+            current_value = getattr(self.state.tuning_params, param_to_adjust)
+
+            if dpad_y == 1:
+                setattr(self.state.tuning_params, param_to_adjust, current_value + step)
+            elif dpad_y == -1:
+                setattr(self.state.tuning_params, param_to_adjust, current_value - step)
         
         self.last_input_state = current_input
         
-        params.kp = max(0, params.kp)
-        params.kd = max(0, params.kd)
-        params.action_scale = max(0, params.action_scale)
+        self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
+        self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
+        self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
 
     def close(self):
         """關閉搖桿連接。"""

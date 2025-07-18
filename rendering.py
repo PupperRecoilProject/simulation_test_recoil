@@ -128,9 +128,6 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
-        # =========================================================================
-        # === 【核心修改】更新幫助文字，將 Kd 的提示從 L/J 改為 O/L             ===
-        # =========================================================================
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
@@ -142,21 +139,24 @@ class DebugOverlay:
             "  U: Scan Serial  | J: Scan Gamepad\n\n"
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
-            "  I/K: Kp | O/L: Kd\n"
-            "  Y/H: ActScl | P/;: Bias\n\n"
+            "  [/]: Select Param\n"
+            "  UP/DOWN: Adjust Value\n\n"
             "[Gamepad Mode]\n"
             "  L-Stick: Move | R-Stick: Turn\n"
-            "  D-Pad U/D: Kp | D-Pad R/L: Kd\n"
-            "  LB/RB: ActScl | Y/A: Bias\n"
+            "  LB/RB: Select Param\n"
+            "  D-Pad U/D: Adjust Value\n"
             "  Select/View: Reset"
         )
-        # =========================================================================
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
 
         serial_status = "Connected" if state.serial_is_connected else "Disconnected (Press U to Scan)"
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (Press J to Scan)"
 
         p = state.tuning_params
+        
+        prefixes = ["   "] * 4
+        prefixes[state.tuning_param_index] = ">> "
+
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
             f"Time: {sim.data.time:.2f} s\n\n"
@@ -164,13 +164,14 @@ class DebugOverlay:
             f"Serial: {serial_status}\n"
             f"Gamepad: {gamepad_status}\n\n"
             f"--- Tuning Params ---\n"
-            f"{format_vec('Kp:', np.array([p.kp]), 1)}\n"
-            f"{format_vec('Kd:', np.array([p.kd]), 2)}\n"
-            f"{format_vec('Act Scale:', np.array([p.action_scale]), 3)}\n"
-            f"{format_vec('Bias:', np.array([p.bias]), 1)}\n\n"
+            f"{prefixes[0]}{format_vec('Kp:', np.array([p.kp]), 1)}\n"
+            f"{prefixes[1]}{format_vec('Kd:', np.array([p.kd]), 2)}\n"
+            f"{prefixes[2]}{format_vec('Act Scale:', np.array([p.action_scale]), 3)}\n"
+            f"{prefixes[3]}{format_vec('Bias:', np.array([p.bias]), 1)}\n\n"
             f"--- Command ---\n"
             f"{format_vec('User Cmd:', state.command)}\n"
         )
+
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
             target_height = sim.config.floating_controller.target_height
