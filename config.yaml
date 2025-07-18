@@ -35,8 +35,8 @@ param_adjust_steps:
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
 initial_tuning_params:
-  kp: 5.0
-  kd: 0.50
+  kp: 4.0
+  kd: 0.40
   action_scale: 0.5
   bias: -0.0
 
@@ -50,14 +50,14 @@ observation_recipes:
     - 'commands'
     - 'joint_positions'
     - 'last_action'
-  48:
+  48: # <-- 修改這個 48 維的順序
     - 'linear_velocity'
     - 'angular_velocity'
     - 'gravity_vector'
-    - 'commands'
     - 'joint_positions'
     - 'joint_velocities'
     - 'last_action'
+    - 'commands' # <-- 將 commands 移動到最後
 
 # ================================================================= #
 # === 懸浮控制器設定 (Floating Controller Settings) - 精細調校版 ===

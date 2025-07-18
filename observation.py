@@ -78,7 +78,7 @@ class ObservationBuilder:
 
 
     def _get_joint_velocities(self, **kwargs):
-        return self.data.qvel[6:] * 1.00 #0.05
+        return self.data.qvel[6:].copy() # 移除 * 0.05，並加上 .copy() 以確保安全
 
     def _get_foot_contact_states(self, **kwargs):
         foot_geom_names = ['FR', 'FL', 'RR', 'RL']
