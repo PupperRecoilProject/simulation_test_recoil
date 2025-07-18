@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
     from simulation import Simulation
+    from serial_communicator import SerialCommunicator
 
 class DebugOverlay:
     """
@@ -71,15 +72,12 @@ class DebugOverlay:
             if i < num_joints_per_col: left_col_text += line_text
             else: right_col_text += line_text
         
-        # 關節測試模式的佈局維持原樣
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
     def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染手動 Final Ctrl 模式的專用介面。"""
-        # 移除所有背景遮罩
-        
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
 
@@ -91,7 +89,6 @@ class DebugOverlay:
             "Press 'C' to Reset All Targets to 0\n\n"
             "Press 'G' to Return to Walking Mode"
         )
-        # 幫助文字繪製在右上角
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
         
         joint_names = [
@@ -105,7 +102,6 @@ class DebugOverlay:
         
         current_joint_positions = sim.data.qpos[7:]
         
-        # 遍歷所有關節，分別生成左右兩欄的文字字串
         for i, name in enumerate(joint_names):
             prefix = ">> " if i == state.manual_ctrl_index else "   "
             target_val = state.manual_final_ctrl[i]
@@ -119,21 +115,12 @@ class DebugOverlay:
             else:
                 right_col_text += line_text
         
-        # =========================================================================
-        # === 【核心修復】分別繪製左右兩欄，並為右欄創建一個偏移的繪圖區域      ===
-        # =========================================================================
-        
-        # 1. 直接將左欄文字繪製在螢幕左上角
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
         
-        # 2. 為右欄創建一個新的、水平偏移的繪圖區域
-        #    這個區域從螢幕寬度的 45% 處開始
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
         
-        # 3. 將右欄文字繪製在這個【新的、偏移過的】區域的左上角
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
-        # =========================================================================
-    
+
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
         def format_vec(label: str, vec, precision=3, label_width=24):
@@ -141,18 +128,21 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
+        # =========================================================================
+        # === 【核心修改】更新幫助文字，將 Kd 的提示從 L/J 改為 O/L             ===
+        # =========================================================================
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
             "  SPACE: Pause/Play | N: Next Step\n"
             "  F: Float | G: Joint Test | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset\n"
-            "  X: Soft Reset (in Float/Test mode)\n"
-            "  M: Input Mode   | TAB: Info Page\n"
-            "  C: Clear Cmd (Keyboard)\n\n"
+            "  X: Soft Reset   | TAB: Info Page\n"
+            "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
+            "  U: Scan Serial  | J: Scan Gamepad\n\n"
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
-            "  I/K: Kp | L/J: Kd\n"
+            "  I/K: Kp | O/L: Kd\n"
             "  Y/H: ActScl | P/;: Bias\n\n"
             "[Gamepad Mode]\n"
             "  L-Stick: Move | R-Stick: Turn\n"
@@ -160,12 +150,19 @@ class DebugOverlay:
             "  LB/RB: ActScl | Y/A: Bias\n"
             "  Select/View: Reset"
         )
+        # =========================================================================
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+
+        serial_status = "Connected" if state.serial_is_connected else "Disconnected (Press U to Scan)"
+        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (Press J to Scan)"
 
         p = state.tuning_params
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
             f"Time: {sim.data.time:.2f} s\n\n"
+            f"--- Devices ---\n"
+            f"Serial: {serial_status}\n"
+            f"Gamepad: {gamepad_status}\n\n"
             f"--- Tuning Params ---\n"
             f"{format_vec('Kp:', np.array([p.kp]), 1)}\n"
             f"{format_vec('Kd:', np.array([p.kd]), 2)}\n"

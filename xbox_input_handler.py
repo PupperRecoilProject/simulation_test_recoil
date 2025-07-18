@@ -1,6 +1,6 @@
 # xbox_input_handler.py
 from state import SimulationState
-from xbox_controller import XboxController # 現在會導入 pygame 版本的控制器
+from xbox_controller import XboxController
 
 class XboxInputHandler:
     """
@@ -11,8 +11,15 @@ class XboxInputHandler:
         self.state = state
         self.config = state.config
         self.controller = XboxController()
-        self.last_input_state = self.controller.get_input() if self.is_available() else {}
+        self.last_input_state = {}
     
+    def scan_and_connect(self) -> bool:
+        """呼叫底層控制器進行掃描和連接。"""
+        is_success = self.controller.scan_and_connect()
+        if is_success:
+            self.state.toggle_input_mode("GAMEPAD")
+        return is_success
+
     def is_available(self) -> bool:
         """檢查搖桿是否已成功初始化並連接。"""
         return self.controller.is_connected()
@@ -23,32 +30,28 @@ class XboxInputHandler:
             if self.state.input_mode == "GAMEPAD":
                 print("🎮 搖桿已斷開，自動切換回鍵盤模式。")
                 self.state.toggle_input_mode("KEYBOARD")
+                self.state.gamepad_is_connected = False
             return
 
-        # *** 關鍵修改：先處理事件，再讀取狀態 ***
         self.controller.update() 
         current_input = self.controller.get_input()
         
-        # 後續的邏輯完全不變
         self.state.command[0] = current_input['left_analog_x'] * self.config.gamepad_sensitivity['vy']
-        self.state.command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1 # Y軸反向
+        self.state.command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1
         self.state.command[2] = current_input['right_analog_x'] * self.config.gamepad_sensitivity['wz']
 
         p_step, params = self.config.param_adjust_steps, self.state.tuning_params
 
         if current_input['button_select'] and not self.last_input_state.get('button_select', 0):
-            self.state.reset_requested = True
-            
+            self.state.hard_reset_requested = True
         dpad_y = current_input['dpad'][1]
         last_dpad_y = self.last_input_state.get('dpad', (0,0))[1]
         if dpad_y == 1 and last_dpad_y != 1: params.kp += p_step['kp']
         if dpad_y == -1 and last_dpad_y != -1: params.kp -= p_step['kp']
-        
         dpad_x = current_input['dpad'][0]
         last_dpad_x = self.last_input_state.get('dpad', (0,0))[0]
         if dpad_x == 1 and last_dpad_x != 1: params.kd += p_step['kd']
         if dpad_x == -1 and last_dpad_x != -1: params.kd -= p_step['kd']
-
         if current_input['button_r1'] and not self.last_input_state.get('button_r1', 0): params.action_scale += p_step['action_scale']
         if current_input['button_l1'] and not self.last_input_state.get('button_l1', 0): params.action_scale -= p_step['action_scale']
         if current_input['button_y'] and not self.last_input_state.get('button_y', 0): params.bias += p_step['bias']

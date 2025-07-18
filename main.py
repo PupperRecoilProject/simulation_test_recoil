@@ -25,13 +25,16 @@ def main():
     
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
-    serial_comm = SerialCommunicator()
     
-    keyboard_handler = KeyboardInputHandler(state)
-    keyboard_handler.register_callbacks(sim.window)
+    # 【修改】僅初始化物件，不在啟動時自動掃描連接
+    serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
-    if xbox_handler.is_available():
-        state.toggle_input_mode("GAMEPAD")
+    
+    # 【修改】將 serial_comm 和 xbox_handler 的實例傳入，以便鍵盤處理器可以呼叫它們
+    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler)
+    keyboard_handler.register_callbacks(sim.window)
+    
+    # 【移除】不再需要在啟動時自動掃描和切換到 GAMEPAD 模式
     
     try:
         assumed_dim = next(iter(config.observation_recipes))
@@ -66,13 +69,10 @@ def main():
         state.reset_control_state(sim.data.time)
         state.clear_command()
         
-        # =========================================================================
-        # === 【新增】在重置時，清理所有模式特定的狀態，增強穩健性              ===
-        # =========================================================================
+        # 【新增】在重置時，清理所有模式特定的狀態，增強穩健性
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
-        # =========================================================================
         
         state.hard_reset_requested = False
 
@@ -84,13 +84,10 @@ def main():
         policy.reset()
         state.clear_command()
 
-        # =========================================================================
-        # === 【新增】在重置時，清理所有模式特定的狀態，增強穩健性              ===
-        # =========================================================================
+        # 【新增】在重置時，清理所有模式特定的狀態，增強穩健性
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
-        # =========================================================================
 
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
@@ -98,6 +95,7 @@ def main():
     hard_reset()
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
     print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
+    print("    (U: 掃描序列埠, J: 掃描搖桿)") # 新增提示
 
     state.execute_one_step = False
 
@@ -110,13 +108,12 @@ def main():
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         
-        # --- 修改：區分兩種重置 ---
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()
-        if serial_comm.is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
+        if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
         if state.serial_command_to_send:
             serial_comm.send_command(state.serial_command_to_send)
             state.serial_command_to_send = ""
@@ -137,20 +134,15 @@ def main():
             if state.single_step_mode:
                  print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
-            # =========================================================================
-            # === 【核心修復】為 MANUAL_CTRL 模式增加專門的邏輯分支                  ===
-            # =========================================================================
             if state.control_mode == "MANUAL_CTRL":
                 state.sim_mode_text = "Manual Ctrl"
-                # 在手動模式下，直接使用 state.manual_final_ctrl 作為目標
                 final_ctrl = state.manual_final_ctrl.copy() 
             elif state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
-            else: # 預設情況，包含 "WALKING" 和 "FLOATING" 模式
+            else:
                 state.sim_mode_text = state.control_mode
                 final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
-            # =========================================================================
 
             state.latest_final_ctrl = final_ctrl
             if state.single_step_mode:

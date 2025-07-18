@@ -57,6 +57,10 @@ class SimulationState:
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     manual_mode_is_floating: bool = False # 【新增】記錄手動模式下是否懸浮
 
+    # --- 新增：設備連接狀態 ---
+    serial_is_connected: bool = False
+    gamepad_is_connected: bool = False
+
     # --- 物件引用 ---
     floating_controller_ref: 'FloatingController' = None
 

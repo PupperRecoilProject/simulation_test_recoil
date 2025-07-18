@@ -6,9 +6,11 @@ class KeyboardInputHandler:
     """
     處理所有鍵盤輸入事件，包括對序列埠和關節測試模式的特殊處理。
     """
-    def __init__(self, state: SimulationState):
+    def __init__(self, state: SimulationState, serial_comm, xbox_handler):
         self.state = state
         self.config = state.config
+        self.serial_comm = serial_comm
+        self.xbox_handler = xbox_handler
 
     def register_callbacks(self, window):
         """註冊所有需要的 GLFW 回調。"""
@@ -56,22 +58,18 @@ class KeyboardInputHandler:
 
         if self.state.control_mode == "MANUAL_CTRL":
             if action == glfw.PRESS or action == glfw.REPEAT:
-                # 【新增】在手動模式下，F 鍵用於切換懸浮狀態
                 if key == glfw.KEY_F and action == glfw.PRESS:
-                    # 切換懸浮旗標
                     self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
                     is_floating = self.state.manual_mode_is_floating
                     
-                    # 根據新的狀態，啟用或禁用懸浮控制器
                     if is_floating:
                         if self.state.floating_controller_ref:
                             self.state.floating_controller_ref.enable(self.state.latest_pos)
                     else:
                         if self.state.floating_controller_ref:
                             self.state.floating_controller_ref.disable()
-                    return # 處理完畢，返回
+                    return
 
-                # --- 原有的手動控制邏輯 ---
                 if key == glfw.KEY_1 and action == glfw.PRESS:
                     self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
                 elif key == glfw.KEY_2 and action == glfw.PRESS:
@@ -105,6 +103,16 @@ class KeyboardInputHandler:
         if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
         if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
 
+        if key == glfw.KEY_U: # 'U' for USB/Serial
+            self.state.serial_is_connected = self.serial_comm.scan_and_connect()
+            if self.state.serial_is_connected:
+                self.state.set_control_mode("SERIAL_MODE")
+            return
+        
+        if key == glfw.KEY_J: # 'J' for Joystick
+            self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect()
+            return
+        
         if self.state.input_mode != "KEYBOARD": return
         
         step = self.config.keyboard_velocity_adjust_step
@@ -120,8 +128,14 @@ class KeyboardInputHandler:
         p_step = self.config.param_adjust_steps
         if key == glfw.KEY_I: params.kp += p_step['kp']
         elif key == glfw.KEY_K: params.kp -= p_step['kp']
-        elif key == glfw.KEY_L: params.kd += p_step['kd']
-        elif key == glfw.KEY_J: params.kd -= p_step['kd']
+        
+        # =========================================================================
+        # === 【核心修改】將 Kd 的調整按鍵從 L/J 改為 O/L                     ===
+        # =========================================================================
+        elif key == glfw.KEY_O: params.kd += p_step['kd'] # 原本是 L
+        elif key == glfw.KEY_L: params.kd -= p_step['kd'] # 原本是 J
+        # =========================================================================
+
         elif key == glfw.KEY_Y: params.action_scale += p_step['action_scale']
         elif key == glfw.KEY_H: params.action_scale -= p_step['action_scale']
         elif key == glfw.KEY_P: params.bias += p_step['bias']
