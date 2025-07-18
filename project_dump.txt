@@ -402,6 +402,38 @@ class KeyboardInputHandler:
                 elif key == glfw.KEY_G: self.state.set_control_mode("WALKING")
             return
 
+        if self.state.control_mode == "MANUAL_CTRL":
+            if action == glfw.PRESS or action == glfw.REPEAT:
+                # 【新增】在手動模式下，F 鍵用於切換懸浮狀態
+                if key == glfw.KEY_F and action == glfw.PRESS:
+                    # 切換懸浮旗標
+                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
+                    is_floating = self.state.manual_mode_is_floating
+                    
+                    # 根據新的狀態，啟用或禁用懸浮控制器
+                    if is_floating:
+                        if self.state.floating_controller_ref:
+                            self.state.floating_controller_ref.enable(self.state.latest_pos)
+                    else:
+                        if self.state.floating_controller_ref:
+                            self.state.floating_controller_ref.disable()
+                    return # 處理完畢，返回
+
+                # --- 原有的手動控制邏輯 ---
+                if key == glfw.KEY_1 and action == glfw.PRESS:
+                    self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
+                elif key == glfw.KEY_2 and action == glfw.PRESS:
+                    self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
+                elif key == glfw.KEY_UP:
+                    self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
+                elif key == glfw.KEY_DOWN:
+                    self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS:
+                    self.state.manual_final_ctrl.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS:
+                    self.state.set_control_mode("WALKING")
+            return
+
         if action != glfw.PRESS: return
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
@@ -409,7 +441,6 @@ class KeyboardInputHandler:
         if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
         if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
         
-        # --- 新增：X 鍵觸發軟重置 ---
         if key == glfw.KEY_X:
             self.state.soft_reset_requested = True
             return
@@ -420,6 +451,7 @@ class KeyboardInputHandler:
             return
         if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
         if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
+        if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
 
         if self.state.input_mode != "KEYBOARD": return
         
@@ -500,7 +532,6 @@ def main():
         if policy.model_input_dim in config.observation_recipes:
             print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
             recipe = config.observation_recipes[policy.model_input_dim]
-            # 重新初始化 ObservationBuilder 以使用新的配方
             obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
             base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
         else:
@@ -519,6 +550,9 @@ def main():
             state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
+        # =========================================================
+        # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
+        # =========================================================
         state.hard_reset_requested = False
 
     def soft_reset():
@@ -528,12 +562,15 @@ def main():
         sim.data.qvel[6:] = 0
         policy.reset()
         state.clear_command()
+        # =========================================================
+        # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
+        # =========================================================
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
 
     hard_reset()
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
 
     state.execute_one_step = False
 
@@ -546,6 +583,7 @@ def main():
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         
+        # --- 修改：區分兩種重置 ---
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
@@ -557,33 +595,40 @@ def main():
             state.serial_command_to_send = ""
 
         if state.control_mode != "SERIAL_MODE":
-            # 1. 觀察 (現在是絕對角度)
+            if state.single_step_mode:
+                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
+
             base_obs = obs_builder.get_observation(state.command, policy.last_action)
-            # 2. 決策 (輸出目標絕對角度)
+            if state.single_step_mode:
+                current_joint_angles = sim.data.qpos[7:]
+                current_joint_positions = current_joint_angles - sim.default_pose
+                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
+
             onnx_input, action_raw = policy.get_action(base_obs)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_raw
+            if state.single_step_mode:
+                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
-            # 3. 計算最終控制指令
             if state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
             else:
                 state.sim_mode_text = state.control_mode
-                # =================================================================
-                # === 【核心修改】將 AI 輸出解讀為絕對目標角度                     ===
-                # === final_ctrl 直接等於 AI 的決策 (經過縮放)                ===
-                # =================================================================
-                final_ctrl = action_raw * state.tuning_params.action_scale
-            
-            # 4. 儲存並應用控制
+                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
             state.latest_final_ctrl = final_ctrl
-            sim.apply_control(final_ctrl, state.tuning_params)
+            if state.single_step_mode:
+                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
+
+            sim.apply_position_control(final_ctrl, state.tuning_params)
             
-            # 5. 步進模擬
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
+
+            if state.single_step_mode:
+                next_joint_angles = sim.data.qpos[7:]
+                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
         
         sim.render(state, overlay)
 
@@ -675,7 +720,8 @@ class ObservationBuilder:
         # === 【核心修改】直接返回關節的【絕對角度】                    ===
         # === 這樣 AI 觀察到的就是真實的物理世界的角度值。            ===
         # =================================================================
-        return self.data.qpos[7:]
+        return self.data.qpos[7:] - self.default_pose
+
 
     def _get_joint_velocities(self, **kwargs):
         return self.data.qvel[6:] * 0.05
@@ -1214,6 +1260,38 @@ class KeyboardInputHandler:
                 elif key == glfw.KEY_G: self.state.set_control_mode("WALKING")
             return
 
+        if self.state.control_mode == "MANUAL_CTRL":
+            if action == glfw.PRESS or action == glfw.REPEAT:
+                # 【新增】在手動模式下，F 鍵用於切換懸浮狀態
+                if key == glfw.KEY_F and action == glfw.PRESS:
+                    # 切換懸浮旗標
+                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
+                    is_floating = self.state.manual_mode_is_floating
+                    
+                    # 根據新的狀態，啟用或禁用懸浮控制器
+                    if is_floating:
+                        if self.state.floating_controller_ref:
+                            self.state.floating_controller_ref.enable(self.state.latest_pos)
+                    else:
+                        if self.state.floating_controller_ref:
+                            self.state.floating_controller_ref.disable()
+                    return # 處理完畢，返回
+
+                # --- 原有的手動控制邏輯 ---
+                if key == glfw.KEY_1 and action == glfw.PRESS:
+                    self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
+                elif key == glfw.KEY_2 and action == glfw.PRESS:
+                    self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
+                elif key == glfw.KEY_UP:
+                    self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
+                elif key == glfw.KEY_DOWN:
+                    self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS:
+                    self.state.manual_final_ctrl.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS:
+                    self.state.set_control_mode("WALKING")
+            return
+
         if action != glfw.PRESS: return
 
         if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
@@ -1221,7 +1299,6 @@ class KeyboardInputHandler:
         if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
         if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
         
-        # --- 新增：X 鍵觸發軟重置 ---
         if key == glfw.KEY_X:
             self.state.soft_reset_requested = True
             return
@@ -1232,6 +1309,7 @@ class KeyboardInputHandler:
             return
         if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
         if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
+        if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
 
         if self.state.input_mode != "KEYBOARD": return
         
@@ -1312,7 +1390,6 @@ def main():
         if policy.model_input_dim in config.observation_recipes:
             print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
             recipe = config.observation_recipes[policy.model_input_dim]
-            # 重新初始化 ObservationBuilder 以使用新的配方
             obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
             base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
         else:
@@ -1331,6 +1408,9 @@ def main():
             state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
+        # =========================================================
+        # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
+        # =========================================================
         state.hard_reset_requested = False
 
     def soft_reset():
@@ -1340,12 +1420,15 @@ def main():
         sim.data.qvel[6:] = 0
         policy.reset()
         state.clear_command()
+        # =========================================================
+        # === 【核心修正】重置時，將上一幀的目標也重置為初始姿態    ===
+        # =========================================================
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
 
     hard_reset()
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
 
     state.execute_one_step = False
 
@@ -1358,6 +1441,7 @@ def main():
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         
+        # --- 修改：區分兩種重置 ---
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
@@ -1369,33 +1453,40 @@ def main():
             state.serial_command_to_send = ""
 
         if state.control_mode != "SERIAL_MODE":
-            # 1. 觀察 (現在是絕對角度)
+            if state.single_step_mode:
+                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
+
             base_obs = obs_builder.get_observation(state.command, policy.last_action)
-            # 2. 決策 (輸出目標絕對角度)
+            if state.single_step_mode:
+                current_joint_angles = sim.data.qpos[7:]
+                current_joint_positions = current_joint_angles - sim.default_pose
+                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
+
             onnx_input, action_raw = policy.get_action(base_obs)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_raw
+            if state.single_step_mode:
+                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
-            # 3. 計算最終控制指令
             if state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
             else:
                 state.sim_mode_text = state.control_mode
-                # =================================================================
-                # === 【核心修改】將 AI 輸出解讀為絕對目標角度                     ===
-                # === final_ctrl 直接等於 AI 的決策 (經過縮放)                ===
-                # =================================================================
-                final_ctrl = action_raw * state.tuning_params.action_scale
-            
-            # 4. 儲存並應用控制
+                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
             state.latest_final_ctrl = final_ctrl
-            sim.apply_control(final_ctrl, state.tuning_params)
+            if state.single_step_mode:
+                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
+
+            sim.apply_position_control(final_ctrl, state.tuning_params)
             
-            # 5. 步進模擬
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
+
+            if state.single_step_mode:
+                next_joint_angles = sim.data.qpos[7:]
+                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
         
         sim.render(state, overlay)
 
@@ -1461,6 +1552,8 @@ class DebugOverlay:
             self.render_serial_console(viewport, context, state)
         elif state.control_mode == "JOINT_TEST":
             self.render_joint_test_overlay(viewport, context, state, sim)
+        elif state.control_mode == "MANUAL_CTRL":
+            self.render_manual_ctrl_overlay(viewport, context, state, sim)
         else:
             self.render_simulation_overlay(viewport, context, state, sim)
 
@@ -1502,9 +1595,56 @@ class DebugOverlay:
             if i < num_joints_per_col: left_col_text += line_text
             else: right_col_text += line_text
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.3), 0, int(viewport.width * 0.3), viewport.height)
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
+    def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+        """渲染手動 Final Ctrl 模式的專用介面。"""
+        mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
+        
+        floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
+        help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
+
+        help_text = (
+            f"{help_title}\n\n"
+            "Press 'F' to Toggle Floating\n\n"
+            "Press '1' / '2' to Select Joint\n"
+            "Press UP / DOWN to Adjust Target Angle\n"
+            "Press 'C' to Reset All Targets to 0\n\n"
+            "Press 'G' to Return to Walking Mode"
+        )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        
+        joint_names = [
+            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
+            "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
+            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
+            "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
+        ]
+        num_joints_per_col = 6
+        left_col_text, right_col_text = "", ""
+        
+        current_joint_positions = sim.data.qpos[7:]
+        
+        for i, name in enumerate(joint_names):
+            prefix = ">> " if i == state.manual_ctrl_index else "   "
+            target_val = state.manual_final_ctrl[i]
+            actual_val = current_joint_positions[i]
+            error = target_val - actual_val
+            
+            line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n"
+            
+            if i < num_joints_per_col: left_col_text += line_text
+            else: right_col_text += line_text
+            
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
+        # =================================================================
+        # === 【核心修正】調整右欄文字的起始位置，避免與左欄重疊        ===
+        # =================================================================
+        # 將右欄的起始 x 座標從 viewport 寬度的 45% 處開始
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+    
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
         def format_vec(label: str, vec, precision=3, label_width=24):
@@ -1515,10 +1655,10 @@ class DebugOverlay:
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
-            "  SPACE: Pause/Play | N: Next Step\n" # <-- 已更新
-            "  F: Float | G: Joint Test | T: Serial\n"
+            "  SPACE: Pause/Play | N: Next Step\n"
+            "  F: Float | G: Joint Test | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset\n"
-            "  X: Soft Reset (in Float/Test mode)\n" # <-- 新增此行
+            "  X: Soft Reset (in Float/Test mode)\n"
             "  M: Input Mode   | TAB: Info Page\n"
             "  C: Clear Cmd (Keyboard)\n\n"
             "[Keyboard Mode]\n"
@@ -1866,12 +2006,16 @@ class Simulation:
         """檢查視窗是否應該關閉。"""
         return glfw.window_should_close(self.window)
         
-    def apply_control(self, ctrl_cmd: np.ndarray, params: TuningParams):
-        """將控制指令和調校參數應用到 MuJoCo 模型。"""
+    def apply_position_control(self, target_pos: np.ndarray, params: TuningParams):
+        """使用MuJoCo內建的PD控制器"""
+        # 設定致動器增益 a = Kp
         self.model.actuator_gainprm[:, 0] = params.kp
-        self.model.dof_damping[6:] = params.kd
-        self.model.actuator_biasprm[:, 1] = params.bias
-        self.data.ctrl[:] = ctrl_cmd
+        # 設定偏置 b1 = -Kp
+        self.model.actuator_biasprm[:, 1] = -params.kp
+        # 設定偏置 b2 = -Kd
+        self.model.actuator_biasprm[:, 2] = -params.kd
+        # 注意：現在控制輸入是目標角度！
+        self.data.ctrl[:] = target_pos
 
     def step(self, state: SimulationState):
         """執行物理模擬，直到模擬時間趕上控制計時器。"""
@@ -1939,7 +2083,7 @@ class SimulationState:
     # --- 模式狀態 ---
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
-    control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE", "JOINT_TEST"
+    control_mode: str = "WALKING"  # 可選值: "WALKING", "FLOATING", "SERIAL_MODE", "JOINT_TEST", "MANUAL_CTRL"
 
     # --- UI & 跨模組資料 ---
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
@@ -1959,6 +2103,11 @@ class SimulationState:
     joint_test_index: int = 0
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
 
+    # --- 手動 Final Ctrl 模式相關狀態 ---
+    manual_ctrl_index: int = 0
+    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    manual_mode_is_floating: bool = False # 【新增】記錄手動模式下是否懸浮
+
     # --- 物件引用 ---
     floating_controller_ref: 'FloatingController' = None
 
@@ -1976,11 +2125,11 @@ class SimulationState:
         )
         self.latest_action_raw = np.zeros(self.config.num_motors)
         self.latest_final_ctrl = np.zeros(self.config.num_motors)
+        self.manual_final_ctrl = np.zeros(self.config.num_motors)
         print("✅ SimulationState 初始化完成。")
 
     def reset_control_state(self, sim_time: float):
         self.control_timer = sim_time
-        # 注意：這裡不再重置 reset_requested 旗標，由主迴圈處理
         print("✅ 控制狀態已重置。")
 
     def clear_command(self):
@@ -1997,18 +2146,27 @@ class SimulationState:
         """切換主控制模式，並呼叫對應的啟用/禁用函式。"""
         if self.control_mode == new_mode: return
 
+        # --- 離開舊模式時的清理工作 ---
         if self.control_mode == "FLOATING":
             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.disable()
+        # 【新增】離開 MANUAL_CTRL 模式時，如果處於懸浮狀態，則禁用它
+        elif self.control_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
+             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
+                self.floating_controller_ref.disable()
+             self.manual_mode_is_floating = False # 重置旗標
         
         self.control_mode = new_mode
         print(f"控制模式已切換至: {self.control_mode}")
 
+        # --- 進入新模式時的設定工作 ---
         if new_mode == "FLOATING":
             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
                 self.floating_controller_ref.enable(self.latest_pos)
         elif new_mode == "JOINT_TEST":
             self.joint_test_offsets.fill(0.0)
+        elif new_mode == "MANUAL_CTRL":
+            self.manual_final_ctrl[:] = self.latest_final_ctrl
 
 ================================================================================
 --- FILE: test_joystick.py ---
@@ -2096,7 +2254,7 @@ def run_simulation(model, data, policy, obs_builder, duration):
         recent_actions.append(action_raw.copy())
         
         final_ctrl = action_raw * 1.0
-        [:] = final_ctrl
+        data.ctrl[:] = final_ctrl
         mujoco.mj_step(model, data)
 
     if not recent_actions:

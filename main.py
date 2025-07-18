@@ -125,12 +125,21 @@ def main():
             if state.single_step_mode:
                  print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
-            if state.control_mode == "JOINT_TEST":
+            # =========================================================================
+            # === 【核心修復】為 MANUAL_CTRL 模式增加專門的邏輯分支                  ===
+            # =========================================================================
+            if state.control_mode == "MANUAL_CTRL":
+                state.sim_mode_text = "Manual Ctrl"
+                # 在手動模式下，直接使用 state.manual_final_ctrl 作為目標
+                final_ctrl = state.manual_final_ctrl.copy() 
+            elif state.control_mode == "JOINT_TEST":
                 state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
-            else:
+            else: # 預設情況，包含 "WALKING" 和 "FLOATING" 模式
                 state.sim_mode_text = state.control_mode
                 final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
+            # =========================================================================
+
             state.latest_final_ctrl = final_ctrl
             if state.single_step_mode:
                 print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
