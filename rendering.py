@@ -48,7 +48,6 @@ class DebugOverlay:
     def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染關節手動測試模式的專用介面。"""
         mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
-        # 【修改】更新幫助文字
         help_text = (
             "--- JOINT TEST MODE ---\n\n"
             "Press '[ / ]' to Select Joint\n"
@@ -82,7 +81,6 @@ class DebugOverlay:
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
 
-        # 【修改】更新幫助文字
         help_text = (
             f"{help_title}\n\n"
             "Press 'F' to Toggle Floating\n\n"
@@ -134,7 +132,7 @@ class DebugOverlay:
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
             "  SPACE: Pause/Play | N: Next Step\n"
-            "  F: Float | G: Joint Test | B: Manual Ctrl\n"
+            "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset\n"
             "  X: Soft Reset   | TAB: Info Page\n"
             "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
@@ -172,7 +170,7 @@ class DebugOverlay:
             f"{prefixes[3]}{format_vec('Bias:', np.array([p.bias]), 1)}\n\n"
             f"--- Command ---\n"
             f"{format_vec('User Cmd:', state.command)}\n"
-        )
+        ) # <--- 【語法修復】在這裡補上了遺漏的右括號 ')'
 
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
