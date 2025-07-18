@@ -136,7 +136,8 @@ class DebugOverlay:
             "  ESC: Exit       | R: Reset\n"
             "  X: Soft Reset   | TAB: Info Page\n"
             "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
-            "  U: Scan Serial  | J: Scan Gamepad\n\n"
+            "  U: Scan Serial  | J: Scan Gamepad\n"
+            "  V: Cycle Terrain\n\n"   # 【修改】更新幫助文字，加入 V 鍵提示
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
             "  [/]: Select Param\n"
@@ -152,14 +153,19 @@ class DebugOverlay:
         serial_status = "Connected" if state.serial_is_connected else "Disconnected (Press U to Scan)"
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (Press J to Scan)"
 
+        # 【新增】獲取當前地形名稱
+        terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
+
         p = state.tuning_params
         
         prefixes = ["   "] * 4
         prefixes[state.tuning_param_index] = ">> "
 
+        # 【修改】在 UI 中加入地形資訊
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
-            f"Time: {sim.data.time:.2f} s\n\n"
+            f"Time: {sim.data.time:.2f} s\n"
+            f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
             f"Serial: {serial_status}\n"
             f"Gamepad: {gamepad_status}\n\n"

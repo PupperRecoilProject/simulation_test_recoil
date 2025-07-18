@@ -6,11 +6,13 @@ class KeyboardInputHandler:
     """
     處理所有鍵盤輸入事件，並根據當前模式進行分派。
     """
-    def __init__(self, state: SimulationState, serial_comm, xbox_handler):
+    # 【修改】接收 terrain_manager
+    def __init__(self, state: SimulationState, serial_comm, xbox_handler, terrain_manager):
         self.state = state
         self.config = state.config
         self.serial_comm = serial_comm
         self.xbox_handler = xbox_handler
+        self.terrain_manager = terrain_manager # <-- 【新增】
         self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
         self.num_params = len(self.param_keys)
 
@@ -32,6 +34,10 @@ class KeyboardInputHandler:
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
+            # 【新增】V 鍵切換地形
+            if key == glfw.KEY_V: 
+                self.terrain_manager.cycle_terrain()
+                return
             
             # 設備掃描
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return

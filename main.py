@@ -13,6 +13,7 @@ from keyboard_input_handler import KeyboardInputHandler
 from xbox_input_handler import XboxInputHandler
 from floating_controller import FloatingController
 from serial_communicator import SerialCommunicator
+from terrain_manager import TerrainManager # <-- 【新增】導入 TerrainManager
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
@@ -23,13 +24,18 @@ def main():
     state = SimulationState(config)
     sim = Simulation(config)
     
+    # 【新增】初始化地形管理器
+    terrain_manager = TerrainManager(sim.model, sim.data)
+    state.terrain_manager_ref = terrain_manager # 將引用存入 state，方便 UI 讀取
+    
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
     
     serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
     
-    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler)
+    # 【修改】將 terrain_manager 也傳入
+    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
     keyboard_handler.register_callbacks(sim.window)
     
     try:
