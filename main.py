@@ -41,6 +41,12 @@ def main():
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
     policy = ONNXPolicy(config, base_obs_dim)
+
+    # =========================================================================
+    # === 【新增】將 policy 的引用設定到 state 中，以便在模式切換時呼叫 reset ===
+    # =========================================================================
+    state.policy_ref = policy
+    # =========================================================================
     
     if policy.model_input_dim != base_obs_dim:
         if policy.model_input_dim in config.observation_recipes:

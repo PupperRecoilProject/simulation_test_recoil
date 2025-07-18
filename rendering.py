@@ -48,9 +48,10 @@ class DebugOverlay:
     def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染關節手動測試模式的專用介面。"""
         mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
+        # 【修改】更新幫助文字
         help_text = (
             "--- JOINT TEST MODE ---\n\n"
-            "Press '1' / '2' to Select Joint\n"
+            "Press '[ / ]' to Select Joint\n"
             "Press UP / DOWN to Adjust Offset\n"
             "Press 'C' to Clear All Offsets\n\n"
             "Press 'G' to Return to Walking Mode"
@@ -81,10 +82,11 @@ class DebugOverlay:
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
 
+        # 【修改】更新幫助文字
         help_text = (
             f"{help_title}\n\n"
             "Press 'F' to Toggle Floating\n\n"
-            "Press '1' / '2' to Select Joint\n"
+            "Press '[ / ]' to Select Joint\n"
             "Press UP / DOWN to Adjust Target Angle\n"
             "Press 'C' to Reset All Targets to 0\n\n"
             "Press 'G' to Return to Walking Mode"

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from floating_controller import FloatingController
+    from policy import ONNXPolicy
 
 @dataclass
 class TuningParams:
@@ -23,18 +24,15 @@ class SimulationState:
     command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
     
-    # --- 重置旗標 ---
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
 
     control_timer: float = 0.0
     
-    # --- 模式狀態 ---
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
     control_mode: str = "WALKING"
 
-    # --- UI & 跨模組資料 ---
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
     latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
@@ -43,42 +41,31 @@ class SimulationState:
     display_page: int = 0
     num_display_pages: int = 2
 
-    # --- 序列埠模式相關狀態 ---
     serial_command_buffer: str = ""
     serial_command_to_send: str = ""
     serial_latest_messages: list = field(default_factory=list)
 
-    # --- 關節手動測試模式相關狀態 ---
     joint_test_index: int = 0
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
 
-    # --- 手動 Final Ctrl 模式相關狀態 ---
     manual_ctrl_index: int = 0
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     manual_mode_is_floating: bool = False
 
-    # --- 設備連接狀態 ---
     serial_is_connected: bool = False
     gamepad_is_connected: bool = False
 
-    # --- 主頁面參數調整索引 ---
-    tuning_param_index: int = 0 # 0:kp, 1:kd, 2:action_scale, 3:bias
+    tuning_param_index: int = 0
 
-    # --- 物件引用 ---
     floating_controller_ref: 'FloatingController' = None
+    policy_ref: 'ONNXPolicy' = None
 
-    # --- 單步執行模式 ---
     single_step_mode: bool = False
     execute_one_step: bool = False
 
     def __post_init__(self):
         """在初始化後，根據設定檔設定初始值。"""
-        self.tuning_params = TuningParams(
-            kp=self.config.initial_tuning_params.kp,
-            kd=self.config.initial_tuning_params.kd,
-            action_scale=self.config.initial_tuning_params.action_scale,
-            bias=self.config.initial_tuning_params.bias
-        )
+        self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__)
         self.latest_action_raw = np.zeros(self.config.num_motors)
         self.latest_final_ctrl = np.zeros(self.config.num_motors)
         self.manual_final_ctrl = np.zeros(self.config.num_motors)
@@ -102,21 +89,33 @@ class SimulationState:
         """切換主控制模式，並呼叫對應的啟用/禁用函式。"""
         if self.control_mode == new_mode: return
 
-        if self.control_mode == "FLOATING":
-            if self.floating_controller_ref and self.floating_controller_ref.is_functional:
-                self.floating_controller_ref.disable()
-        elif self.control_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
-             if self.floating_controller_ref and self.floating_controller_ref.is_functional:
-                self.floating_controller_ref.disable()
+        old_mode = self.control_mode
+        
+        # --- 離開舊模式時的清理工作 ---
+        if old_mode == "FLOATING":
+            if self.floating_controller_ref: self.floating_controller_ref.disable()
+        elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
+             if self.floating_controller_ref: self.floating_controller_ref.disable()
              self.manual_mode_is_floating = False
         
         self.control_mode = new_mode
         print(f"控制模式已切換至: {self.control_mode}")
 
+        # --- 進入新模式時的設定工作 ---
         if new_mode == "FLOATING":
-            if self.floating_controller_ref and self.floating_controller_ref.is_functional:
-                self.floating_controller_ref.enable(self.latest_pos)
+            if self.floating_controller_ref: self.floating_controller_ref.enable(self.latest_pos)
         elif new_mode == "JOINT_TEST":
             self.joint_test_offsets.fill(0.0)
         elif new_mode == "MANUAL_CTRL":
             self.manual_final_ctrl[:] = self.latest_final_ctrl
+
+        # --- 【核心】模式切換穩定性修復 ---
+        # 如果是從手動模式切換回 AI 模式
+        is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
+        is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL"]
+        
+        if is_entering_ai_mode and is_leaving_manual_mode:
+            print("從手動模式返回，正在重置 AI 狀態以確保平滑過渡...")
+            if self.policy_ref:
+                self.policy_ref.reset()
+            self.clear_command()
