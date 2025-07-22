@@ -7,7 +7,7 @@ import time
 from config import load_config
 from state import SimulationState
 from simulation import Simulation
-from policy import PolicyManager # <-- 修改
+from policy import PolicyManager
 from observation import ObservationBuilder
 from rendering import DebugOverlay
 from keyboard_input_handler import KeyboardInputHandler
@@ -34,17 +34,30 @@ def main():
     
     serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
-    
-    try:
-        assumed_dim = next(iter(config.observation_recipes))
-        recipe = config.observation_recipes[assumed_dim]
-    except StopIteration:
+
+    # =========================================================================
+    # === 【核心修正 v2】更穩健的 Observation Recipe 選擇邏輯 =====================
+    # =========================================================================
+    if not config.observation_recipes:
         sys.exit("❌ 錯誤: 在 config.yaml 中沒有定義任何 observation_recipes。")
+
+    # 假設模型會使用維度最高的配方
+    try:
+        # 找到 config 中定義的最大維度
+        best_recipe_dim = max(config.observation_recipes.keys())
+        recipe = config.observation_recipes[best_recipe_dim]
+        print(f"✅ 根據設定檔，自動選擇基礎觀察維度: {best_recipe_dim}。")
+    except (ValueError, KeyError):
+        sys.exit("❌ 錯誤: 無法從 config.yaml 的 observation_recipes 中確定配方。")
+    # =========================================================================
 
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-    
-    # --- 使用 PolicyManager ---
+
+    if base_obs_dim != best_recipe_dim:
+        print(f"⚠️ 警告: 配方產生的維度 ({base_obs_dim}) 與預期 ({best_recipe_dim}) 不符，請檢查 recipe 定義。")
+
+    # 使用正確的 base_obs_dim 初始化 PolicyManager
     policy_manager = PolicyManager(config, base_obs_dim)
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names

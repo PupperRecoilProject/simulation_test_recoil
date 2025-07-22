@@ -17,7 +17,7 @@ SKIP_CONTENT_EXTENSIONS = {
     '.exe', '.dll', '.so', '.o', '.zip', '.rar', '.gz',
     '.gif', '.bmp', '.ico', '.mp3', '.mp4', '.avi',
     '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-    '.pyc', '.pyo', '.lock', '.swp', '.swo',
+    '.pyc', '.pyo', '.lock', '.swp', '.swo','.pyc',
 }
 
 # 3. (可選) 如果只想包含特定類型的檔案，可以設定這個清單
