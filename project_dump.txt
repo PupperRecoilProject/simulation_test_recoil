@@ -1,0 +1,3641 @@
+# 專案程式碼彙整: C:\git_project\simulation_test_recoil
+================================================================================
+
+================================================================================
+--- FILE: config.py ---
+-----------------------
+
+# config.py
+import yaml
+from dataclasses import dataclass, field
+from typing import Dict, List, Any
+
+@dataclass
+class TuningParamsConfig:
+    """從設定檔載入的初始調校參數資料類別。"""
+    kp: float
+    kd: float
+    action_scale: float
+    bias: float
+
+@dataclass
+class FloatingControllerConfig:
+    """懸浮控制器的設定。"""
+    target_height: float
+    kp_vertical: float
+    kd_vertical: float
+    kp_attitude: float
+    kd_attitude: float
+
+@dataclass
+class AppConfig:
+    """儲存所有應用程式設定的資料類別。"""
+    mujoco_model_file: str
+    onnx_model_path: str
+    num_motors: int
+    physics_timestep: float
+    control_freq: float
+    control_dt: float
+    warmup_duration: float
+    command_scaling_factors: List[float]
+    
+    keyboard_velocity_adjust_step: float
+    gamepad_sensitivity: Dict[str, float]
+    param_adjust_steps: Dict[str, float]
+
+    initial_tuning_params: TuningParamsConfig
+    observation_recipes: Dict[int, List[str]]
+    floating_controller: FloatingControllerConfig
+
+def load_config(path: str = "config.yaml") -> AppConfig:
+    """
+    從 YAML 檔案載入設定並回傳一個 AppConfig 物件。
+    """
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            config_data = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"設定檔 '{path}' 不存在。請確保檔案路徑正確。")
+    except Exception as e:
+        raise IOError(f"讀取或解析設定檔 '{path}' 時發生錯誤: {e}")
+
+    tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
+    floating_config = FloatingControllerConfig(**config_data['floating_controller'])
+    
+    config_obj = AppConfig(
+        mujoco_model_file=config_data['mujoco_model_file'],
+        onnx_model_path=config_data['onnx_model_path'],
+        num_motors=config_data['num_motors'],
+        physics_timestep=config_data['physics_timestep'],
+        control_freq=config_data['control_freq'],
+        control_dt=1.0 / config_data['control_freq'],
+        warmup_duration=config_data['warmup_duration'],
+        command_scaling_factors=config_data['command_scaling_factors'],
+        
+        keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
+        gamepad_sensitivity=config_data['gamepad_sensitivity'],
+        param_adjust_steps=config_data['param_adjust_steps'],
+        
+        initial_tuning_params=tuning_params,
+        observation_recipes=config_data['observation_recipes'],
+        floating_controller=floating_config
+    )
+    
+    print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
+    return config_obj
+
+================================================================================
+--- FILE: config.yaml ---
+-------------------------
+
+# ==================================
+# === 模擬與模型設定 (Simulation & Model Settings)
+# ==================================
+# 檔案路徑 (File Paths)
+mujoco_model_file: "assets/scene_mjx.xml"
+onnx_model_path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
+
+# 核心參數 (Core Parameters)
+num_motors: 12
+physics_timestep: 0.004 # <-- 建議修改：提高模擬精度以增強穩定性
+control_freq: 50.0
+warmup_duration: 0.0
+
+# ONNX 模型命令輸入縮放因子
+# 順序: [vy 縮放, vx 縮放, wz 縮放]
+command_scaling_factors: [1.0, 1.0, 1.0] 
+
+# ==================================
+# === 輸入控制設定 (Input Control Settings)
+# ==================================
+keyboard_velocity_adjust_step: 0.1 # m/s or rad/s per key press
+
+gamepad_sensitivity:
+  vx: 1.0   # 前後速度靈敏度 (左搖桿 Y)
+  vy: 1.0   # 左右速度靈敏度 (左搖桿 X)
+  wz: -1.5  # 轉向角速度靈敏度 (右搖桿 X), 負值表示右推右轉
+
+param_adjust_steps:
+  kp: 0.5
+  kd: 0.05
+  action_scale: 0.05
+  bias: 5
+
+# ==================================
+# === 初始調校參數 (Initial Tuning Parameters)
+# ==================================
+initial_tuning_params:
+  kp: 4.0
+  kd: 0.40
+  action_scale: 0.5
+  bias: -0.0
+
+# ==================================
+# === 觀察配方 (Observation Recipes)
+# ==================================
+observation_recipes:
+  31:
+    - 'z_angular_velocity'
+    - 'gravity_vector'
+    - 'commands'
+    - 'joint_positions'
+    - 'last_action'
+  48: # <-- 修改這個 48 維的順序
+    - 'linear_velocity'
+    - 'angular_velocity'
+    - 'gravity_vector'
+    - 'joint_positions'
+    - 'joint_velocities'
+    - 'last_action'
+    - 'commands' # <-- 將 commands 移動到最後
+
+# ================================================================= #
+# === 懸浮控制器設定 (Floating Controller Settings) - 精細調校版 ===
+# ================================================================= #
+floating_controller:
+  target_height: 0.50     # 懸浮的目標高度 (米)
+  kp_vertical: 80.0       # 垂直 P (再次降低以求平滑)
+  kd_vertical: 18.0       # 垂直 D (保持與Kp的關係)
+  kp_attitude: 20.0       # 姿態 P (再次降低)
+  kd_attitude: 4.0        # 姿態 D (相應調整)
+
+================================================================================
+--- FILE: floating_controller.py ---
+------------------------------------
+
+# floating_controller.py
+import mujoco
+import numpy as np
+from config import AppConfig
+
+class FloatingController:
+    """
+    透過啟用/禁用 weld 約束和設定 mocap body 的位置，
+    來將機器人主幹固定在空中。
+    """
+    def __init__(self, config: AppConfig, model, data):
+        """
+        初始化懸浮控制器，並獲取必要的 MuJoCo ID 和索引。
+        """
+        self.config = config.floating_controller
+        self.model = model
+        self.data = data
+        self.is_functional = False
+        
+        try:
+            anchor_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'anchor')
+            if anchor_body_id == -1: raise ValueError("在 XML 中找不到名為 'anchor' 的 body。")
+            
+            self.mocap_index = model.body_mocapid[anchor_body_id]
+            if self.mocap_index == -1: raise ValueError("'anchor' body 不是一個 mocap body。")
+
+            self.weld_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY, 'torso_anchor_weld')
+            if self.weld_id == -1: raise ValueError("在 XML 中找不到名為 'torso_anchor_weld' 的 weld 約束。")
+
+            self.is_functional = True
+            print(f"✅ 固定式懸浮控制器初始化完成。Mocap Index: {self.mocap_index}")
+        except ValueError as e:
+            print(f"❌ 懸浮控制器初始化錯誤: {e}")
+            print("     請確保 scene_mjx.xml 檔案已正確定義 'anchor' body 和 'torso_anchor_weld' 約束。懸浮功能將被禁用。")
+
+    def enable(self, current_pos: np.ndarray):
+        """啟用懸浮模式。"""
+        if not self.is_functional: return
+        
+        target_pos = np.array([current_pos[0], current_pos[1], self.config.target_height])
+        self.data.mocap_pos[self.mocap_index] = target_pos
+        self.data.mocap_quat[self.mocap_index] = np.array([1., 0, 0, 0]) # 保持水平姿態
+        self.data.eq_active[self.weld_id] = 1
+        print("🚀 已啟用固定懸浮模式。")
+
+    def disable(self):
+        """禁用懸浮模式。"""
+        if not self.is_functional: return
+        self.data.eq_active[self.weld_id] = 0
+        print("🐾 已禁用固定懸浮模式。")
+
+================================================================================
+--- FILE: keyboard_input_handler.py ---
+---------------------------------------
+
+# keyboard_input_handler.py
+import glfw
+from state import SimulationState
+
+class KeyboardInputHandler:
+    """
+    處理所有鍵盤輸入事件，並根據當前模式進行分派。
+    """
+    # 【修改】接收 terrain_manager
+    def __init__(self, state: SimulationState, serial_comm, xbox_handler, terrain_manager):
+        self.state = state
+        self.config = state.config
+        self.serial_comm = serial_comm
+        self.xbox_handler = xbox_handler
+        self.terrain_manager = terrain_manager # <-- 【新增】
+        self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
+        self.num_params = len(self.param_keys)
+
+    def register_callbacks(self, window):
+        glfw.set_key_callback(window, self.key_callback)
+        glfw.set_char_callback(window, self.char_callback)
+
+    def char_callback(self, window, codepoint):
+        if self.state.control_mode == "SERIAL_MODE":
+            self.state.serial_command_buffer += chr(codepoint)
+
+    def key_callback(self, window, key, scancode, action, mods):
+        # --- 1. 只在按鍵按下時觸發的通用功能 (模式切換、重置等) ---
+        if action == glfw.PRESS:
+            if key == glfw.KEY_SPACE: self.state.single_step_mode = not self.state.single_step_mode; print(f"\n--- SIMULATION {'PAUSED' if self.state.single_step_mode else 'PLAYING'} ---"); return
+            if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
+            if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
+            if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
+            if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
+            if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
+            if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
+            # 【新增】V 鍵切換地形
+            if key == glfw.KEY_V: 
+                self.terrain_manager.cycle_terrain()
+                return
+            
+            # 設備掃描
+            if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return
+            if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
+
+        # --- 2. 可重複觸發的模式特定功能 ---
+        # 這是最關鍵的修改：優先處理特定模式的按鍵，如果處理了就 return
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            if self.state.control_mode == "SERIAL_MODE":
+                if key == glfw.KEY_ENTER: self.state.serial_command_to_send = self.state.serial_command_buffer; self.state.serial_command_buffer = ""
+                elif key == glfw.KEY_BACKSPACE: self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
+                elif key == glfw.KEY_T and action == glfw.PRESS: self.state.set_control_mode("WALKING")
+                return
+
+            if self.state.control_mode == "JOINT_TEST":
+                if key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
+                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
+                elif key == glfw.KEY_UP: self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
+                elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.joint_test_offsets.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
+                return
+
+            if self.state.control_mode == "MANUAL_CTRL":
+                if key == glfw.KEY_F and action == glfw.PRESS:
+                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
+                    is_floating = self.state.manual_mode_is_floating
+                    if is_floating:
+                        if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
+                    else:
+                        if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
+                elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
+                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
+                elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
+                elif key == glfw.KEY_DOWN: self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.manual_final_ctrl.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
+                return
+
+        # --- 3. 如果以上模式都不是，則執行 WALKING/FLOATING 模式的預設按鍵邏輯 ---
+        if action == glfw.PRESS:
+            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
+            if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
+            if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
+            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
+        
+        if self.state.input_mode != "KEYBOARD": return
+            
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            # 參數調整
+            if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
+            elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
+            elif key == glfw.KEY_UP or key == glfw.KEY_DOWN:
+                param_to_adjust = self.param_keys[self.state.tuning_param_index]
+                step = self.config.param_adjust_steps.get(param_to_adjust, 0.1)
+                current_value = getattr(self.state.tuning_params, param_to_adjust)
+                direction = 1 if key == glfw.KEY_UP else -1
+                setattr(self.state.tuning_params, param_to_adjust, current_value + step * direction)
+                
+                self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
+                self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
+                self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
+
+            # 移動控制
+            step = self.config.keyboard_velocity_adjust_step
+            if key == glfw.KEY_C: self.state.clear_command()
+            elif key == glfw.KEY_W: self.state.command[1] += step
+            elif key == glfw.KEY_S: self.state.command[1] -= step
+            elif key == glfw.KEY_A: self.state.command[0] += step
+            elif key == glfw.KEY_D: self.state.command[0] -= step
+            elif key == glfw.KEY_Q: self.state.command[2] += step
+            elif key == glfw.KEY_E: self.state.command[2] -= step
+
+================================================================================
+--- FILE: main.py ---
+---------------------
+
+# main.py
+import sys
+import numpy as np
+import mujoco
+
+from config import load_config
+from state import SimulationState
+from simulation import Simulation
+from policy import ONNXPolicy
+from observation import ObservationBuilder
+from rendering import DebugOverlay
+from keyboard_input_handler import KeyboardInputHandler
+from xbox_input_handler import XboxInputHandler
+from floating_controller import FloatingController
+from serial_communicator import SerialCommunicator
+from terrain_manager import TerrainManager # <-- 【新增】導入 TerrainManager
+
+def main():
+    """主程式入口：初始化所有組件並運行模擬迴圈。"""
+    from xbox_controller import XboxController 
+    print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
+    
+    config = load_config()
+    state = SimulationState(config)
+    sim = Simulation(config)
+    
+    # 【新增】初始化地形管理器
+    terrain_manager = TerrainManager(sim.model, sim.data)
+    state.terrain_manager_ref = terrain_manager # 將引用存入 state，方便 UI 讀取
+    
+    floating_controller = FloatingController(config, sim.model, sim.data)
+    state.floating_controller_ref = floating_controller
+    
+    serial_comm = SerialCommunicator()
+    xbox_handler = XboxInputHandler(state)
+    
+    # 【修改】將 terrain_manager 也傳入
+    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
+    keyboard_handler.register_callbacks(sim.window)
+    
+    try:
+        assumed_dim = next(iter(config.observation_recipes))
+        recipe = config.observation_recipes[assumed_dim]
+    except StopIteration:
+        sys.exit("❌ 錯誤: 在 config.yaml 中沒有定義任何 observation_recipes。")
+
+    obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
+    policy = ONNXPolicy(config, base_obs_dim)
+
+    # =========================================================================
+    # === 【新增】將 policy 的引用設定到 state 中，以便在模式切換時呼叫 reset ===
+    # =========================================================================
+    state.policy_ref = policy
+    # =========================================================================
+    
+    if policy.model_input_dim != base_obs_dim:
+        if policy.model_input_dim in config.observation_recipes:
+            print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
+            recipe = config.observation_recipes[policy.model_input_dim]
+            obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+            base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
+        else:
+            sys.exit(f"❌ 致命錯誤: 模型期望維度 ({policy.model_input_dim}) 與配方產生的觀察維度 ({base_obs_dim}) 不符，且找不到匹配配方！")
+
+    ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 'phase_signal':1}
+    used_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
+    overlay = DebugOverlay(recipe, used_dims)
+
+    def hard_reset():
+        """完全重置整個模擬環境。"""
+        print("\n--- 正在執行完全重置 (Hard Reset) ---")
+        sim.reset()
+        policy.reset()
+        if state.control_mode == "FLOATING":
+            state.set_control_mode("WALKING")
+        state.reset_control_state(sim.data.time)
+        state.clear_command()
+        
+        state.joint_test_offsets.fill(0.0)
+        state.manual_final_ctrl.fill(0.0)
+        state.manual_mode_is_floating = False
+        
+        state.hard_reset_requested = False
+
+    def soft_reset():
+        """僅重置機器人姿態和控制器狀態，不重置模擬時間和物理世界。"""
+        print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
+        sim.data.qpos[7:] = sim.default_pose
+        sim.data.qvel[6:] = 0
+        policy.reset()
+        state.clear_command()
+
+        state.joint_test_offsets.fill(0.0)
+        state.manual_final_ctrl.fill(0.0)
+        state.manual_mode_is_floating = False
+
+        mujoco.mj_forward(sim.model, sim.data)
+        state.soft_reset_requested = False
+
+    hard_reset()
+    print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
+    print("    (U: 掃描序列埠, J: 掃描搖桿)")
+
+    state.execute_one_step = False
+
+    while not sim.should_close():
+        if state.single_step_mode and not state.execute_one_step:
+            sim.render(state, overlay)
+            continue
+        if state.execute_one_step:
+            state.execute_one_step = False
+
+        if state.input_mode == "GAMEPAD": xbox_handler.update_state()
+        
+        if state.hard_reset_requested: hard_reset()
+        if state.soft_reset_requested: soft_reset()
+
+        state.latest_pos = sim.data.body('torso').xpos.copy()
+        state.latest_quat = sim.data.body('torso').xquat.copy()
+        if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
+        if state.serial_command_to_send:
+            serial_comm.send_command(state.serial_command_to_send)
+            state.serial_command_to_send = ""
+
+        if state.control_mode != "SERIAL_MODE":
+            if state.single_step_mode:
+                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
+
+            base_obs = obs_builder.get_observation(state.command, policy.last_action)
+            if state.single_step_mode:
+                current_joint_angles = sim.data.qpos[7:]
+                current_joint_positions = current_joint_angles - sim.default_pose
+                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
+
+            onnx_input, action_raw = policy.get_action(base_obs)
+            state.latest_onnx_input = onnx_input.flatten()
+            state.latest_action_raw = action_raw
+            if state.single_step_mode:
+                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
+
+            if state.control_mode == "MANUAL_CTRL":
+                state.sim_mode_text = "Manual Ctrl"
+                final_ctrl = state.manual_final_ctrl.copy() 
+            elif state.control_mode == "JOINT_TEST":
+                state.sim_mode_text = "Joint Test"
+                final_ctrl = sim.default_pose + state.joint_test_offsets
+            else:
+                state.sim_mode_text = state.control_mode
+                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
+
+            state.latest_final_ctrl = final_ctrl
+            if state.single_step_mode:
+                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
+
+            sim.apply_position_control(final_ctrl, state.tuning_params)
+            
+            target_time = sim.data.time + config.control_dt
+            while sim.data.time < target_time:
+                mujoco.mj_step(sim.model, sim.data)
+
+            if state.single_step_mode:
+                next_joint_angles = sim.data.qpos[7:]
+                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
+        
+        sim.render(state, overlay)
+
+    sim.close()
+    xbox_handler.close()
+    serial_comm.close()
+    print("\n模擬結束，程式退出。")
+
+if __name__ == "__main__":
+    main()
+
+================================================================================
+--- FILE: observation.py ---
+----------------------------
+
+# observation.py
+import numpy as np
+import mujoco
+from config import AppConfig
+
+class ObservationBuilder:
+    def __init__(self, recipe: list, data, model, torso_id, default_pose, config: AppConfig):
+        self.recipe = recipe
+        self.data = data
+        self.model = model
+        self.torso_id = torso_id
+        # 在絕對角度模式下，default_pose 主要用於重置和關節測試模式
+        self.default_pose = default_pose
+        self.config = config
+        self._component_generators = self._register_components()
+        for component in self.recipe:
+            if component not in self._component_generators:
+                print(f"⚠️ 警告: 觀察配方中的元件 '{component}' 沒有對應的產生器函式，將被忽略。")
+
+    def _register_components(self):
+        """註冊所有已知的觀察元件及其對應的產生器函式。"""
+        return {
+            'z_angular_velocity': self._get_z_angular_velocity,
+            'gravity_vector': self._get_gravity_vector,
+            'commands': self._get_commands,
+            'joint_positions': self._get_joint_positions,
+            'last_action': self._get_last_action,
+            'linear_velocity': self._get_linear_velocity,
+            'angular_velocity': self._get_full_angular_velocity,
+            'joint_velocities': self._get_joint_velocities,
+            'foot_contact_states': self._get_foot_contact_states,
+            'phase_signal': self._get_phase_signal,
+        }
+
+    def get_observation(self, command, last_action) -> np.ndarray:
+        """根據配方列表，依序呼叫產生器函式並拼接成最終的觀察向量。"""
+        obs_list = []
+        for name in self.recipe:
+            if name in self._component_generators:
+                obs_list.append(self._component_generators[name](command=command, last_action=last_action))
+        
+        if not obs_list:
+            return np.array([], dtype=np.float32)
+
+        return np.concatenate(obs_list).astype(np.float32)
+
+    def _get_torso_inverse_rotation(self):
+        """輔助函式：計算軀幹姿態的逆四元數。"""
+        torso_quat = self.data.xquat[self.torso_id]
+        norm = np.sum(np.square(torso_quat))
+        if norm < 1e-8: torso_quat = np.array([1., 0, 0, 0])
+        torso_quat /= np.sqrt(np.sum(np.square(torso_quat)))
+        return np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / np.sum(np.square(torso_quat))
+
+    def _rotate_vec_by_quat_inv(self, v, q_inv):
+        """輔助函式：使用逆四元數將世界座標系向量轉換為局部座標系。"""
+        u, s = q_inv[1:], q_inv[0]
+        return 2 * np.dot(u, v) * u + (s * s - np.dot(u, u)) * v + 2 * s * np.cross(u, v)
+
+    def _get_z_angular_velocity(self, **kwargs):
+        inv_torso_rot = self._get_torso_inverse_rotation()
+        local_rpy_rate = self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 0:3], inv_torso_rot)
+        return np.array([local_rpy_rate[2]]) * 0.25
+
+    def _get_gravity_vector(self, **kwargs):
+        inv_torso_rot = self._get_torso_inverse_rotation()
+        return self._rotate_vec_by_quat_inv(np.array([0, 0, -1]), inv_torso_rot)
+
+    def _get_commands(self, command, **kwargs):
+        return command * np.array(self.config.command_scaling_factors) 
+
+    def _get_joint_positions(self, **kwargs):
+        # =================================================================
+        # === 【核心修改】直接返回關節的【絕對角度】                    ===
+        # === 這樣 AI 觀察到的就是真實的物理世界的角度值。            ===
+        # =================================================================
+        return self.data.qpos[7:] - self.default_pose
+
+
+    def _get_joint_velocities(self, **kwargs):
+        return self.data.qvel[6:].copy() # 移除 * 0.05，並加上 .copy() 以確保安全
+
+    def _get_foot_contact_states(self, **kwargs):
+        foot_geom_names = ['FR', 'FL', 'RR', 'RL']
+        foot_geom_ids = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name) for name in foot_geom_names]
+        contacts = np.zeros(4, dtype=np.float32)
+        for i in range(self.data.ncon):
+            con = self.data.contact[i]
+            for foot_idx, foot_geom_id in enumerate(foot_geom_ids):
+                if foot_geom_id != -1 and (con.geom1 == foot_geom_id or con.geom2 == foot_geom_id):
+                    contacts[foot_idx] = 1.0
+                    break
+        return contacts
+
+    def _get_last_action(self, last_action, **kwargs):
+        # 在絕對角度模式下，last_action 就是上一個目標絕對角度
+        return last_action
+
+    def _get_linear_velocity(self, **kwargs):
+        inv_torso_rot = self._get_torso_inverse_rotation()
+        return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, 3:], inv_torso_rot)
+
+    def _get_full_angular_velocity(self, **kwargs):
+        inv_torso_rot = self._get_torso_inverse_rotation()
+        return self._rotate_vec_by_quat_inv(self.data.cvel[self.torso_id, :3], inv_torso_rot)
+        
+    def _get_phase_signal(self, **kwargs):
+        return np.array([self.data.time % 1.0], dtype=np.float32)
+
+================================================================================
+--- FILE: policy.py ---
+-----------------------
+
+# policy.py
+import numpy as np
+import onnxruntime as ort
+import sys
+import os
+from collections import deque
+from config import AppConfig
+
+class ONNXPolicy:
+    """
+    封裝 ONNX 模型的載入、觀察歷史管理和推論邏輯。
+    """
+    def __init__(self, config: AppConfig, base_obs_dim: int):
+        self.config = config
+        self.base_obs_dim = base_obs_dim
+        
+        print(f"正在載入 ONNX 模型: {config.onnx_model_path}")
+        sess_options = ort.SessionOptions()
+        cache_path = os.path.splitext(config.onnx_model_path)[0] + ".optimized.ort"
+        
+        if os.path.exists(cache_path):
+            print(f"⚡️ 發現優化模型快取，將從 '{cache_path}' 快速載入。")
+        else:
+            print(f"🐢 首次載入，將創建優化模型快取於 '{cache_path}' (可能需要一些時間)...")
+
+        sess_options.optimized_model_filepath = cache_path
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+        try:
+            self.sess = ort.InferenceSession(
+                config.onnx_model_path, 
+                sess_options=sess_options,
+                providers=['CPUExecutionProvider']
+            )
+        except Exception as e:
+            sys.exit(f"❌ 錯誤: 無法載入 ONNX 模型 '{config.onnx_model_path}': {e}")
+
+        self.input_name = self.sess.get_inputs()[0].name
+        self.output_name = self.sess.get_outputs()[0].name
+        self.model_input_dim = self.sess.get_inputs()[0].shape[1]
+        
+        print(f"✅ 模型載入成功! 模型期望輸入維度: {self.model_input_dim}")
+        self._determine_history_length()
+
+        self.obs_history = deque(
+            [np.zeros(self.base_obs_dim, dtype=np.float32)] * self.history_length, 
+            maxlen=self.history_length
+        )
+        self.last_action = np.zeros(config.num_motors, dtype=np.float32)
+
+    def _determine_history_length(self):
+        """根據模型輸入維度和基礎觀察維度，自動計算歷史長度。"""
+        if self.base_obs_dim == 0:
+            print("⚠️ 警告: 基礎觀察維度為 0，無法計算歷史長度。")
+            self.history_length = 0
+            return
+            
+        if self.model_input_dim % self.base_obs_dim != 0:
+            print(
+                f"⚠️ 警告: 基礎觀察維度 ({self.base_obs_dim}) 無法整除模型輸入維度 "
+                f"({self.model_input_dim})。歷史堆疊功能可能不準確。"
+            )
+            self.history_length = 1
+        else:
+            self.history_length = self.model_input_dim // self.base_obs_dim
+        
+        if self.history_length > 1:
+            print(f"🤖 自動偵測到模型使用歷史堆疊，長度為: {self.history_length} 幀。")
+        else:
+            print("🤖 模型僅使用當前觀察 (歷史長度 = 1)。")
+
+    def get_action(self, base_obs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """根據當前的基礎觀察，更新歷史並執行模型推論，回傳動作。"""
+        if self.history_length == 0:
+            return np.array([]), np.zeros(self.config.num_motors)
+
+        self.obs_history.append(base_obs)
+        onnx_input = np.concatenate(list(self.obs_history)).astype(np.float32).reshape(1, -1)
+        
+        if onnx_input.shape[1] != self.model_input_dim:
+            return onnx_input, np.zeros(self.config.num_motors)
+            
+        action_raw = self.sess.run([self.output_name], {self.input_name: onnx_input})[0].flatten()
+        self.last_action[:] = action_raw
+        return onnx_input, action_raw
+
+    def reset(self):
+        """重置觀察歷史和上一個動作。"""
+        self.obs_history.clear()
+        if self.history_length > 0:
+            for _ in range(self.history_length):
+                self.obs_history.append(np.zeros(self.base_obs_dim, dtype=np.float32))
+        self.last_action.fill(0.0)
+        print("✅ ONNX 策略狀態已重置。")
+
+================================================================================
+--- FILE: project_dump.txt ---
+------------------------------
+
+# 專案程式碼彙整: C:\git_project\simulation_test_recoil
+================================================================================
+
+================================================================================
+--- FILE: config.py ---
+-----------------------
+
+# config.py
+import yaml
+from dataclasses import dataclass, field
+from typing import Dict, List, Any
+
+@dataclass
+class TuningParamsConfig:
+    """從設定檔載入的初始調校參數資料類別。"""
+    kp: float
+    kd: float
+    action_scale: float
+    bias: float
+
+@dataclass
+class FloatingControllerConfig:
+    """懸浮控制器的設定。"""
+    target_height: float
+    kp_vertical: float
+    kd_vertical: float
+    kp_attitude: float
+    kd_attitude: float
+
+@dataclass
+class AppConfig:
+    """儲存所有應用程式設定的資料類別。"""
+    mujoco_model_file: str
+    onnx_model_path: str
+    num_motors: int
+    physics_timestep: float
+    control_freq: float
+    control_dt: float
+    warmup_duration: float
+    command_scaling_factors: List[float]
+    
+    keyboard_velocity_adjust_step: float
+    gamepad_sensitivity: Dict[str, float]
+    param_adjust_steps: Dict[str, float]
+
+    initial_tuning_params: TuningParamsConfig
+    observation_recipes: Dict[int, List[str]]
+    floating_controller: FloatingControllerConfig
+
+def load_config(path: str = "config.yaml") -> AppConfig:
+    """
+    從 YAML 檔案載入設定並回傳一個 AppConfig 物件。
+    """
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            config_data = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"設定檔 '{path}' 不存在。請確保檔案路徑正確。")
+    except Exception as e:
+        raise IOError(f"讀取或解析設定檔 '{path}' 時發生錯誤: {e}")
+
+    tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
+    floating_config = FloatingControllerConfig(**config_data['floating_controller'])
+    
+    config_obj = AppConfig(
+        mujoco_model_file=config_data['mujoco_model_file'],
+        onnx_model_path=config_data['onnx_model_path'],
+        num_motors=config_data['num_motors'],
+        physics_timestep=config_data['physics_timestep'],
+        control_freq=config_data['control_freq'],
+        control_dt=1.0 / config_data['control_freq'],
+        warmup_duration=config_data['warmup_duration'],
+        command_scaling_factors=config_data['command_scaling_factors'],
+        
+        keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
+        gamepad_sensitivity=config_data['gamepad_sensitivity'],
+        param_adjust_steps=config_data['param_adjust_steps'],
+        
+        initial_tuning_params=tuning_params,
+        observation_recipes=config_data['observation_recipes'],
+        floating_controller=floating_config
+    )
+    
+    print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
+    return config_obj
+
+================================================================================
+--- FILE: config.yaml ---
+-------------------------
+
+# ==================================
+# === 模擬與模型設定 (Simulation & Model Settings)
+# ==================================
+# 檔案路徑 (File Paths)
+mujoco_model_file: "assets/scene_mjx.xml"
+onnx_model_path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
+
+# 核心參數 (Core Parameters)
+num_motors: 12
+physics_timestep: 0.004 # <-- 建議修改：提高模擬精度以增強穩定性
+control_freq: 50.0
+warmup_duration: 0.0
+
+# ONNX 模型命令輸入縮放因子
+# 順序: [vy 縮放, vx 縮放, wz 縮放]
+command_scaling_factors: [1.0, 1.0, 1.0] 
+
+# ==================================
+# === 輸入控制設定 (Input Control Settings)
+# ==================================
+keyboard_velocity_adjust_step: 0.1 # m/s or rad/s per key press
+
+gamepad_sensitivity:
+  vx: 1.0   # 前後速度靈敏度 (左搖桿 Y)
+  vy: 1.0   # 左右速度靈敏度 (左搖桿 X)
+  wz: -1.5  # 轉向角速度靈敏度 (右搖桿 X), 負值表示右推右轉
+
+param_adjust_steps:
+  kp: 0.5
+  kd: 0.05
+  action_scale: 0.05
+  bias: 5
+
+# ==================================
+# === 初始調校參數 (Initial Tuning Parameters)
+# ==================================
+initial_tuning_params:
+  kp: 4.0
+  kd: 0.40
+  action_scale: 0.5
+  bias: -0.0
+
+# ==================================
+# === 觀察配方 (Observation Recipes)
+# ==================================
+observation_recipes:
+  31:
+    - 'z_angular_velocity'
+    - 'gravity_vector'
+    - 'commands'
+    - 'joint_positions'
+    - 'last_action'
+  48: # <-- 修改這個 48 維的順序
+    - 'linear_velocity'
+    - 'angular_velocity'
+    - 'gravity_vector'
+    - 'joint_positions'
+    - 'joint_velocities'
+    - 'last_action'
+    - 'commands' # <-- 將 commands 移動到最後
+
+# ================================================================= #
+# === 懸浮控制器設定 (Floating Controller Settings) - 精細調校版 ===
+# ================================================================= #
+floating_controller:
+  target_height: 0.50     # 懸浮的目標高度 (米)
+  kp_vertical: 80.0       # 垂直 P (再次降低以求平滑)
+  kd_vertical: 18.0       # 垂直 D (保持與Kp的關係)
+  kp_attitude: 20.0       # 姿態 P (再次降低)
+  kd_attitude: 4.0        # 姿態 D (相應調整)
+
+================================================================================
+--- FILE: floating_controller.py ---
+------------------------------------
+
+# floating_controller.py
+import mujoco
+import numpy as np
+from config import AppConfig
+
+class FloatingController:
+    """
+    透過啟用/禁用 weld 約束和設定 mocap body 的位置，
+    來將機器人主幹固定在空中。
+    """
+    def __init__(self, config: AppConfig, model, data):
+        """
+        初始化懸浮控制器，並獲取必要的 MuJoCo ID 和索引。
+        """
+        self.config = config.floating_controller
+        self.model = model
+        self.data = data
+        self.is_functional = False
+        
+        try:
+            anchor_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'anchor')
+            if anchor_body_id == -1: raise ValueError("在 XML 中找不到名為 'anchor' 的 body。")
+            
+            self.mocap_index = model.body_mocapid[anchor_body_id]
+            if self.mocap_index == -1: raise ValueError("'anchor' body 不是一個 mocap body。")
+
+            self.weld_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY, 'torso_anchor_weld')
+            if self.weld_id == -1: raise ValueError("在 XML 中找不到名為 'torso_anchor_weld' 的 weld 約束。")
+
+            self.is_functional = True
+            print(f"✅ 固定式懸浮控制器初始化完成。Mocap Index: {self.mocap_index}")
+        except ValueError as e:
+            print(f"❌ 懸浮控制器初始化錯誤: {e}")
+            print("     請確保 scene_mjx.xml 檔案已正確定義 'anchor' body 和 'torso_anchor_weld' 約束。懸浮功能將被禁用。")
+
+    def enable(self, current_pos: np.ndarray):
+        """啟用懸浮模式。"""
+        if not self.is_functional: return
+        
+        target_pos = np.array([current_pos[0], current_pos[1], self.config.target_height])
+        self.data.mocap_pos[self.mocap_index] = target_pos
+        self.data.mocap_quat[self.mocap_index] = np.array([1., 0, 0, 0]) # 保持水平姿態
+        self.data.eq_active[self.weld_id] = 1
+        print("🚀 已啟用固定懸浮模式。")
+
+    def disable(self):
+        """禁用懸浮模式。"""
+        if not self.is_functional: return
+        self.data.eq_active[self.weld_id] = 0
+        print("🐾 已禁用固定懸浮模式。")
+
+================================================================================
+--- FILE: keyboard_input_handler.py ---
+---------------------------------------
+
+# keyboard_input_handler.py
+import glfw
+from state import SimulationState
+
+class KeyboardInputHandler:
+    """
+    處理所有鍵盤輸入事件，並根據當前模式進行分派。
+    """
+    # 【修改】接收 terrain_manager
+    def __init__(self, state: SimulationState, serial_comm, xbox_handler, terrain_manager):
+        self.state = state
+        self.config = state.config
+        self.serial_comm = serial_comm
+        self.xbox_handler = xbox_handler
+        self.terrain_manager = terrain_manager # <-- 【新增】
+        self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
+        self.num_params = len(self.param_keys)
+
+    def register_callbacks(self, window):
+        glfw.set_key_callback(window, self.key_callback)
+        glfw.set_char_callback(window, self.char_callback)
+
+    def char_callback(self, window, codepoint):
+        if self.state.control_mode == "SERIAL_MODE":
+            self.state.serial_command_buffer += chr(codepoint)
+
+    def key_callback(self, window, key, scancode, action, mods):
+        # --- 1. 只在按鍵按下時觸發的通用功能 (模式切換、重置等) ---
+        if action == glfw.PRESS:
+            if key == glfw.KEY_SPACE: self.state.single_step_mode = not self.state.single_step_mode; print(f"\n--- SIMULATION {'PAUSED' if self.state.single_step_mode else 'PLAYING'} ---"); return
+            if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
+            if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
+            if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
+            if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
+            if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
+            if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
+            # 【新增】V 鍵切換地形
+            if key == glfw.KEY_V: 
+                self.terrain_manager.cycle_terrain()
+                return
+            
+            # 設備掃描
+            if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return
+            if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
+
+        # --- 2. 可重複觸發的模式特定功能 ---
+        # 這是最關鍵的修改：優先處理特定模式的按鍵，如果處理了就 return
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            if self.state.control_mode == "SERIAL_MODE":
+                if key == glfw.KEY_ENTER: self.state.serial_command_to_send = self.state.serial_command_buffer; self.state.serial_command_buffer = ""
+                elif key == glfw.KEY_BACKSPACE: self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
+                elif key == glfw.KEY_T and action == glfw.PRESS: self.state.set_control_mode("WALKING")
+                return
+
+            if self.state.control_mode == "JOINT_TEST":
+                if key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
+                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
+                elif key == glfw.KEY_UP: self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
+                elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.joint_test_offsets.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
+                return
+
+            if self.state.control_mode == "MANUAL_CTRL":
+                if key == glfw.KEY_F and action == glfw.PRESS:
+                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
+                    is_floating = self.state.manual_mode_is_floating
+                    if is_floating:
+                        if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
+                    else:
+                        if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
+                elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
+                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
+                elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
+                elif key == glfw.KEY_DOWN: self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
+                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.manual_final_ctrl.fill(0.0)
+                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
+                return
+
+        # --- 3. 如果以上模式都不是，則執行 WALKING/FLOATING 模式的預設按鍵邏輯 ---
+        if action == glfw.PRESS:
+            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
+            if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
+            if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
+            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
+        
+        if self.state.input_mode != "KEYBOARD": return
+            
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            # 參數調整
+            if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
+            elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
+            elif key == glfw.KEY_UP or key == glfw.KEY_DOWN:
+                param_to_adjust = self.param_keys[self.state.tuning_param_index]
+                step = self.config.param_adjust_steps.get(param_to_adjust, 0.1)
+                current_value = getattr(self.state.tuning_params, param_to_adjust)
+                direction = 1 if key == glfw.KEY_UP else -1
+                setattr(self.state.tuning_params, param_to_adjust, current_value + step * direction)
+                
+                self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
+                self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
+                self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
+
+            # 移動控制
+            step = self.config.keyboard_velocity_adjust_step
+            if key == glfw.KEY_C: self.state.clear_command()
+            elif key == glfw.KEY_W: self.state.command[1] += step
+            elif key == glfw.KEY_S: self.state.command[1] -= step
+            elif key == glfw.KEY_A: self.state.command[0] += step
+            elif key == glfw.KEY_D: self.state.command[0] -= step
+            elif key == glfw.KEY_Q: self.state.command[2] += step
+            elif key == glfw.KEY_E: self.state.command[2] -= step
+
+================================================================================
+--- FILE: main.py ---
+---------------------
+
+# main.py
+import sys
+import numpy as np
+import mujoco
+
+from config import load_config
+from state import SimulationState
+from simulation import Simulation
+from policy import ONNXPolicy
+from observation import ObservationBuilder
+from rendering import DebugOverlay
+from keyboard_input_handler import KeyboardInputHandler
+from xbox_input_handler import XboxInputHandler
+from floating_controller import FloatingController
+from serial_communicator import SerialCommunicator
+from terrain_manager import TerrainManager # <-- 【新增】導入 TerrainManager
+
+def main():
+    """主程式入口：初始化所有組件並運行模擬迴圈。"""
+    from xbox_controller import XboxController 
+    print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
+    
+    config = load_config()
+    state = SimulationState(config)
+    sim = Simulation(config)
+    
+    # 【新增】初始化地形管理器
+    terrain_manager = TerrainManager(sim.model, sim.data)
+    state.terrain_manager_ref = terrain_manager # 將引用存入 state，方便 UI 讀取
+    
+    floating_controller = FloatingController(config, sim.model, sim.data)
+    state.floating_controller_ref = floating_controller
+    
+    serial_comm = SerialCommunicator()
+    xbox_handler = XboxInputHandler(state)
+    
+    # 【修改】將 terrain_manager 也傳入
+    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
+    keyboard_handler.register_callbacks(sim.window)
+    
+    try:
+        assumed_dim = next(iter(config.observation_recipes))
+        recipe = config.observation_recipes[assumed_dim]
+    except StopIteration:
+        sys.exit("❌ 錯誤: 在 config.yaml 中沒有定義任何 observation_recipes。")
+
+    obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
+    policy = ONNXPolicy(config, base_obs_dim)
+
+    # =========================================================================
+    # === 【新增】將 policy 的引用設定到 state 中，以便在模式切換時呼叫 reset ===
+    # =========================================================================
+    state.policy_ref = policy
+    # =========================================================================
+    
+    if policy.model_input_dim != base_obs_dim:
+        if policy.model_input_dim in config.observation_recipes:
+            print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
+            recipe = config.observation_recipes[policy.model_input_dim]
+            obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+            base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
+        else:
+            sys.exit(f"❌ 致命錯誤: 模型期望維度 ({policy.model_input_dim}) 與配方產生的觀察維度 ({base_obs_dim}) 不符，且找不到匹配配方！")
+
+    ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 'phase_signal':1}
+    used_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
+    overlay = DebugOverlay(recipe, used_dims)
+
+    def hard_reset():
+        """完全重置整個模擬環境。"""
+        print("\n--- 正在執行完全重置 (Hard Reset) ---")
+        sim.reset()
+        policy.reset()
+        if state.control_mode == "FLOATING":
+            state.set_control_mode("WALKING")
+        state.reset_control_state(sim.data.time)
+        state.clear_command()
+        
+        state.joint_test_offsets.fill(0.0)
+        state.manual_final_ctrl.fill(0.0)
+        state.manual_mode_is_floating = False
+        
+        state.hard_reset_requested = False
+
+    def soft_reset():
+        """僅重置機器人姿態和控制器狀態，不重置模擬時間和物理世界。"""
+        print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
+        sim.data.qpos[7:] = sim.default_pose
+        sim.data.qvel[6:] = 0
+        policy.reset()
+        state.clear_command()
+
+        state.joint_test_offsets.fill(0.0)
+        state.manual_final_ctrl.fill(0.0)
+        state.manual_mode_is_floating = False
+
+        mujoco.mj_forward(sim.model, sim.data)
+        state.soft_reset_requested = False
+
+    hard_reset()
+    print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
+    print("    (U: 掃描序列埠, J: 掃描搖桿)")
+
+    state.execute_one_step = False
+
+    while not sim.should_close():
+        if state.single_step_mode and not state.execute_one_step:
+            sim.render(state, overlay)
+            continue
+        if state.execute_one_step:
+            state.execute_one_step = False
+
+        if state.input_mode == "GAMEPAD": xbox_handler.update_state()
+        
+        if state.hard_reset_requested: hard_reset()
+        if state.soft_reset_requested: soft_reset()
+
+        state.latest_pos = sim.data.body('torso').xpos.copy()
+        state.latest_quat = sim.data.body('torso').xquat.copy()
+        if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
+        if state.serial_command_to_send:
+            serial_comm.send_command(state.serial_command_to_send)
+            state.serial_command_to_send = ""
+
+        if state.control_mode != "SERIAL_MODE":
+            if state.single_step_mode:
+                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
+
+            base_obs = obs_builder.get_observation(state.command, policy.last_action)
+            if state.single_step_mode:
+                current_joint_angles = sim.data.qpos[7:]
+                current_joint_positions = current_joint_angles - sim.default_pose
+                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
+
+            onnx_input, action_raw = policy.get_action(base_obs)
+            state.latest_onnx_input = onnx_input.flatten()
+            state.latest_action_raw = action_raw
+            if state.single_step_mode:
+                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
+
+            if state.control_mode == "MANUAL_CTRL":
+                state.sim_mode_text = "Manual Ctrl"
+                final_ctrl = state.manual_final_ctrl.copy() 
+            elif state.control_mode == "JOINT_TEST":
+                state.sim_mode_text = "Joint Test"
+                final_ctrl = sim.default_pose + state.joint_test_offsets
+            else:
+                state.sim_mode_text = state.control_mode
+                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
+
+            state.latest_final_ctrl = final_ctrl
+            if state.single_step_mode:
+                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
+
+            sim.apply_position_control(final_ctrl, state.tuning_params)
+            
+            target_time = sim.data.time + config.control_dt
+            while sim.data.time < target_time:
+                mujoco.mj_step(sim.model, sim.data)
+
+            if state.single_step_mode:
+                next_joint_angles = sim.data.qpos[7:]
+                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
+        
+        sim.render(state, overlay)
+
+    sim.close()
+    xbox_handler.close()
+    serial_comm.close()
+    print("\n模擬結束，程式退出。")
+
+if __name__ == "__main__":
+    main()
+
+================================================================================
+--- FILE: observation.py ---
+
+
+================================================================================
+--- FILE: readme.md ---
+-----------------------
+
+前置安裝：你需要安裝 PyYAML。在你的終端機中執行：
+pip install onnxruntime numpy
+pip install PyYAML
+pip install mujoco glfw //這個看看環境有沒有載，我不是用這個
+pip install inputs //搖桿用的
+pip install pygame
+pip install pyserial
+
+
+
+================================================================================
+--- FILE: rendering.py ---
+--------------------------
+
+# rendering.py
+import mujoco
+import numpy as np
+import time
+from state import SimulationState
+from typing import TYPE_CHECKING, List, Dict
+
+if TYPE_CHECKING:
+    from simulation import Simulation
+    from serial_communicator import SerialCommunicator
+
+class DebugOverlay:
+    """
+    負責在 MuJoCo 視窗上渲染所有文字除錯資訊。
+    """
+    def __init__(self, recipe: List[str], recipe_dims: Dict[str, int]):
+        self.recipe = recipe
+        self.component_dims = recipe_dims
+        self.display_pages_content = [
+            ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands'],
+            ['joint_positions', 'joint_velocities', 'last_action'],
+        ]
+        state_class_ref = SimulationState
+        state_class_ref.num_display_pages = len(self.display_pages_content)
+
+    def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
+        """根據當前控制模式，選擇並呼叫對應的渲染函式。"""
+        if state.control_mode == "SERIAL_MODE":
+            self.render_serial_console(viewport, context, state)
+        elif state.control_mode == "JOINT_TEST":
+            self.render_joint_test_overlay(viewport, context, state, sim)
+        elif state.control_mode == "MANUAL_CTRL":
+            self.render_manual_ctrl_overlay(viewport, context, state, sim)
+        else:
+            self.render_simulation_overlay(viewport, context, state, sim)
+
+    def render_serial_console(self, viewport, context, state: SimulationState):
+        """渲染一個全螢幕的序列埠控制台介面。"""
+        mujoco.mjr_rectangle(viewport, 0.2, 0.2, 0.2, 0.9)
+        title = "--- SERIAL CONSOLE MODE (Press T to exit) ---"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
+        log_text = "\n".join(state.serial_latest_messages)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + log_text, " ", context)
+        cursor = "_" if int(time.time() * 2) % 2 == 0 else " "
+        buffer_text = f"> {state.serial_command_buffer}{cursor}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, buffer_text, None, context)
+    
+    def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+        """渲染關節手動測試模式的專用介面。"""
+        mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
+        help_text = (
+            "--- JOINT TEST MODE ---\n\n"
+            "Press '[ / ]' to Select Joint\n"
+            "Press UP / DOWN to Adjust Offset\n"
+            "Press 'C' to Clear All Offsets\n\n"
+            "Press 'G' to Return to Walking Mode"
+        )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        joint_names = [
+            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
+            "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
+            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
+            "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
+        ]
+        num_joints_per_col = 6
+        left_col_text, right_col_text = "", ""
+        for i, name in enumerate(joint_names):
+            prefix = ">> " if i == state.joint_test_index else "   "
+            offset_val = state.joint_test_offsets[i]
+            final_val = sim.default_pose[i] + offset_val
+            line_text = f"{prefix}{name:<15}: Offset={offset_val:+.2f}, Final={final_val:+.2f}\n"
+            if i < num_joints_per_col: left_col_text += line_text
+            else: right_col_text += line_text
+        
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+
+    def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+        """渲染手動 Final Ctrl 模式的專用介面。"""
+        floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
+        help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
+
+        help_text = (
+            f"{help_title}\n\n"
+            "Press 'F' to Toggle Floating\n\n"
+            "Press '[ / ]' to Select Joint\n"
+            "Press UP / DOWN to Adjust Target Angle\n"
+            "Press 'C' to Reset All Targets to 0\n\n"
+            "Press 'G' to Return to Walking Mode"
+        )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        
+        joint_names = [
+            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
+            "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
+            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
+            "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
+        ]
+        num_joints_per_col = 6
+        left_col_text, right_col_text = "", ""
+        
+        current_joint_positions = sim.data.qpos[7:]
+        
+        for i, name in enumerate(joint_names):
+            prefix = ">> " if i == state.manual_ctrl_index else "   "
+            target_val = state.manual_final_ctrl[i]
+            actual_val = current_joint_positions[i]
+            error = target_val - actual_val
+            
+            line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n"
+            
+            if i < num_joints_per_col:
+                left_col_text += line_text
+            else:
+                right_col_text += line_text
+        
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
+        
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
+        
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+
+    def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+        """渲染正常的模擬除錯資訊。"""
+        def format_vec(label: str, vec, precision=3, label_width=24):
+            if vec is None or vec.size == 0: return f"{label:<{label_width}}None"
+            vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
+            return f"{label:<{label_width}}{vec_str}"
+
+        help_text = (
+            "--- CONTROLS ---\n\n"
+            "[Universal]\n"
+            "  SPACE: Pause/Play | N: Next Step\n"
+            "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
+            "  ESC: Exit       | R: Reset\n"
+            "  X: Soft Reset   | TAB: Info Page\n"
+            "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
+            "  U: Scan Serial  | J: Scan Gamepad\n"
+            "  V: Cycle Terrain\n\n"   # 【修改】更新幫助文字，加入 V 鍵提示
+            "[Keyboard Mode]\n"
+            "  WASD/QE: Move/Turn\n"
+            "  [/]: Select Param\n"
+            "  UP/DOWN: Adjust Value\n\n"
+            "[Gamepad Mode]\n"
+            "  L-Stick: Move | R-Stick: Turn\n"
+            "  LB/RB: Select Param\n"
+            "  D-Pad U/D: Adjust Value\n"
+            "  Select/View: Reset"
+        )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+
+        serial_status = "Connected" if state.serial_is_connected else "Disconnected (Press U to Scan)"
+        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (Press J to Scan)"
+
+        # 【新增】獲取當前地形名稱
+        terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
+
+        p = state.tuning_params
+        
+        prefixes = ["   "] * 4
+        prefixes[state.tuning_param_index] = ">> "
+
+        # 【修改】在 UI 中加入地形資訊
+        top_left_text = (
+            f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
+            f"Time: {sim.data.time:.2f} s\n"
+            f"Terrain: {terrain_name}\n\n"
+            f"--- Devices ---\n"
+            f"Serial: {serial_status}\n"
+            f"Gamepad: {gamepad_status}\n\n"
+            f"--- Tuning Params ---\n"
+            f"{prefixes[0]}{format_vec('Kp:', np.array([p.kp]), 1)}\n"
+            f"{prefixes[1]}{format_vec('Kd:', np.array([p.kd]), 2)}\n"
+            f"{prefixes[2]}{format_vec('Act Scale:', np.array([p.action_scale]), 3)}\n"
+            f"{prefixes[3]}{format_vec('Bias:', np.array([p.bias]), 1)}\n\n"
+            f"--- Command ---\n"
+            f"{format_vec('User Cmd:', state.command)}\n"
+        ) # <--- 【語法修復】在這裡補上了遺漏的右括號 ')'
+
+        if state.control_mode == "FLOATING":
+            current_height = sim.data.qpos[2]
+            target_height = sim.config.floating_controller.target_height
+            top_left_text += (
+                f"\n--- Floating Info ---\n"
+                f"{format_vec('Target H:', np.array([target_height]), 3)}\n"
+                f"{format_vec('Current H:', np.array([current_height]), 3)}\n"
+            )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, top_left_text, None, context)
+        
+        bottom_left_text = f"--- ONNX INPUTS (Page {state.display_page + 1}/{state.num_display_pages}) ---\n"
+        onnx_input_vec = state.latest_onnx_input
+        if onnx_input_vec.size > 0 and state.display_page < len(self.display_pages_content):
+            current_page_components = self.display_pages_content[state.display_page]
+            base_obs_dim = sum(self.component_dims.values()) if self.component_dims else 0
+            if base_obs_dim > 0:
+                history_len = len(onnx_input_vec) // base_obs_dim
+                current_full_obs_idx = 0
+                for comp_name_in_recipe in self.recipe:
+                    dim = self.component_dims.get(comp_name_in_recipe, 0)
+                    if dim > 0:
+                        if comp_name_in_recipe in current_page_components:
+                            start_idx, end_idx = current_full_obs_idx, current_full_obs_idx + dim
+                            value_slice = onnx_input_vec[start_idx:end_idx]
+                            bottom_left_text += format_vec(f"{comp_name_in_recipe} [{dim}d]:", value_slice, 2) + "\n"
+                        current_full_obs_idx += dim
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, bottom_left_text, None, context)
+        
+        torso_lin_vel = sim.data.cvel[sim.torso_id, 3:]
+        torso_ang_vel_local = self._get_local_ang_vel(sim.data, sim.torso_id)
+        bottom_right_text = (
+            f"--- ONNX OUTPUTS & STATE ---\n"
+            f"{format_vec('Raw Action:', state.latest_action_raw)}\n"
+            f"{format_vec('Final Ctrl:', state.latest_final_ctrl)}\n\n"
+            f"--- Robot State ---\n"
+            f"{format_vec('Torso Z:', np.array([sim.data.qpos[2]]))}\n"
+            f"{format_vec('Lin Vel (World):', torso_lin_vel)}\n"
+            f"{format_vec('Ang Vel (Local):', torso_ang_vel_local)}"
+        )
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT, viewport, bottom_right_text, None, context)
+    
+    def _get_local_ang_vel(self, data, torso_id):
+        """輔助函式，計算局部角速度用於顯示。"""
+        torso_quat = data.xquat[torso_id]
+        norm = np.sum(np.square(torso_quat))
+        if norm < 1e-8: return np.zeros(3)
+        torso_quat /= np.sqrt(norm)
+        q_inv = np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / norm
+        u, s = q_inv[1:], q_inv[0]
+        world_ang_vel = data.cvel[torso_id, :3]
+        return 2 * np.dot(u, world_ang_vel) * u + (s*s - np.dot(u, u)) * world_ang_vel + 2*s*np.cross(u, world_ang_vel)
+
+================================================================================
+--- FILE: serial_communicator.py ---
+------------------------------------
+
+# serial_communicator.py
+import serial
+import time
+import sys
+import threading
+import serial.tools.list_ports
+from collections import deque
+
+class SerialCommunicator:
+    """
+    一個類別，封裝了與序列埠設備的通訊邏輯。
+    它使用背景執行緒來非阻塞地讀取數據。
+    """
+    def __init__(self, max_log_lines=15):
+        """
+        初始化通訊器，但不立即連接。
+        """
+        self.ser = None
+        self.read_thread = None
+        self.exit_signal = threading.Event()
+        self.is_connected = False
+        self.port_name = None
+        self.message_log = deque(maxlen=max_log_lines)
+        print("✅ 序列埠通訊器已初始化 (等待連接指令)。")
+
+    def scan_and_connect(self) -> bool:
+        """
+        掃描序列埠，讓使用者在終端機選擇，並嘗試連接。
+        返回連接是否成功。
+        """
+        if self.is_connected:
+            print("序列埠已連接，無需重新掃描。")
+            return True
+            
+        selected_port = self._select_serial_port()
+        if selected_port:
+            self.port_name = selected_port
+            return self.connect()
+        return False
+
+    def _select_serial_port(self):
+        """
+        掃描並讓使用者選擇序列埠。優先自動檢測 Teensy。
+        返回選定的序列埠名稱，如果找不到則返回 None。
+        """
+        print("\n" + "="*20 + " 正在掃描序列埠 " + "="*20)
+        ports = serial.tools.list_ports.comports()
+        if not ports:
+            print("--- 未找到任何序列埠 ---")
+            return None
+
+        teensy_ports = [p for p in ports if p.vid == 0x16C0 and p.pid == 0x0483]
+        if len(teensy_ports) == 1:
+            print(f"自動檢測到 Teensy: {teensy_ports[0].device}")
+            return teensy_ports[0].device
+        
+        print("\n請從以下列表中選擇您的設備:")
+        for i, port in enumerate(ports):
+            print(f"  [{i}] {port.device} - {port.description}")
+        while True:
+            try:
+                choice_str = input(f"請輸入選擇的編號 (0-{len(ports)-1}) 或直接按 Enter 跳過: ")
+                if not choice_str:
+                    print("已跳過序列埠選擇。")
+                    return None
+                choice = int(choice_str)
+                if 0 <= choice < len(ports):
+                    return ports[choice].device
+                else:
+                    print("輸入無效，請重新輸入。")
+            except (ValueError, IndexError):
+                print("輸入無效，請輸入列表中的數字。")
+
+    def connect(self, baud_rate=115200) -> bool:
+        """連接到指定的序列埠並啟動讀取執行緒。"""
+        if not self.port_name: return False
+        try:
+            print(f"正在連接到 {self.port_name}...")
+            self.ser = serial.Serial(self.port_name, baud_rate, timeout=0.1)
+            time.sleep(0.5)
+            self.ser.reset_input_buffer()
+            self.ser.reset_output_buffer()
+            
+            self.exit_signal.clear()
+            self.read_thread = threading.Thread(target=self._read_from_port, daemon=True)
+            self.read_thread.start()
+            self.is_connected = True
+            print(f"✅ 序列埠 {self.port_name} 連接成功。")
+            return True
+
+        except serial.SerialException as e:
+            print(f"❌ 序列埠連接失敗: {e}")
+            self.is_connected = False
+            return False
+
+    def _read_from_port(self):
+        """在背景執行緒中讀取數據並存入日誌。"""
+        while not self.exit_signal.is_set():
+            try:
+                if self.ser and self.ser.is_open and self.ser.in_waiting > 0:
+                    response = self.ser.readline().decode('utf-8', 'ignore').strip()
+                    if response:
+                        self.message_log.append(response)
+            except serial.SerialException:
+                self.message_log.append("[錯誤] 序列埠已斷開。")
+                self.is_connected = False
+                break
+            time.sleep(0.01)
+
+    def send_command(self, command: str):
+        """向序列埠發送指令。"""
+        if self.is_connected and command:
+            try:
+                command_to_send = command + '\n'
+                self.ser.write(command_to_send.encode('utf-8'))
+                self.message_log.append(f"> {command}")
+            except serial.SerialException as e:
+                 self.message_log.append(f"[錯誤] 發送失敗: {e}")
+                 self.is_connected = False
+
+    def get_latest_messages(self) -> list:
+        """獲取日誌中的所有訊息。"""
+        return list(self.message_log)
+
+    def close(self):
+        """安全地關閉序列埠和讀取執行緒。"""
+        if self.read_thread and self.read_thread.is_alive():
+            self.exit_signal.set()
+            self.read_thread.join(timeout=1)
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+            print(f"序列埠 {self.port_name} 已安全關閉。")
+        self.is_connected = False
+
+================================================================================
+--- FILE: simulation.py ---
+---------------------------
+
+# simulation.py
+import mujoco
+import glfw
+import sys
+import numpy as np
+from typing import TYPE_CHECKING
+import os
+
+from config import AppConfig
+from state import SimulationState, TuningParams
+
+if TYPE_CHECKING:
+    from rendering import DebugOverlay
+    from keyboard_input_handler import KeyboardInputHandler
+
+class Simulation:
+    """
+    封裝 MuJoCo 模擬、GLFW 視窗和渲染邏輯。
+    新增了完整的滑鼠視角控制功能。
+    """
+    def __init__(self, config: AppConfig):
+        """初始化 MuJoCo 模型、資料、GLFW 視窗以及滑鼠控制相關狀態。"""
+        self.config = config
+        
+        try:
+            with open(config.mujoco_model_file, 'r', encoding='utf-8') as f:
+                xml_string = f.read()
+            corrected_xml_string = xml_string.replace('meshdir="assets"', 'meshdir="mesh"')
+            
+            self.model = mujoco.MjModel.from_xml_string(corrected_xml_string)
+            print(f"✅ XML '{config.mujoco_model_file}' 已載入，並在執行時將 meshdir 從 'assets' 修正為 'mesh'。")
+            
+            for i in range(self.model.nu):
+                self.model.actuator_biastype[i] = mujoco.mjtBias.mjBIAS_AFFINE
+            print("✅ 所有致動器的模式已在執行時被強制設為 AFFINE，以啟用 Python 端的 PD 控制。")
+            
+        except Exception as e:
+            sys.exit(f"❌ 錯誤: 無法載入或處理 XML 檔案 '{config.mujoco_model_file}': {e}")
+            
+        self.data = mujoco.MjData(self.model)
+        self.model.opt.timestep = config.physics_timestep
+
+        self.torso_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, 'torso')
+        if self.torso_id == -1:
+            sys.exit("❌ 錯誤: 在 XML 中找不到名為 'torso' 的 body。")
+        
+        home_key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, 'home')
+        if home_key_id != -1:
+            self.default_pose = self.model.key_qpos[home_key_id][7:].copy()
+        else:
+            self.default_pose = np.zeros(config.num_motors)
+            print("⚠️ 警告: 在 XML 中未找到名為 'home' 的 keyframe，將使用零作為預設姿態。")
+
+        if not glfw.init(): sys.exit("❌ 錯誤: GLFW 初始化失敗。")
+        self.window = glfw.create_window(1200, 900, "MuJoCo 模擬器 (含滑鼠控制)", None, None)
+        if not self.window:
+            glfw.terminate()
+            sys.exit("❌ 錯誤: GLFW 視窗建立失敗。")
+        glfw.make_context_current(self.window)
+        glfw.swap_interval(1)
+
+        self.mouse_button_left = False
+        self.mouse_button_right = False
+        self.last_mouse_x = 0
+        self.last_mouse_y = 0
+
+        self.cam = mujoco.MjvCamera()
+        self.opt = mujoco.MjvOption()
+        mujoco.mjv_defaultCamera(self.cam)
+        mujoco.mjv_defaultOption(self.opt)
+        self.cam.distance, self.cam.elevation, self.cam.azimuth = 2.5, -20, 90
+        
+        self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
+        self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_100)
+        
+        glfw.set_cursor_pos_callback(self.window, self._mouse_move_callback)
+        glfw.set_mouse_button_callback(self.window, self._mouse_button_callback)
+        glfw.set_scroll_callback(self.window, self._scroll_callback)
+
+        print("✅ MuJoCo 模擬環境與視窗初始化完成 (含滑鼠控制)。")
+
+    def _mouse_button_callback(self, window, button, action, mods):
+        if button == glfw.MOUSE_BUTTON_LEFT:
+            if action == glfw.PRESS:
+                self.mouse_button_left = True
+                self.last_mouse_x, self.last_mouse_y = glfw.get_cursor_pos(window)
+            elif action == glfw.RELEASE:
+                self.mouse_button_left = False
+        elif button == glfw.MOUSE_BUTTON_RIGHT:
+            if action == glfw.PRESS:
+                self.mouse_button_right = True
+                self.last_mouse_x, self.last_mouse_y = glfw.get_cursor_pos(window)
+            elif action == glfw.RELEASE:
+                self.mouse_button_right = False
+
+    def _mouse_move_callback(self, window, xpos, ypos):
+        if not (self.mouse_button_left or self.mouse_button_right):
+            return
+        dx = xpos - self.last_mouse_x
+        dy = ypos - self.last_mouse_y
+        self.last_mouse_x = xpos
+        self.last_mouse_y = ypos
+        width, height = glfw.get_window_size(window)
+        action_type = None
+        if self.mouse_button_right: action_type = mujoco.mjtMouse.mjMOUSE_MOVE_H
+        elif self.mouse_button_left: action_type = mujoco.mjtMouse.mjMOUSE_ROTATE_H
+        if action_type: mujoco.mjv_moveCamera(self.model, action_type, dx / height, dy / height, self.scene, self.cam)
+
+    def _scroll_callback(self, window, xoffset, yoffset):
+        mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0, -0.05 * yoffset, self.scene, self.cam)
+
+    def register_callbacks(self, keyboard_handler: "KeyboardInputHandler"):
+        keyboard_handler.register_callbacks(self.window)
+
+    def reset(self):
+        mujoco.mj_resetData(self.model, self.data)
+        mujoco.mj_forward(self.model, self.data)
+        print("✅ MuJoCo 模擬已重置。")
+
+    def should_close(self) -> bool:
+        return glfw.window_should_close(self.window)
+        
+    def apply_position_control(self, target_pos: np.ndarray, params: TuningParams):
+        self.model.actuator_gainprm[:, 0] = params.kp
+        self.model.actuator_biasprm[:, 1] = -params.kp
+        self.model.actuator_biasprm[:, 2] = -params.kd
+        self.data.ctrl[:] = target_pos
+        force_bias = np.full(self.config.num_motors, params.bias)
+        self.data.qfrc_applied[6:] = force_bias
+
+    def step(self, state: SimulationState):
+        while self.data.time < state.control_timer:
+            mujoco.mj_step(self.model, self.data)
+
+    def render(self, state: SimulationState, overlay: "DebugOverlay"):
+        if state.control_mode != "SERIAL_MODE":
+            if not (self.mouse_button_left or self.mouse_button_right):
+                 self.cam.lookat = self.data.body('torso').xpos
+        
+        viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
+        
+        terrain_manager = getattr(state, 'terrain_manager_ref', None)
+        if terrain_manager and terrain_manager.needs_scene_update:
+            # =========================================================================
+            # === 【核心修復】調換 mjr_uploadHField 的前兩個參數順序             ===
+            # =========================================================================
+            # 正確順序: (model, context, hfield_id)
+            mujoco.mjr_uploadHField(self.model, self.context, terrain_manager.hfield_id)
+            terrain_manager.needs_scene_update = False
+            print("🔄 地形幾何已上傳至 GPU 進行渲染。")
+            # =========================================================================
+        
+        if state.control_mode != "SERIAL_MODE":
+            mujoco.mjv_updateScene(self.model, self.data, self.opt, None, self.cam, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
+            mujoco.mjr_render(viewport, self.scene, self.context)
+        
+        overlay.render(viewport, self.context, state, self)
+        
+        glfw.swap_buffers(self.window)
+        glfw.poll_events()
+        
+    def close(self):
+        glfw.terminate()
+
+================================================================================
+--- FILE: state.py ---
+----------------------
+
+# state.py
+from __future__ import annotations
+import numpy as np
+from dataclasses import dataclass, field
+from config import AppConfig
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from floating_controller import FloatingController
+    from policy import ONNXPolicy
+
+@dataclass
+class TuningParams:
+    """用於即時調整機器人控制參數的類別。"""
+    kp: float
+    kd: float
+    action_scale: float
+    bias: float
+
+@dataclass
+class SimulationState:
+    """管理所有模擬中動態變化的狀態，取代 global 變數。"""
+    config: AppConfig
+    command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    tuning_params: TuningParams = field(init=False)
+    
+    hard_reset_requested: bool = False
+    soft_reset_requested: bool = False
+
+    control_timer: float = 0.0
+    
+    sim_mode_text: str = "Initializing"
+    input_mode: str = "KEYBOARD"
+    control_mode: str = "WALKING"
+
+    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
+    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
+    display_page: int = 0
+    num_display_pages: int = 2
+
+    serial_command_buffer: str = ""
+    serial_command_to_send: str = ""
+    serial_latest_messages: list = field(default_factory=list)
+
+    joint_test_index: int = 0
+    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+    manual_ctrl_index: int = 0
+    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    manual_mode_is_floating: bool = False
+
+    serial_is_connected: bool = False
+    gamepad_is_connected: bool = False
+
+    tuning_param_index: int = 0
+
+    floating_controller_ref: 'FloatingController' = None
+    policy_ref: 'ONNXPolicy' = None
+
+    single_step_mode: bool = False
+    execute_one_step: bool = False
+
+    def __post_init__(self):
+        """在初始化後，根據設定檔設定初始值。"""
+        self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__)
+        self.latest_action_raw = np.zeros(self.config.num_motors)
+        self.latest_final_ctrl = np.zeros(self.config.num_motors)
+        self.manual_final_ctrl = np.zeros(self.config.num_motors)
+        print("✅ SimulationState 初始化完成。")
+
+    def reset_control_state(self, sim_time: float):
+        self.control_timer = sim_time
+        print("✅ 控制狀態已重置。")
+
+    def clear_command(self):
+        self.command.fill(0.0)
+        print("運動指令已清除。")
+
+    def toggle_input_mode(self, new_mode: str):
+        if self.input_mode != new_mode:
+            self.input_mode = new_mode
+            self.clear_command()
+            print(f"輸入模式已切換至: {self.input_mode}")
+            
+    def set_control_mode(self, new_mode: str):
+        """切換主控制模式，並呼叫對應的啟用/禁用函式。"""
+        if self.control_mode == new_mode: return
+
+        old_mode = self.control_mode
+        
+        # --- 離開舊模式時的清理工作 ---
+        if old_mode == "FLOATING":
+            if self.floating_controller_ref: self.floating_controller_ref.disable()
+        elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
+             if self.floating_controller_ref: self.floating_controller_ref.disable()
+             self.manual_mode_is_floating = False
+        
+        self.control_mode = new_mode
+        print(f"控制模式已切換至: {self.control_mode}")
+
+        # --- 進入新模式時的設定工作 ---
+        if new_mode == "FLOATING":
+            if self.floating_controller_ref: self.floating_controller_ref.enable(self.latest_pos)
+        elif new_mode == "JOINT_TEST":
+            self.joint_test_offsets.fill(0.0)
+        elif new_mode == "MANUAL_CTRL":
+            self.manual_final_ctrl[:] = self.latest_final_ctrl
+
+        # --- 【核心】模式切換穩定性修復 ---
+        # 如果是從手動模式切換回 AI 模式
+        is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
+        is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL"]
+        
+        if is_entering_ai_mode and is_leaving_manual_mode:
+            print("從手動模式返回，正在重置 AI 狀態以確保平滑過渡...")
+            if self.policy_ref:
+                self.policy_ref.reset()
+            self.clear_command()
+
+================================================================================
+--- FILE: terrain_manager.py ---
+--------------------------------
+
+# terrain_manager.py
+import mujoco
+import numpy as np
+
+class TerrainManager:
+    """
+    管理和動態切換 MuJoCo 高度場 (hfield) 地形。
+    """
+    def __init__(self, model, data):
+        self.model = model
+        self.data = data
+        self.hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, 'terrain')
+        
+        self.needs_scene_update = False
+        
+        if self.hfield_id == -1:
+            print("❌ 錯誤: 在 XML 中找不到名為 'terrain' 的 hfield。地形切換功能將被禁用。")
+            self.is_functional = False
+            return
+
+        self.nrow = model.hfield_nrow[self.hfield_id]
+        self.ncol = model.hfield_ncol[self.hfield_id]
+        self.size = model.hfield_size[self.hfield_id]
+        self.adr = model.hfield_adr[self.hfield_id]
+        
+        self.terrains = {
+            "Flat": self.generate_flat,
+            "Sine Waves": self.generate_sine_waves,
+            "Steps": self.generate_steps,
+            "Random Noise": self.generate_random_noise
+        }
+        self.terrain_names = list(self.terrains.keys())
+        self.current_terrain_index = 0
+        self.is_functional = True
+        
+        self.switch_terrain(0)
+        print("✅ 地形管理器初始化完成 (使用高度場)。")
+
+    def generate_flat(self):
+        return np.zeros((self.nrow, self.ncol))
+
+    def generate_sine_waves(self):
+        x = np.linspace(0, 2 * np.pi, self.ncol)
+        y = np.linspace(0, 2 * np.pi, self.nrow)
+        X, Y = np.meshgrid(x, y)
+        return 0.05 * (np.sin(X * 3) + np.sin(Y * 2))
+
+    def generate_steps(self):
+        hfield = np.zeros((self.nrow, self.ncol))
+        step_height = 0.03
+        step_width = self.nrow // 10
+        for i in range(10):
+            hfield[i*step_width:(i+1)*step_width, :] = i * step_height
+        return hfield
+
+    def generate_random_noise(self):
+        return np.random.rand(self.nrow, self.ncol) * 0.05
+
+    def cycle_terrain(self):
+        if not self.is_functional: return
+        self.current_terrain_index = (self.current_terrain_index + 1) % len(self.terrain_names)
+        self.switch_terrain(self.current_terrain_index)
+
+    def get_current_terrain_name(self):
+        if not self.is_functional: return "N/A (hfield missing)"
+        return self.terrain_names[self.current_terrain_index]
+
+    def switch_terrain(self, index):
+        if not self.is_functional: return
+        
+        terrain_name = self.terrain_names[index]
+        print(f"🏞️ 切換地形至: {terrain_name}")
+        
+        generator = self.terrains[terrain_name]
+        hfield_data = generator()
+        
+        self.model.hfield_data[self.adr:self.adr + self.nrow*self.ncol] = hfield_data.flatten()
+        
+        self.needs_scene_update = True
+
+================================================================================
+--- FILE: tree_structure.txt ---
+--------------------------------
+
+RQxx@S  W i n d o w s   vǌe>Y  P A T H 
+ 
+ xx@S^_p  D 6 5 2 - B 1 0 3 
+ 
+ C : . 
+ 
+ |       c o n f i g . p y 
+ 
+ |       c o n f i g . y a m l 
+ 
+ |       d u m p _ p r o j e c t . p y 
+ 
+ |       f l o a t i n g _ c o n t r o l l e r . p y 
+ 
+ |       k e y b o a r d _ i n p u t _ h a n d l e r . p y 
+ 
+ |       m a i n . p y 
+ 
+ |       o b s e r v a t i o n . p y 
+ 
+ |       p o l i c y . p y 
+ 
+ |       p r o j e c t _ d u m p . t x t 
+ 
+ |       r e a d m e . m d 
+ 
+ |       r e n d e r i n g . p y 
+ 
+ |       s e r i a l _ c o m m u n i c a t o r . p y 
+ 
+ |       s i m u l a t i o n . p y 
+ 
+ |       s t a t e . p y 
+ 
+ |       t e s t _ j o y s t i c k . p y 
+ 
+ |       t r e e _ s t r u c t u r e . t x t 
+ 
+ |       v e r i f y _ m o d e l _ m o d e . p y 
+ 
+ |       x b o x _ c o n t r o l l e r . p y 
+ 
+ |       x b o x _ i n p u t _ h a n d l e r . p y 
+ 
+ |       
+ 
+ + - - - . v s c o d e 
+ 
+ + - - - a s s e t s 
+ 
+ |       |       p u p p e r . x m l 
+ 
+ |       |       p u p p e r _ m j x . x m l 
+ 
+ |       |       p u p p e r _ m j x _ 1 . x m l 
+ 
+ |       |       s c e n e . x m l 
+ 
+ |       |       s c e n e _ m j x . x m l 
+ 
+ |       |       
+ 
+ |       \ - - - m e s h 
+ 
+ |                       b o d y . s t l 
+ 
+ |                       H i p _ L . s t l 
+ 
+ |                       H i p _ R . s t l 
+ 
+ |                       L o w e r _ L e g _ L . s t l 
+ 
+ |                       L o w e r _ L e g _ R . s t l 
+ 
+ |                       U p p e r _ L e g _ L . s t l 
+ 
+ |                       U p p e r _ L e g _ R . s t l 
+ 
+ |                       
+ 
+ + - - - m o d e l s 
+ 
+ |               p u p p e r _ p p o _ p o l i c y _ 2 0 0 5 4 0 1 6 0 _ t f _ c o n v e r t e d . o n n x 
+ 
+ |               p u p p e r _ p p o _ p o l i c y _ 3 0 9 6 5 7 6 0 _ t f _ c o n v e r t e d _ iz[ekKaHr. o n n x 
+ 
+ |               p u p p e r _ p p o _ p o l i c y _ 3 0 9 6 5 7 6 0 _ t f _ c o n v e r t e d _ iz[ekKaHr. o p t i m i z e d . o r t 
+ 
+ |               
+ 
+ \ - - - _ _ p y c a c h e _ _ 
+ 
+                 c o n f i g . c p y t h o n - 3 1 1 . p y c 
+ 
+                 c o n f i g . c p y t h o n - 3 1 2 . p y c 
+ 
+                 f l o a t i n g _ c o n t r o l l e r . c p y t h o n - 3 1 2 . p y c 
+ 
+                 i n p u t _ h a n d l e r . c p y t h o n - 3 1 1 . p y c 
+ 
+                 i n p u t _ h a n d l e r . c p y t h o n - 3 1 2 . p y c 
+ 
+                 k e y b o a r d _ i n p u t _ h a n d l e r . c p y t h o n - 3 1 2 . p y c 
+ 
+                 o b s e r v a t i o n . c p y t h o n - 3 1 1 . p y c 
+ 
+                 o b s e r v a t i o n . c p y t h o n - 3 1 2 . p y c 
+ 
+                 p o l i c y . c p y t h o n - 3 1 1 . p y c 
+ 
+                 p o l i c y . c p y t h o n - 3 1 2 . p y c 
+ 
+                 r e n d e r i n g . c p y t h o n - 3 1 1 . p y c 
+ 
+                 r e n d e r i n g . c p y t h o n - 3 1 2 . p y c 
+ 
+                 s e r i a l _ c o m m u n i c a t o r . c p y t h o n - 3 1 2 . p y c 
+ 
+                 s i m u l a t i o n . c p y t h o n - 3 1 1 . p y c 
+ 
+                 s i m u l a t i o n . c p y t h o n - 3 1 2 . p y c 
+ 
+                 s t a t e . c p y t h o n - 3 1 1 . p y c 
+ 
+                 s t a t e . c p y t h o n - 3 1 2 . p y c 
+ 
+                 x b o x _ c o n t r o l l e r . c p y t h o n - 3 1 2 . p y c 
+ 
+                 x b o x _ i n p u t _ h a n d l e r . c p y t h o n - 3 1 2 . p y c 
+ 
+                 
+ 
+ 
+
+================================================================================
+--- FILE: xbox_controller.py ---
+--------------------------------
+
+# xbox_controller.py
+import pygame
+
+class XboxController:
+    """
+    一個使用 Pygame 函式庫來讀取 Xbox 搖桿輸入的類別。
+    這個版本是非阻塞的，可以安全地在主迴圈中更新。
+    """
+    def __init__(self):
+        """初始化 Pygame 但不立即掃描搖桿。"""
+        pygame.init()
+        self.joystick = None
+        self.deadzone = 0.15
+        self.state = {
+            'left_analog_x': 0.0, 'left_analog_y': 0.0,
+            'right_analog_x': 0.0, 'right_analog_y': 0.0,
+            'dpad': (0, 0),
+            'button_a': 0, 'button_b': 0, 'button_x': 0, 'button_y': 0,
+            'button_l1': 0, 'button_r1': 0,
+            'button_select': 0, 'button_start': 0,
+        }
+        print("✅ XBox 控制器已初始化 (等待連接指令)。")
+
+    def scan_and_connect(self) -> bool:
+        """掃描並連接到第一個可用的搖桿。"""
+        if self.is_connected():
+            print("搖桿已連接，無需重新掃描。")
+            return True
+
+        print("\n" + "="*20 + " 正在掃描搖桿 " + "="*20)
+        pygame.joystick.init() # 每次掃描時重新初始化
+        
+        if pygame.joystick.get_count() > 0:
+            self.joystick = pygame.joystick.Joystick(0)
+            self.joystick.init()
+            print(f"✅ 成功連接到搖桿: {self.joystick.get_name()}")
+            return True
+        else:
+            print("--- 未偵測到任何搖桿 ---")
+            self.joystick = None
+            return False
+
+    def is_connected(self) -> bool:
+        """檢查搖桿是否已成功初始化。"""
+        return self.joystick is not None
+
+    def update(self):
+        """處理 Pygame 事件佇列，更新搖桿狀態。"""
+        if not self.is_connected():
+            return
+            
+        for event in pygame.event.get():
+            if event.type == pygame.JOYAXISMOTION:
+                if event.axis == 0: self.state['left_analog_x'] = event.value
+                elif event.axis == 1: self.state['left_analog_y'] = event.value
+                elif event.axis == 2: self.state['right_analog_x'] = event.value
+                elif event.axis == 3: self.state['right_analog_y'] = event.value
+            elif event.type == pygame.JOYBUTTONDOWN:
+                if event.button == 0: self.state['button_a'] = 1
+                elif event.button == 1: self.state['button_b'] = 1
+                elif event.button == 2: self.state['button_x'] = 1
+                elif event.button == 3: self.state['button_y'] = 1
+                elif event.button == 4: self.state['button_l1'] = 1
+                elif event.button == 5: self.state['button_r1'] = 1
+                elif event.button == 6: self.state['button_select'] = 1
+                elif event.button == 7: self.state['button_start'] = 1
+            elif event.type == pygame.JOYBUTTONUP:
+                if event.button == 0: self.state['button_a'] = 0
+                elif event.button == 1: self.state['button_b'] = 0
+                elif event.button == 2: self.state['button_x'] = 0
+                elif event.button == 3: self.state['button_y'] = 0
+                elif event.button == 4: self.state['button_l1'] = 0
+                elif event.button == 5: self.state['button_r1'] = 0
+                elif event.button == 6: self.state['button_select'] = 0
+                elif event.button == 7: self.state['button_start'] = 0
+            elif event.type == pygame.JOYHATMOTION:
+                self.state['dpad'] = event.value
+
+    def get_input(self) -> dict:
+        """獲取當前搖桿狀態的淺拷貝，並應用死區。"""
+        for axis in ['left_analog_x', 'left_analog_y', 'right_analog_x', 'right_analog_y']:
+            if abs(self.state[axis]) < self.deadzone:
+                self.state[axis] = 0.0
+        return self.state.copy()
+
+    def close(self):
+        """關閉 Pygame。"""
+        pygame.quit()
+
+================================================================================
+--- FILE: xbox_input_handler.py ---
+-----------------------------------
+
+# xbox_input_handler.py
+from state import SimulationState
+from xbox_controller import XboxController
+
+class XboxInputHandler:
+    """
+    處理 Xbox 搖桿的輸入，並將其轉換為對 SimulationState 的更新。
+    """
+    def __init__(self, state: SimulationState):
+        """初始化 XboxInputHandler。"""
+        self.state = state
+        self.config = state.config
+        self.controller = XboxController()
+        self.last_input_state = {}
+        self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
+        self.num_params = len(self.param_keys)
+    
+    def scan_and_connect(self) -> bool:
+        """呼叫底層控制器進行掃描和連接。"""
+        is_success = self.controller.scan_and_connect()
+        if is_success:
+            self.state.toggle_input_mode("GAMEPAD")
+        return is_success
+
+    def is_available(self) -> bool:
+        """檢查搖桿是否已成功初始化並連接。"""
+        return self.controller.is_connected()
+
+    def update_state(self):
+        """從搖桿讀取輸入並更新 SimulationState。"""
+        if not self.is_available():
+            if self.state.input_mode == "GAMEPAD":
+                print("🎮 搖桿已斷開，自動切換回鍵盤模式。")
+                self.state.toggle_input_mode("KEYBOARD")
+                self.state.gamepad_is_connected = False
+            return
+
+        self.controller.update() 
+        current_input = self.controller.get_input()
+        
+        self.state.command[0] = current_input['left_analog_x'] * self.config.gamepad_sensitivity['vy']
+        self.state.command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1
+        self.state.command[2] = current_input['right_analog_x'] * self.config.gamepad_sensitivity['wz']
+
+        if current_input['button_select'] and not self.last_input_state.get('button_select', 0):
+            self.state.hard_reset_requested = True
+            
+        if current_input['button_l1'] and not self.last_input_state.get('button_l1', 0):
+            self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
+        
+        if current_input['button_r1'] and not self.last_input_state.get('button_r1', 0):
+            self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
+
+        dpad_y = current_input['dpad'][1]
+        last_dpad_y = self.last_input_state.get('dpad', (0,0))[1]
+
+        if dpad_y != last_dpad_y:
+            param_to_adjust = self.param_keys[self.state.tuning_param_index]
+            step = self.config.param_adjust_steps.get(param_to_adjust, 0.1)
+            current_value = getattr(self.state.tuning_params, param_to_adjust)
+
+            if dpad_y == 1:
+                setattr(self.state.tuning_params, param_to_adjust, current_value + step)
+            elif dpad_y == -1:
+                setattr(self.state.tuning_params, param_to_adjust, current_value - step)
+        
+        self.last_input_state = current_input
+        
+        self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
+        self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
+        self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
+
+    def close(self):
+        """關閉搖桿連接。"""
+        if self.controller:
+            self.controller.close()
+
+================================================================================
+--- FILE: assets/pupper.xml ---
+-------------------------------
+
+<!-- 
+  Pupper Model - Final Corrected Version
+-->
+<mujoco model="pupper_env">
+    <compiler angle="radian" autolimits="true"/>
+
+    <option timestep="0.001" gravity="0 0 -9.81" 
+            iterations="5" ls_iterations="10" noslip_iterations="2">
+        <flag eulerdamp="disable"/>
+    </option>
+
+    <default>
+        <default class="pupper">
+            <joint armature="0.01" damping="0.5239" solimplimit="0.9 0.99 0.001" solreflimit="0.02 1"/>
+            <geom type="mesh" contype="0" conaffinity="0" rgba="0.8 0.6 .4 1"/>
+            <general biastype="affine" gainprm="35.0 0 0" biasprm="0 -35.0 0"/>
+            <default class="pupper/collision/foot">
+                <geom type="sphere" 
+                      contype="1" conaffinity="1" 
+                      group="3"
+                      friction="1.0 0.2 0.1" 
+                      solimp="0.9 0.99 0.001" 
+                      solref="0.02 1"
+                      rgba="1 0 0 1"/>
+            </default>
+        </default>
+    </default>
+
+    <asset>
+        <mesh name="body" file="mesh/body.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Hip_L" file="mesh/Hip_L.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Hip_R" file="mesh/Hip_R.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Upper_Leg_L" file="mesh/Upper_Leg_L.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Upper_Leg_R" file="mesh/Upper_Leg_R.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Lower_Leg_L" file="mesh/Lower_Leg_L.stl" scale="0.001 0.001 0.001"/>
+        <mesh name="Lower_Leg_R" file="mesh/Lower_Leg_R.stl" scale="0.001 0.001 0.001"/>
+    </asset>
+
+    <worldbody>
+        <body name="torso" pos="0 0 0.2" childclass="pupper">
+            <freejoint name="root"/>
+            <camera name="track" pos="1.958 -2.348 0.591" xyaxes="0.768 0.641 0.000 -0.101 0.122 0.987" mode="trackcom"/>
+            <inertial pos="0.00109 -0.074 0" mass="0.7833" diaginertia="0.0003688 0.002508 0.002674"/>
+            <geom name="torso_geom" mesh="body"/>
+            <site name="imu_frame" pos="0 0 0" size="0.01" type="sphere" rgba="1 0 0 0.5"/>
+
+            <!-- ==================== Front-Right Leg ==================== -->
+            <body name="leg_front_right" pos="-0.046891 -0.203946 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_front_right" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="fr_block_geom" mesh="Hip_R"/>
+                <body name="upper_leg_front_right" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_front_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="fr_geom" mesh="Upper_Leg_R"/>
+                    <body name="lower_leg_front_right" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_front_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="fr_l2_geom" mesh="Lower_Leg_R"/>
+                        
+                        <!-- FINAL FIX: 將 site 的名字改回 "foot_front_right"，以匹配 Python 環境的需求。-->
+                        <site name="foot_front_right" pos="0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_front_right_collision" class="pupper/collision/foot" 
+                              pos="0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+            
+            <!-- ==================== Front-Left Leg ==================== -->
+            <body name="leg_front_left" pos="0.047109 -0.203946 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_front_left" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="fl_block_geom" mesh="Hip_L"/>
+                <body name="upper_leg_front_left" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_front_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="fl_geom" mesh="Upper_Leg_L"/>
+                    <body name="lower_leg_front_left" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_front_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="fl_l2_geom" mesh="Lower_Leg_L"/>
+                        <site name="foot_front_left" pos="-0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_front_left_collision" class="pupper/collision/foot" 
+                              pos="-0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+            
+            <!-- ==================== Hind-Right Leg ==================== -->
+            <body name="leg_hind_right" pos="-0.046896 -0.004096 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_hind_right" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="br_block_geom" mesh="Hip_R"/>
+                <body name="upper_leg_hind_right" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_hind_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="br_geom" mesh="Upper_Leg_R"/>
+                    <body name="lower_leg_hind_right" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_hind_right" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="br_l2_geom" mesh="Lower_Leg_R"/>
+                        <site name="foot_hind_right" pos="0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_hind_right_collision" class="pupper/collision/foot" 
+                              pos="0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+            
+            <!-- ==================== Hind-Left Leg ==================== -->
+            <body name="leg_hind_left" pos="0.047104 -0.004096 -0.0064">
+                <inertial pos="0 0 0" mass="0.1081" diaginertia="3.698e-05 7.127e-06 4.075e-05"/>
+                <joint name="abduction_hind_left" type="hinge" axis="0 1 0" pos="0 0 0" range="-1.0472 1.0472"/>
+                <geom name="bl_block_geom" mesh="Hip_L"/>
+                <body name="upper_leg_hind_left" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+                    <inertial pos="0 0 0" mass="0.1321" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                    <joint name="hip_hind_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.76166 3.81442"/>
+                    <geom name="bl_geom" mesh="Upper_Leg_L"/>
+                    <body name="lower_leg_hind_left" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+                        <inertial pos="0 0 0" mass="0.1036" diaginertia="0.0002253 6.493e-05 0.0002502"/>
+                        <joint name="knee_hind_left" type="hinge" axis="1 0 0" pos="0 0 0" range="-0.78540 1.65806"/>
+                        <geom name="bl_l2_geom" mesh="Lower_Leg_L"/>
+                        <site name="foot_hind_left" pos="-0.003475 0 -0.11" size="0.009525" type="sphere" rgba="0 1 0 0.5"/>
+                        <geom name="foot_hind_left_collision" class="pupper/collision/foot" 
+                              pos="-0.003475 0 -0.11" size="0.009525"/>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <general class="pupper" joint="abduction_front_right"/>
+        <general class="pupper" joint="hip_front_right"/>
+        <general class="pupper" joint="knee_front_right"/>
+        <general class="pupper" joint="abduction_front_left"/>
+        <general class="pupper" joint="hip_front_left"/>
+        <general class="pupper" joint="knee_front_left"/>
+        <general class="pupper" joint="abduction_hind_right"/>
+        <general class="pupper" joint="hip_hind_right"/>
+        <general class="pupper" joint="knee_hind_right"/>
+        <general class="pupper" joint="abduction_hind_left"/>
+        <general class="pupper" joint="hip_hind_left"/>
+        <general class="pupper" joint="knee_hind_left"/>
+    </actuator>
+    
+    <sensor>
+        <!-- Sensor section remains unchanged -->
+    </sensor>
+
+    <keyframe>
+        <key name="home"
+            qpos="0 0 0.2 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+            ctrl="0 0 0 0 0 0 0 0 0 0 0 0" />
+    </keyframe>
+</mujoco>
+
+================================================================================
+--- FILE: assets/pupper_mjx.xml ---
+-----------------------------------
+
+<!-- =================================================================
+     Pupper Model - Final Version with Global PD(Kp, Kv) Settings
+     ================================================================= -->
+<mujoco model="pupper_global_pd">
+  <compiler angle="radian" meshdir="assets/mesh" autolimits="true"/> <!-- assets to assets/mesh -->
+  <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">
+    <flag eulerdamp="disable"/>
+  </option>
+  <custom>
+    <numeric data="30" name="max_contact_points"/>
+    <numeric data="12" name="max_geom_pairs"/>
+  </custom>
+
+  <!-- [MODIFIED] All physical and control parameters are now globally defined here -->
+  <default>
+    <default class="pupper">
+      <!-- 1. Global physical properties for ALL joints -->
+      <joint armature="0.005" damping="0.1" frictionloss="0.2"/>
+      
+      <!-- 2. Global controller template for ALL position actuators -->
+      <!--    kp and kv are placeholders to be modified by the Python script -->
+      <general gainprm="0.333" ctrlrange="-5.0 5.0" gear="1" biastype="none"/>
+
+
+      <!-- Joint-specific kinematics -->
+      <default class="abduction">
+        <joint axis="0 1 0" range="-1.0472 1.0472"/>
+      </default>
+      <default class="hip">
+        <joint axis="1 0 0" range="-0.76166 3.81442"/>
+      </default>
+      <default class="knee">
+        <joint axis="1 0 0" range="-0.78540 1.65806"/>
+      </default>
+      
+      <!-- Visual and collision definitions -->
+      <default class="visual"> <geom type="mesh" contype="0" conaffinity="0" group="2"/> </default>
+      <default class="collision"> <geom group="3"/>
+        <default class="foot"> <geom type="sphere" size="0.009525" solimp="0.9 .95 0.01" condim="3" friction="0.8 0.1 0.1"/> </default>
+      </default>
+    </default>
+  </default>
+
+  <!-- Assets and Worldbody remain the same -->
+  <asset>
+    <mesh name="body" file="body.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Hip_L" file="Hip_L.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Hip_R" file="Hip_R.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Upper_Leg_L" file="Upper_Leg_L.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Upper_Leg_R" file="Upper_Leg_R.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Lower_Leg_L" file="Lower_Leg_L.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Lower_Leg_R" file="Lower_Leg_R.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <light name="spotlight" mode="targetbodycom" target="torso" pos="3 0 4"/>
+    <body name="torso" pos="0 0 0.2" childclass="pupper">
+      <camera name="track" pos="0.8 -1.0 0.5" xyaxes="0.707 0.707 0 -0.354 0.354 0.866" mode="trackcom"/>
+      <site name="head" pos="0.15 0 0" rgba="1 0 0 1" size="0.02" group="5"/>
+      <inertial pos="0 -0.048 -0.00964" mass="0.991" fullinertia="0.00626 0.00175 0.00678 2e-05 0 2e-05" />
+      <freejoint/>
+      <geom class="visual" mesh="body"/>
+      <geom class="collision" type="box" size="0.06 0.11 0.03" pos="0 -0.07 0"/>
+      <site name="imu" pos="0 -0.122542 0" size="0.01" group="5"/>
+      <body name="FR_hip" pos="-0.046891 -0.203946 -0.0064">
+        <inertial pos="0.0139 -0.0269 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="FR_hip_joint"/>
+        <geom class="visual" mesh="Hip_R"/>
+        <body name="FR_thigh" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="FR_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_R"/>
+          <body name="FR_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="-0.00588 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="FR_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_R"/>
+            <geom name="FR" class="foot" pos="0.003475 0 -0.11"/>
+            <site name="FR" pos="0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="FL_hip" pos="0.047109 -0.203946 -0.0064">
+        <inertial pos="0.0139 0.0254 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="FL_hip_joint"/>
+        <geom class="visual" mesh="Hip_L"/>
+        <body name="FL_thigh" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="FL_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_L"/>
+          <body name="FL_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="0.00558 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="FL_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_L"/>
+            <geom name="FL" class="foot" pos="-0.003475 0 -0.11"/>
+            <site name="FL" pos="-0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.046896 -0.004096 -0.0064">
+        <inertial pos="0.0139 -0.0269 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="RR_hip_joint"/>
+        <geom class="visual" mesh="Hip_R"/>
+        <body name="RR_thigh" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="RR_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_R"/>
+          <body name="RR_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="-0.00588 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="RR_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_R"/>
+            <geom name="RR" class="foot" pos="0.003475 0 -0.11"/>
+            <site name="RR" pos="0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="0.047104 -0.004096 -0.0064">
+        <inertial pos="0.0139 0.0254 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="RL_hip_joint"/>
+        <geom class="visual" mesh="Hip_L"/>
+        <body name="RL_thigh" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="RL_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_L"/>
+          <body name="RL_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="0.00558 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="RL_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_L"/>
+            <geom name="RL" class="foot" pos="-0.003475 0 -0.11"/>
+            <site name="RL" pos="-0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+      <general name="FR_hip"   joint="FR_hip_joint"/>
+      <general name="FR_thigh" joint="FR_thigh_joint"/>
+      <general name="FR_calf"  joint="FR_calf_joint"/>
+      <general name="FL_hip"   joint="FL_hip_joint"/>
+      <general name="FL_thigh" joint="FL_thigh_joint"/>
+      <general name="FL_calf"  joint="FL_calf_joint"/>
+      <general name="RR_hip"   joint="RR_hip_joint"/>
+      <general name="RR_thigh" joint="RR_thigh_joint"/>
+      <general name="RR_calf"  joint="RR_calf_joint"/>
+      <general name="RL_hip"   joint="RL_hip_joint"/>
+      <general name="RL_thigh" joint="RL_thigh_joint"/>
+      <general name="RL_calf"  joint="RL_calf_joint"/>
+  </actuator>
+
+  <!-- Sensors remain the same -->
+  <sensor>
+    <gyro site="imu" name="gyro"/>
+    <velocimeter site="imu" name="local_linvel"/>
+    <accelerometer site="imu" name="accelerometer"/>
+    <framepos objtype="site" objname="imu" name="position"/>
+    <framezaxis objtype="site" objname="imu" name="upvector"/>
+    <framexaxis objtype="site" objname="imu" name="forwardvector"/>
+    <framelinvel objtype="site" objname="imu" name="global_linvel"/>
+    <frameangvel objtype="site" objname="imu" name="global_angvel"/>
+    <framequat objtype="site" objname="imu" name="orientation"/>
+    <framelinvel objtype="site" objname="FR" name="FR_global_linvel"/>
+    <framelinvel objtype="site" objname="FL" name="FL_global_linvel"/>
+    <framelinvel objtype="site" objname="RR" name="RR_global_linvel"/>
+    <framelinvel objtype="site" objname="RL" name="RL_global_linvel"/>
+    <framepos objtype="site" objname="FR" name="FR_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="FL" name="FL_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="RR" name="RR_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="RL" name="RL_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="head" name="head_pos"/>
+  </sensor>
+</mujoco>
+
+================================================================================
+--- FILE: assets/pupper_mjx_1.xml ---
+-------------------------------------
+
+<!-- =================================================================
+     Pupper Model - Final Version with Global PD(Kp, Kv) Settings
+     ================================================================= -->
+<mujoco model="pupper_global_pd">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">
+    <flag eulerdamp="disable"/>
+  </option>
+  <custom>
+    <numeric data="30" name="max_contact_points"/>
+    <numeric data="12" name="max_geom_pairs"/>
+  </custom>
+
+  <!-- [MODIFIED] All physical and control parameters are now globally defined here -->
+  <default>
+    <default class="pupper">
+      <!-- 1. Global physical properties for ALL joints -->
+      <joint armature="0.005" damping="0.1" frictionloss="0.2"/>
+      
+      <!-- 2. Global controller template for ALL position actuators -->
+      <!--    kp and kv are placeholders to be modified by the Python script -->
+      <general gainprm="0.333" ctrlrange="-5.0 5.0" gear="1" biastype="none"/>
+
+
+      <!-- Joint-specific kinematics -->
+      <default class="abduction">
+        <joint axis="0 1 0" range="-1.0472 1.0472"/>
+      </default>
+      <default class="hip">
+        <joint axis="1 0 0" range="-0.76166 3.81442"/>
+      </default>
+      <default class="knee">
+        <joint axis="1 0 0" range="-0.78540 1.65806"/>
+      </default>
+      
+      <!-- Visual and collision definitions -->
+      <default class="visual"> <geom type="mesh" contype="0" conaffinity="0" group="2"/> </default>
+      <default class="collision"> <geom group="3"/>
+        <default class="foot"> <geom type="sphere" size="0.009525" solimp="0.9 .95 0.01" condim="3" friction="0.8 0.1 0.1"/> </default>
+      </default>
+    </default>
+  </default>
+
+  <!-- Assets and Worldbody remain the same -->
+  <asset>
+    <mesh name="body" file="body.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Hip_L" file="Hip_L.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Hip_R" file="Hip_R.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Upper_Leg_L" file="Upper_Leg_L.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Upper_Leg_R" file="Upper_Leg_R.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Lower_Leg_L" file="Lower_Leg_L.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="Lower_Leg_R" file="Lower_Leg_R.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <light name="spotlight" mode="targetbodycom" target="torso" pos="3 0 4"/>
+    <body name="torso" pos="0 0 0.2" childclass="pupper">
+      <camera name="track" pos="0.8 -1.0 0.5" xyaxes="0.707 0.707 0 -0.354 0.354 0.866" mode="trackcom"/>
+      <site name="head" pos="0.15 0 0" rgba="1 0 0 1" size="0.02" group="5"/>
+      <inertial pos="0 -0.048 -0.00964" mass="0.991" fullinertia="0.00626 0.00175 0.00678 2e-05 0 2e-05" />
+      <freejoint/>
+      <geom class="visual" mesh="body"/>
+      <geom class="collision" type="box" size="0.06 0.11 0.03" pos="0 -0.07 0"/>
+      <site name="imu" pos="0 -0.122542 0" size="0.01" group="5"/>
+      <body name="FR_hip" pos="-0.046891 -0.203946 -0.0064">
+        <inertial pos="0.0139 -0.0269 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="FR_hip_joint"/>
+        <geom class="visual" mesh="Hip_R"/>
+        <body name="FR_thigh" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="FR_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_R"/>
+          <body name="FR_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="-0.00588 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="FR_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_R"/>
+            <geom name="FR" class="foot" pos="0.003475 0 -0.11"/>
+            <site name="FR" pos="0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="FL_hip" pos="0.047109 -0.203946 -0.0064">
+        <inertial pos="0.0139 0.0254 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="FL_hip_joint"/>
+        <geom class="visual" mesh="Hip_L"/>
+        <body name="FL_thigh" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="FL_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_L"/>
+          <body name="FL_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="0.00558 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="FL_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_L"/>
+            <geom name="FL" class="foot" pos="-0.003475 0 -0.11"/>
+            <site name="FL" pos="-0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.046896 -0.004096 -0.0064">
+        <inertial pos="0.0139 -0.0269 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="RR_hip_joint"/>
+        <geom class="visual" mesh="Hip_R"/>
+        <body name="RR_thigh" pos="-0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="RR_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_R"/>
+          <body name="RR_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="-0.00588 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="RR_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_R"/>
+            <geom name="RR" class="foot" pos="0.003475 0 -0.11"/>
+            <site name="RR" pos="0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="0.047104 -0.004096 -0.0064">
+        <inertial pos="0.0139 0.0254 0" mass="0.106" diaginertia="2e-05 6e-05 6e-05" />
+        <joint class="abduction" name="RL_hip_joint"/>
+        <geom class="visual" mesh="Hip_L"/>
+        <body name="RL_thigh" pos="0.037 0.028 0" axisangle="1 0 0 0.7854">
+          <inertial pos="0.0172 0 -0.061" mass="0.142" diaginertia="0.00014 0.00016 3e-05" />
+          <joint class="hip" name="RL_thigh_joint"/>
+          <geom class="visual" mesh="Upper_Leg_L"/>
+          <body name="RL_calf" pos="0 0 -0.08" axisangle="1 0 0 -1.57">
+            <inertial pos="0.00558 -0.00075 -0.0658" mass="0.038" diaginertia="0.00018 0.00018 2e-05" />
+            <joint class="knee" name="RL_calf_joint"/>
+            <geom class="visual" mesh="Lower_Leg_L"/>
+            <geom name="RL" class="foot" pos="-0.003475 0 -0.11"/>
+            <site name="RL" pos="-0.003475 0 -0.11" type="sphere" size="0.009525" group="5"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+      <general name="FR_hip"   joint="FR_hip_joint"/>
+      <general name="FR_thigh" joint="FR_thigh_joint"/>
+      <general name="FR_calf"  joint="FR_calf_joint"/>
+      <general name="FL_hip"   joint="FL_hip_joint"/>
+      <general name="FL_thigh" joint="FL_thigh_joint"/>
+      <general name="FL_calf"  joint="FL_calf_joint"/>
+      <general name="RR_hip"   joint="RR_hip_joint"/>
+      <general name="RR_thigh" joint="RR_thigh_joint"/>
+      <general name="RR_calf"  joint="RR_calf_joint"/>
+      <general name="RL_hip"   joint="RL_hip_joint"/>
+      <general name="RL_thigh" joint="RL_thigh_joint"/>
+      <general name="RL_calf"  joint="RL_calf_joint"/>
+  </actuator>
+
+  <!-- Sensors remain the same -->
+  <sensor>
+    <gyro site="imu" name="gyro"/>
+    <velocimeter site="imu" name="local_linvel"/>
+    <accelerometer site="imu" name="accelerometer"/>
+    <framepos objtype="site" objname="imu" name="position"/>
+    <framezaxis objtype="site" objname="imu" name="upvector"/>
+    <framexaxis objtype="site" objname="imu" name="forwardvector"/>
+    <framelinvel objtype="site" objname="imu" name="global_linvel"/>
+    <frameangvel objtype="site" objname="imu" name="global_angvel"/>
+    <framequat objtype="site" objname="imu" name="orientation"/>
+    <framelinvel objtype="site" objname="FR" name="FR_global_linvel"/>
+    <framelinvel objtype="site" objname="FL" name="FL_global_linvel"/>
+    <framelinvel objtype="site" objname="RR" name="RR_global_linvel"/>
+    <framelinvel objtype="site" objname="RL" name="RL_global_linvel"/>
+    <framepos objtype="site" objname="FR" name="FR_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="FL" name="FL_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="RR" name="RR_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="RL" name="RL_pos" reftype="site" refname="imu"/>
+    <framepos objtype="site" objname="head" name="head_pos"/>
+  </sensor>
+</mujoco>
+
+================================================================================
+--- FILE: assets/scene.xml ---
+------------------------------
+
+<mujoco model="pupper scene">
+  <!-- 包含機器人模型 -->
+  <include file="pupper.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <camera name="default" pos="0.846 -1.465 0.916" xyaxes="0.866 0.500 0.000 -0.171 0.296 0.940"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    
+  <keyframe>
+    <!-- 為Pupper定義一個'home'站立姿態 -->
+    <!-- qpos: [root_pos(3), root_quat(4), FR(3), FL(3), RR(3), RL(3)] -->
+    <!-- 原始Pupper模型的home: [0 0.4 -0.8] for each leg (abduction, hip, knee) -->
+    <key name="home" qpos="
+    0 0 0.2
+    1 0 0 0
+    0 0.0 0.0
+    0 0.0 0.0
+    0 0.0 0.0
+    0 0.0 0.0"
+      ctrl="0 0 0  0 0 0  0 0 0  0 0 0"/>
+  </keyframe>
+
+
+    <!-- =========================================================== -->
+    <!-- === 新增部分 1：Mocap Body (我們的空中錨點) === -->
+    <!-- mocap="true" 表示它的位置由我們手動設定 -->
+    <!-- 將其放在 worldbody 的頂層 -->
+    <body name="anchor" pos="0 0 0.35" mocap="true">
+      <!-- 我們可以給它一個看不見的 geom 來視覺化它的位置，方便除錯 -->
+      <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>
+    </body>
+    <!-- =========================================================== -->
+
+  </worldbody>
+
+  <!-- ============================================================= -->
+  <!-- === 新增部分 2：Weld 約束 === -->
+  <!-- 將其放在 mujoco 標籤的頂層 -->
+  <!-- 這個約束將 pupper.xml 中的 "torso" "焊接" 到我們上面定義的 "anchor" 上 -->
+  <!-- active="false" 表示預設是禁用的 -->
+  <equality>
+    <weld name="torso_anchor_weld" body1="torso" body2="anchor" solimp="0.9 0.95 0.001" solref="0.02 1" active="false"/>
+  </equality>
+  <!-- ============================================================= -->
+
+</mujoco>
+
+================================================================================
+--- FILE: assets/scene_hfield_mjx.xml ---
+-----------------------------------------
+
+<mujoco model="barkour vB scene">
+  <include file="pupper_mjx.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <hfield name="hfield" file="mesh-2/hfield.png" size="10 10 .02 0.1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <camera name="default" pos="0.846 -1.465 0.916" xyaxes="0.866 0.500 0.000 -0.171 0.296 0.940"/>
+    <geom name="floor" type="hfield" hfield="hfield" conaffinity="1" material="groundplane"/>
+  </worldbody>
+</mujoco>
+
+================================================================================
+--- FILE: assets/scene_mjx.xml ---
+----------------------------------
+
+<!-- assets/scene_mjx.xml -->
+<mujoco model="Pupper Scene MJX">
+  <include file="assets/pupper_mjx.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1=".6 .7 .8" rgb2=".2 .3 .4" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1=".2 .3 .4" rgb2=".1 .2 .3" markrgb=".8 .8 .8"
+      width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+    
+    <!-- 【新增】定義高度場資產 -->
+    <!-- nrow 和 ncol 定義了解析度 (例如 100x100 的網格) -->
+    <!-- size 定義了物理尺寸 (例如 10米 x 10米 x 最大高度1米) -->
+    <hfield name="terrain" nrow="100" ncol="100" size="5 5 1 0.1"/>
+  </asset>
+
+  <worldbody>
+    <!-- 【修改】將原來的平面地板 geom 替換為高度場 geom -->
+    <!-- <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" condim="3" contype="1" conaffinity="0"/> -->
+    <geom name="floor" type="hfield" hfield="terrain" material="groundplane" condim="3" contype="1" conaffinity="0"/>
+    
+    <body name="anchor" pos="0 0 0.35" mocap="true">
+      <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+
+  <equality>
+    <weld name="torso_anchor_weld" body1="torso" body2="anchor" solimp="0.9 0.95 0.001" solref="0.02 1" active="false"/>
+  </equality>
+  
+  <keyframe>
+    <key name="home" qpos="
+    0 0 0.3
+    1 0 0 0 
+    0.0  0.0  0.0  
+    0.0  0.0  0.0  
+    0.0  0.0  0.0  
+    0.0  0.0  0.0 "/>
+  </keyframe>
+</mujoco>
+
+================================================================================
+--- FILE: assets/scene_mjx_feetonly_bowl.xml ---
+------------------------------------------------
+
+<mujoco model="go1 feet only scene">
+  <include file="go1_mjx_feetonly.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" file="assets/rocky_texture.png"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance=".8"/>
+    <hfield name="terrain" ncol="201" nrow="201" size="30 30 5 .1"/>
+  </asset>
+
+  <worldbody>
+    <camera name="global"  pos="-5 5 5" xyaxes="-1 -1 0 1 0 1" mode="trackcom"/>
+    <geom name="floor" type="hfield" hfield="terrain" material="groundplane" pos="0 0 -.01"/>
+  </worldbody>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0.35 1 0 0 0 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"
+      ctrl="0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"/>
+    <key name="home_higher"
+    qpos="0 0 0.35 1 0 0 0 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"
+    ctrl="0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"/>
+  </keyframe>
+</mujoco>
+
+
+================================================================================
+--- FILE: assets/scene_mjx_feetonly_flat_terrain.xml ---
+--------------------------------------------------------
+
+<mujoco model="go1 feetonly flat terrain scene">
+  <include file="go1_mjx_feetonly.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0"
+      width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" contype="1" conaffinity="0" priority="1"
+      friction="0.6" condim="3"/>
+  </worldbody>
+
+  <keyframe>
+    <key name="home" qpos="
+    0 0 0.278
+    1 0 0 0
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8"
+      ctrl="0.1 0.9 -1.8 -0.1 0.9 -1.8 0.1 0.9 -1.8 -0.1 0.9 -1.8"/>
+    <key name="home_higher" qpos="0 0 0.31 1 0 0 0 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"
+      ctrl="0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"/>
+    <key
+    name="footstand"
+    qpos='
+    0 0 0.54
+    0.8 0 -0.8 0
+    0 0.82 -1.6 0 0.82 -1.68 0 1.82 -1.16 0.0 1.82 -1.16'
+    ctrl='0 0.82 -1.6 0 0.82 -1.68 0 1.82 -1.16 0.0 1.82 -1.16'/>
+    <key name="handstand"
+      qpos="0 0 0.54
+      0.8 0 0.8 0
+      0 -0.686 -1.16
+      0 -0.686 -1.16
+      0 1.7 -1.853
+      0 1.7 -1.853"
+      ctrl="0 -0.686 -1.16 0 -0.686 -1.16 0 1.7 -1.853 0 1.7 -1.853"/>
+    <key name="pre_recovery"
+      qpos="-0.0318481 -0.000215369 0.0579031 1 -2.70738e-05 6.06169e-05 0.000231261 -0.352275 1.18554 -2.80738 0.360892 1.1806 -2.80281 -0.381197 1.16812 -2.79123 0.391054 1.1622 -2.78576"
+      ctrl="-0.352275 1.18554 -2.80738 0.360892 1.1806 -2.80281 -0.381197 1.16812 -2.79123 0.391054 1.1622 -2.78576"/>
+  </keyframe>
+</mujoco>
+
+
+================================================================================
+--- FILE: assets/scene_mjx_feetonly_rough_terrain.xml ---
+---------------------------------------------------------
+
+<mujoco model="go1 feet only rough terrain scene">
+  <include file="go1_mjx_feetonly.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <!-- https://polyhaven.com/a/rock_face -->
+    <texture type="2d" name="groundplane" file="assets/rocky_texture.png"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance=".8"/>
+    <hfield name="hfield" file="assets/hfield.png" size="10 10 .05 0.1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" type="hfield" hfield="hfield" material="groundplane" contype="1" conaffinity="0" priority="1"
+      friction="1.0"/>
+  </worldbody>
+
+  <keyframe>
+    <key name="home" qpos="
+    0 0 0.35
+    1 0 0 0
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8"
+      ctrl="0.1 0.9 -1.8 -0.1 0.9 -1.8 0.1 0.9 -1.8 -0.1 0.9 -1.8"/>
+    <key name="home_higher" qpos="0 0 0.35 1 0 0 0 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"
+      ctrl="0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"/>
+  </keyframe>
+</mujoco>
+
+
+================================================================================
+--- FILE: assets/scene_mjx_feetonly_stairs.xml ---
+--------------------------------------------------
+
+<mujoco model="go1 scene">
+  <include file="go1_mjx_feetonly.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0"
+      width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+    <material name="stairs" rgba="1 1 1 1" reflectance=".8"/>
+  </asset>
+
+  <default>
+    <default class="stairs">
+      <geom material="stairs" contype="1" conaffinity="0"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.01" material="groundplane" type="plane" contype="1" conaffinity="0"/>
+
+    <body name="stairs" pos="0.2 0 0" childclass="stairs">
+      <geom pos="0.2 0 0.075" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="0.4 0 0.22" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="0.6 0 0.375" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="0.8 0 0.525" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="1.0 0 0.675" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="1.2 0 0.825" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="1.4 0 0.975" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="1.6 0 1.125" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="1.8 0 1.275" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="2 0 1.42" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="2.2 0 1.57" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="2.4 0 1.72" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="2.6 0 1.87" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="2.8 0 2.02" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="3 0 2.17" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="3.2 0 2.32" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="3.4 0 2.47" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="3.6 0 2.62" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="3.8 0 2.77" type="box" size="0.1 0.75 0.025"/>
+      <geom pos="4 0 2.92" type="box" size="0.1 0.75 0.025"/>
+    </body>
+  </worldbody>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0.27 1 0 0 0 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"
+      ctrl="0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8 0 0.9 -1.8"/>
+  </keyframe>
+</mujoco>
+
+
+================================================================================
+--- FILE: assets/scene_mjx_flat_terrain.xml ---
+-----------------------------------------------
+
+<mujoco model="go1 scene">
+  <include file="go1_mjx.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0"
+      width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" priority="1" friction="0.6" condim="3" contype="1" conaffinity="0"/>
+  </worldbody>
+
+  <keyframe>
+    <key name="home" qpos="
+    0 0 0.278
+    1 0 0 0
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8"
+      ctrl="0.1 0.9 -1.8 -0.1 0.9 -1.8 0.1 0.9 -1.8 -0.1 0.9 -1.8"/>
+    <key name="home_higher" qpos="0 0 0.31 1 0 0 0 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"
+      ctrl="0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"/>
+    <key name="pre_recovery"
+      qpos="-0.0318481 -0.000215369 0.0579031 1 -2.70738e-05 6.06169e-05 0.000231261 -0.352275 1.18554 -2.80738 0.360892 1.1806 -2.80281 -0.381197 1.16812 -2.79123 0.391054 1.1622 -2.78576"
+      ctrl="-0.352275 1.18554 -2.80738 0.360892 1.1806 -2.80281 -0.381197 1.16812 -2.79123 0.391054 1.1622 -2.78576"/>
+    <key name="footstand"
+      qpos="0 0 0.54 0.8 0 -0.8 0 0 0.82 -1.6 0 0.82 -1.68 0 1.82 -1.16 0.0 1.82 -1.16"
+      ctrl="0 0.82 -1.6 0 0.82 -1.68 0 1.82 -1.16 0.0 1.82 -1.16"/>
+    <key name="handstand"
+      qpos="0 0 0.54 0.8 0 0.8 0 0 -0.686 -1.16 0 -0.686 -1.16 0 1.7 -1.853 0 1.7 -1.853"
+      ctrl="0 -0.686 -1.16 0 -0.686 -1.16 0 1.7 -1.853 0 1.7 -1.853"/>
+  </keyframe>
+</mujoco>
+
+
+================================================================================
+--- FILE: assets/scene_mjx_fullcollisions_flat_terrain.xml ---
+--------------------------------------------------------------
+
+<mujoco model="go1 scene">
+  <include file="go1_mjx_fullcollisions.xml"/>
+
+  <statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+
+  <visual>
+    <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+    <rgba force="1 0 0 1"/>
+    <global azimuth="120" elevation="-20"/>
+    <map force="0.01"/>
+    <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0"
+      width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" priority="1" friction="0.6" condim="3" contype="1" conaffinity="0"/>
+  </worldbody>
+
+  <keyframe>
+    <key name="home" qpos="
+    0 0 0.278
+    1 0 0 0
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8
+    0.1 0.9 -1.8
+    -0.1 0.9 -1.8"
+      ctrl="0.1 0.9 -1.8 -0.1 0.9 -1.8 0.1 0.9 -1.8 -0.1 0.9 -1.8"/>
+    <key name="home_higher" qpos="0 0 0.31 1 0 0 0 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"
+      ctrl="0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63 0 0.82 -1.63"/>
+    <key name="pre_recovery"
+      qpos="-0.0318481 -0.000215369 0.0579031 1 -2.70738e-05 6.06169e-05 0.000231261 -0.352275 1.18554 -2.80738 0.360892 1.1806 -2.80281 -0.381197 1.16812 -2.79123 0.391054 1.1622 -2.78576"
+      ctrl="-0.352275 1.18554 -2.80738 0.360892 1.1806 -2.80281 -0.381197 1.16812 -2.79123 0.391054 1.1622 -2.78576"/>
+    <key name="footstand"
+      qpos="0 0 0.54 0.8 0 -0.8 0 0 0.82 -1.6 0 0.82 -1.68 0 1.82 -1.16 0.0 1.82 -1.16"
+      ctrl="0 0.82 -1.6 0 0.82 -1.68 0 1.82 -1.16 0.0 1.82 -1.16"/>
+    <key name="handstand"
+      qpos="0 0 0.54 0.8 0 0.8 0 0 -0.686 -1.16 0 -0.686 -1.16 0 1.7 -1.853 0 1.7 -1.853"
+      ctrl="0 -0.686 -1.16 0 -0.686 -1.16 0 1.7 -1.853 0 1.7 -1.853"/>
+  </keyframe>
+</mujoco>
+
+
+================================================================================
+--- FILE: test/dump_project.py ---
+----------------------------------
+
+import os
+import sys
+
+# (如需產生目錄樹結構，請在命令提示字元或 PowerShell 執行: tree /F /A > tree_structure.txt)
+
+
+# --- 組態設定 (可依需求修改) ---
+
+# 1. 要忽略的資料夾名稱 (使用集合 set 查詢速度較快)
+#    通常是版本控制、虛擬環境、相依性套件等
+EXCLUDE_DIRS = {
+    '.git', 'node_modules', '__pycache__', 'venv', '.vscode', 
+    'dist', 'build', 'env', '.idea', 'target', '.DS_Store'
+}
+
+# 2. 要忽略的檔案類型 (副檔名)
+#    通常是二進位檔案、日誌、壓縮檔等
+EXCLUDE_EXTENSIONS = {
+    '.pyc', '.pyo', '.o', '.so', '.dll', '.exe',
+    '.img', '.iso', '.zip', '.tar', '.gz', '.rar',
+    '.pdf', '.docx', '.xlsx', '.pptx', '.ort',
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
+    '.lock', '.log', '.swp', '.swo', '.stl', '.onnx'
+}
+
+# 3. (可選) 如果你只想包含特定類型的檔案，可以設定這個清單
+#    如果此清單不是空的，腳本將只處理這些副檔名的檔案。
+#    例如: INCLUDE_EXTENSIONS = {'.py', '.js', '.html', '.css'}
+INCLUDE_EXTENSIONS = set() 
+
+# --- 腳本主體 ---
+
+def generate_code_dump(root_dir, output_filename):
+    """
+    遞迴掃描一個目錄，並將所有非忽略檔案的內容寫入單一輸出檔。
+    """
+    # 檢查根目錄是否存在
+    if not os.path.isdir(root_dir):
+        print(f"錯誤：目錄 '{root_dir}' 不存在。")
+        return
+
+    processed_files_count = 0
+    
+    try:
+        # 使用 'w' (寫入模式) 和 utf-8 編碼開啟檔案
+        # errors='ignore' 會在遇到無法解碼的字元時忽略它，避免因二進位檔案出錯
+        with open(output_filename, 'w', encoding='utf-8', errors='ignore') as outfile:
+            # 在輸出檔案的開頭加上標題
+            outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
+            outfile.write("=" * 80 + "\n\n")
+
+            # os.walk 會遞迴地走過目錄樹
+            for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True):
+                
+                # --- 過濾資料夾 ---
+                # 這是 os.walk 的一個技巧：直接修改 dirnames 列表，
+                # os.walk 就不會再進入這些被移除的資料夾。
+                dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+
+                # 排序檔案，讓輸出結果更一致
+                for filename in sorted(filenames):
+                    # 取得檔案副檔名
+                    _, extension = os.path.splitext(filename)
+                    extension = extension.lower()
+
+                    # --- 過濾檔案 ---
+                    if extension in EXCLUDE_EXTENSIONS:
+                        continue
+                    
+                    if INCLUDE_EXTENSIONS and extension not in INCLUDE_EXTENSIONS:
+                        continue
+
+                    # 組合完整檔案路徑
+                    file_path = os.path.join(dirpath, filename)
+                    
+                    # 取得相對於根目錄的路徑，讓輸出更簡潔
+                    relative_path = os.path.relpath(file_path, root_dir)
+
+                    try:
+                        # 寫入檔案分隔線和路徑標題
+                        header = f"--- FILE: {relative_path.replace(os.sep, '/')} ---"
+                        outfile.write("=" * 80 + "\n")
+                        outfile.write(header + "\n")
+                        outfile.write("-" * len(header) + "\n\n")
+                        
+                        print(f"正在處理: {relative_path}")
+
+                        # 讀取原始檔案內容並寫入輸出檔
+                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
+                            content = infile.read()
+                            outfile.write(content)
+                            outfile.write("\n\n")
+                        
+                        processed_files_count += 1
+
+                    except Exception as e:
+                        # 處理讀取檔案時可能發生的其他錯誤
+                        error_msg = f"--- 無法讀取檔案: {relative_path} (錯誤: {e}) ---\n\n"
+                        outfile.write(error_msg)
+                        print(f"警告: {error_msg.strip()}")
+
+        # 顯示成功訊息
+        print("\n" + "=" * 80)
+        print(f"✅ 成功！共處理了 {processed_files_count} 個檔案。")
+        print(f"輸出結果已儲存至: {os.path.abspath(output_filename)}")
+        print("=" * 80)
+
+    except IOError as e:
+        print(f"錯誤：無法寫入輸出檔案 '{output_filename}'。請檢查權限。 ({e})")
+    except Exception as e:
+        print(f"發生未預期的錯誤: {e}")
+
+
+if __name__ == "__main__":
+    # 決定要掃描的根目錄
+    # 如果執行時有給參數，就用第一個參數當作路徑，否則使用當前目錄 "."
+    target_dir = sys.argv[1] if len(sys.argv) > 1 else '.'
+    
+    # 決定輸出檔案的名稱
+    output_file = 'project_dump.txt'
+    
+    # 執行主函式
+    generate_code_dump(target_dir, output_file)
+
+================================================================================
+--- FILE: test/test_joystick.py ---
+-----------------------------------
+
+# test_joystick.py
+import pygame
+import time
+
+pygame.init()
+pygame.joystick.init()
+
+if pygame.joystick.get_count() == 0:
+    print("錯誤：未偵測到任何搖桿。")
+    exit()
+
+joystick = pygame.joystick.Joystick(0)
+joystick.init()
+
+print(f"已連接到: {joystick.get_name()}")
+print(f"搖桿有 {joystick.get_numaxes()} 個軸。")
+print("\n請移動您的搖桿，觀察每個軸的編號和數值變化...")
+print("按 Ctrl+C 結束測試。")
+
+try:
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.JOYAXISMOTION:
+                print(f"軸 (Axis) {event.axis}: {event.value:.3f}")
+        time.sleep(0.01)
+except KeyboardInterrupt:
+    print("\n測試結束。")
+
+pygame.quit()
+
+================================================================================
+--- FILE: test/verify_model_mode.py ---
+---------------------------------------
+
+# verify_model_mode.py
+import numpy as np
+import mujoco
+import sys
+import time
+from pathlib import Path
+
+# --- 導入您專案的模組 ---
+from config import load_config
+from policy import ONNXPolicy
+from observation import ObservationBuilder # 我們將使用您修改後的版本
+
+# --- 腳本設定 ---
+SIMULATION_DURATION = 3.0
+PERTURBATION_VALUE = 0.3
+STABILITY_THRESHOLD = 0.05
+HIP_JOINT_INDICES = [1, 4, 7, 10]
+
+def run_simulation(model, data, policy, obs_builder, duration):
+    """
+    運行一個模擬片段並收集最後的 Raw Action 數據。
+    這個版本假設是「絕對角度模式」。
+    """
+    # 在這個測試腳本中，我們直接使用一個固定的PD增益
+    model.actuator_gainprm[:, 0] = 5.0
+    model.dof_damping[6:] = 0.5
+    
+    start_time = data.time
+    recent_actions = []
+
+    # 簡單的熱身
+    warmup_duration = 1.0
+    while data.time - start_time < warmup_duration:
+        base_obs = obs_builder.get_observation(np.zeros(3), policy.last_action)
+        _, action_raw = policy.get_action(base_obs)
+        # 【核心】使用絕對角度模式計算控制指令
+        final_ctrl = action_raw * 1.0 # action_scale 設為 1.0
+        data.ctrl[:] = final_ctrl
+        mujoco.mj_step(model, data)
+
+    # 真正開始收集數據
+    collection_start_time = data.time
+    while data.time - collection_start_time < (duration - warmup_duration):
+        base_obs = obs_builder.get_observation(np.zeros(3), policy.last_action)
+        _, action_raw = policy.get_action(base_obs)
+        recent_actions.append(action_raw.copy())
+        
+        final_ctrl = action_raw * 1.0
+        data.ctrl[:] = final_ctrl
+        mujoco.mj_step(model, data)
+
+    if not recent_actions:
+        print("❌ 錯誤：未能收集到任何 action 數據。")
+        return None
+        
+    return np.mean(recent_actions, axis=0)
+
+def reset_to_key(model, data, key_id, perturbation=None):
+    """
+    手動將模擬重置到指定的 keyframe，並可選擇性地施加擾動。
+    """
+    mujoco.mj_resetData(model, data)
+    qpos = model.key_qpos[key_id].copy()
+    if perturbation is not None:
+        qpos[7:] += perturbation
+    data.qpos[:] = qpos
+    data.qvel[:] = model.key_qvel[key_id]
+    mujoco.mj_forward(model, data)
+
+
+def verify():
+    """執行驗證的主函式。"""
+    print("=" * 60)
+    print("🤖 模型輸出模式驗證工具 (絕對角度模式驗證版) 🤖")
+    print("=" * 60)
+
+    try:
+        print("1. 載入設定與模型...")
+        config = load_config()
+        if not Path(config.mujoco_model_file).exists():
+            print(f"❌ 錯誤：找不到模型檔案 '{config.mujoco_model_file}'")
+            return
+
+        model = mujoco.MjModel.from_xml_path(config.mujoco_model_file)
+        data = mujoco.MjData(model)
+        
+        home_key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, 'home')
+        if home_key_id == -1:
+            print("❌ 錯誤：在 XML 中找不到名為 'home' 的 keyframe。")
+            return
+        
+        default_pose_from_key = model.key_qpos[home_key_id][7:].copy()
+        
+        # 確保使用與模型匹配的觀察配方 (假設為48維)
+        obs_dim = 48
+        if obs_dim not in config.observation_recipes:
+            print(f"❌ 錯誤: config.yaml 中缺少維度為 {obs_dim} 的 observation_recipes。")
+            return
+        recipe = config.observation_recipes[obs_dim]
+             
+        # 【核心】我們在這裡實例化的 obs_builder 會使用您修改後的 absolute mode 版本
+        obs_builder = ObservationBuilder(recipe, data, model, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'torso'), default_pose_from_key, config)
+        base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
+        
+        policy_config = config
+        policy_config.initial_tuning_params.action_scale = 1.0 # 測試時固定為1.0
+        policy = ONNXPolicy(policy_config, base_obs_dim)
+        print("✅ 資源載入成功！")
+        print("-" * 60)
+
+        # --- 實驗一：基準測試 (Baseline Test) ---
+        print("2. 執行【實驗一：基準測試】")
+        print("   - 從標準的 'home' 姿態開始。")
+        
+        reset_to_key(model, data, home_key_id)
+        policy.reset()
+        
+        stable_action_base = run_simulation(model, data, policy, obs_builder, SIMULATION_DURATION)
+        if stable_action_base is None: return
+
+        hip_action_base = np.mean(stable_action_base[HIP_JOINT_INDICES])
+        print(f"   📊 基準穩定後 Raw Action (髖關節平均值): {hip_action_base:.4f}")
+        print("-" * 60)
+        time.sleep(1)
+
+        # --- 實驗二：擾動初始姿態測試 (Perturbation Test) ---
+        print("3. 執行【實驗二：擾動測試】")
+        print(f"   - 從一個被擾動過的初始姿態開始 (髖關節增加 {PERTURBATION_VALUE})。")
+        
+        perturbation_vector = np.zeros(12)
+        perturbation_vector[HIP_JOINT_INDICES] = PERTURBATION_VALUE
+        reset_to_key(model, data, home_key_id, perturbation=perturbation_vector)
+        policy.reset()
+
+        stable_action_perturbed = run_simulation(model, data, policy, obs_builder, SIMULATION_DURATION)
+        if stable_action_perturbed is None: return
+        
+        hip_action_perturbed = np.mean(stable_action_perturbed[HIP_JOINT_INDICES])
+        print(f"   📊 擾動穩定後 Raw Action (髖關節平均值): {hip_action_perturbed:.4f}")
+        print("-" * 60)
+
+        # --- 4. 分析與結論 ---
+        print("4. 分析結果與結論...")
+        
+        # 在絕對角度模式下，兩個實驗的輸出應該幾乎相同
+        diff = abs(hip_action_perturbed - hip_action_base)
+        print(f"   - 兩個實驗的 Raw Action 穩定值之差: {diff:.4f}")
+        print("-" * 60)
+
+        if diff < STABILITY_THRESHOLD:
+            print("✅ 【結論】驗證成功！模型的行為與【絕對角度模式 (Absolute-based)】的預期相符。")
+            print("   無論從哪個初始姿態開始，模型都能收斂到幾乎相同的目標角度輸出。")
+            print("   您在 main.py 和 observation.py 中的絕對角度模式修改是【正確的】。")
+        else:
+            print("❌ 【結論】驗證失敗！模型的行為與【絕對角度模式】的預期不符。")
+            print("   模型的輸出會因為初始姿態的不同而產生巨大差異，這不符合絕對角度模型的特徵。")
+            print("   這可能意味著模型實際上是「偏移量模式」，或者模型本身不夠穩定。")
+            print("   建議與模型作者確認訓練時的觀察空間和動作空間定義。")
+        
+        print("=" * 60)
+
+    except Exception as e:
+        print(f"\n❌ 驗證過程中發生錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    verify()
+
