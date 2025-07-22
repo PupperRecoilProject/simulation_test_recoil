@@ -1,9 +1,55 @@
 # 專案程式碼彙整: C:\git_project\simulation_test_recoil
 ================================================================================
 
+#------------------------------------------------------------------------------#
+#                              專案目錄結構                              #
+#------------------------------------------------------------------------------#
+
+simulation_test_recoil/
+├── assets/
+│   ├── mesh/
+│   ├── pupper.xml
+│   ├── pupper_mjx.xml
+│   ├── pupper_mjx_1.xml
+│   ├── scene.xml
+│   ├── scene_hfield_mjx.xml
+│   ├── scene_mjx.xml
+│   ├── scene_mjx_feetonly_bowl.xml
+│   ├── scene_mjx_feetonly_flat_terrain.xml
+│   ├── scene_mjx_feetonly_rough_terrain.xml
+│   ├── scene_mjx_feetonly_stairs.xml
+│   ├── scene_mjx_flat_terrain.xml
+│   └── scene_mjx_fullcollisions_flat_terrain.xml
+├── models/
+├── test/
+│   ├── dump_project.py
+│   ├── test_joystick.py
+│   └── verify_model_mode.py
+├── config.py
+├── config.yaml
+├── floating_controller.py
+├── keyboard_input_handler.py
+├── main.py
+├── observation.py
+├── policy.py
+├── project_dump.txt
+├── readme.md
+├── rendering.py
+├── serial_communicator.py
+├── simulation.py
+├── state.py
+├── terrain_manager.py
+├── xbox_controller.py
+└── xbox_input_handler.py
+
+
+#------------------------------------------------------------------------------#
+#                               各檔案內容                                #
+#------------------------------------------------------------------------------#
+
 ================================================================================
---- FILE: config.py ---
------------------------
+--- START OF FILE: config.py ---
+--------------------------------
 
 # config.py
 import yaml
@@ -84,9 +130,13 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
     return config_obj
 
+--------------------------------
+---  END OF FILE: config.py  ---
 ================================================================================
---- FILE: config.yaml ---
--------------------------
+
+================================================================================
+--- START OF FILE: config.yaml ---
+----------------------------------
 
 # ==================================
 # === 模擬與模型設定 (Simulation & Model Settings)
@@ -159,9 +209,13 @@ floating_controller:
   kp_attitude: 20.0       # 姿態 P (再次降低)
   kd_attitude: 4.0        # 姿態 D (相應調整)
 
+----------------------------------
+---  END OF FILE: config.yaml  ---
 ================================================================================
---- FILE: floating_controller.py ---
-------------------------------------
+
+================================================================================
+--- START OF FILE: floating_controller.py ---
+---------------------------------------------
 
 # floating_controller.py
 import mujoco
@@ -214,9 +268,13 @@ class FloatingController:
         self.data.eq_active[self.weld_id] = 0
         print("🐾 已禁用固定懸浮模式。")
 
+---------------------------------------------
+---  END OF FILE: floating_controller.py  ---
 ================================================================================
---- FILE: keyboard_input_handler.py ---
----------------------------------------
+
+================================================================================
+--- START OF FILE: keyboard_input_handler.py ---
+------------------------------------------------
 
 # keyboard_input_handler.py
 import glfw
@@ -331,9 +389,13 @@ class KeyboardInputHandler:
             elif key == glfw.KEY_Q: self.state.command[2] += step
             elif key == glfw.KEY_E: self.state.command[2] -= step
 
+------------------------------------------------
+---  END OF FILE: keyboard_input_handler.py  ---
 ================================================================================
---- FILE: main.py ---
----------------------
+
+================================================================================
+--- START OF FILE: main.py ---
+------------------------------
 
 # main.py
 import sys
@@ -511,9 +573,13 @@ def main():
 if __name__ == "__main__":
     main()
 
+------------------------------
+---  END OF FILE: main.py  ---
 ================================================================================
---- FILE: observation.py ---
-----------------------------
+
+================================================================================
+--- START OF FILE: observation.py ---
+-------------------------------------
 
 # observation.py
 import numpy as np
@@ -624,9 +690,13 @@ class ObservationBuilder:
     def _get_phase_signal(self, **kwargs):
         return np.array([self.data.time % 1.0], dtype=np.float32)
 
+-------------------------------------
+---  END OF FILE: observation.py  ---
 ================================================================================
---- FILE: policy.py ---
------------------------
+
+================================================================================
+--- START OF FILE: policy.py ---
+--------------------------------
 
 # policy.py
 import numpy as np
@@ -723,16 +793,66 @@ class ONNXPolicy:
         self.last_action.fill(0.0)
         print("✅ ONNX 策略狀態已重置。")
 
+--------------------------------
+---  END OF FILE: policy.py  ---
 ================================================================================
---- FILE: project_dump.txt ---
-------------------------------
+
+================================================================================
+--- START OF FILE: project_dump.txt ---
+---------------------------------------
 
 # 專案程式碼彙整: C:\git_project\simulation_test_recoil
 ================================================================================
 
+#------------------------------------------------------------------------------#
+#                              專案目錄結構                              #
+#------------------------------------------------------------------------------#
+
+simulation_test_recoil/
+├── assets/
+│   ├── mesh/
+│   ├── pupper.xml
+│   ├── pupper_mjx.xml
+│   ├── pupper_mjx_1.xml
+│   ├── scene.xml
+│   ├── scene_hfield_mjx.xml
+│   ├── scene_mjx.xml
+│   ├── scene_mjx_feetonly_bowl.xml
+│   ├── scene_mjx_feetonly_flat_terrain.xml
+│   ├── scene_mjx_feetonly_rough_terrain.xml
+│   ├── scene_mjx_feetonly_stairs.xml
+│   ├── scene_mjx_flat_terrain.xml
+│   └── scene_mjx_fullcollisions_flat_terrain.xml
+├── models/
+├── test/
+│   ├── dump_project.py
+│   ├── test_joystick.py
+│   └── verify_model_mode.py
+├── config.py
+├── config.yaml
+├── floating_controller.py
+├── keyboard_input_handler.py
+├── main.py
+├── observation.py
+├── policy.py
+├── project_dump.txt
+├── readme.md
+├── rendering.py
+├── serial_communicator.py
+├── simulation.py
+├── state.py
+├── terrain_manager.py
+├── xbox_controller.py
+└── xbox_input_handler.py
+
+
+#------------------------------------------------------------------------------#
+#                               各檔案內容                                #
+#------------------------------------------------------------------------------#
+
 ================================================================================
---- FILE: config.py ---
------------------------
+--- START OF FILE: config.py ---
+--------------------------------
 
 # config.py
 import yaml
@@ -813,9 +933,13 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
     return config_obj
 
+--------------------------------
+---  END OF FILE: config.py  ---
 ================================================================================
---- FILE: config.yaml ---
--------------------------
+
+================================================================================
+--- START OF FILE: config.yaml ---
+----------------------------------
 
 # ==================================
 # === 模擬與模型設定 (Simulation & Model Settings)
@@ -888,9 +1012,13 @@ floating_controller:
   kp_attitude: 20.0       # 姿態 P (再次降低)
   kd_attitude: 4.0        # 姿態 D (相應調整)
 
+----------------------------------
+---  END OF FILE: config.yaml  ---
 ================================================================================
---- FILE: floating_controller.py ---
-------------------------------------
+
+================================================================================
+--- START OF FILE: floating_controller.py ---
+---------------------------------------------
 
 # floating_controller.py
 import mujoco
@@ -943,9 +1071,13 @@ class FloatingController:
         self.data.eq_active[self.weld_id] = 0
         print("🐾 已禁用固定懸浮模式。")
 
+---------------------------------------------
+---  END OF FILE: floating_controller.py  ---
 ================================================================================
---- FILE: keyboard_input_handler.py ---
----------------------------------------
+
+================================================================================
+--- START OF FILE: keyboard_input_handler.py ---
+------------------------------------------------
 
 # keyboard_input_handler.py
 import glfw
@@ -1060,9 +1192,13 @@ class KeyboardInputHandler:
             elif key == glfw.KEY_Q: self.state.command[2] += step
             elif key == glfw.KEY_E: self.state.command[2] -= step
 
+------------------------------------------------
+---  END OF FILE: keyboard_input_handler.py  ---
 ================================================================================
---- FILE: main.py ---
----------------------
+
+================================================================================
+--- START OF FILE: main.py ---
+------------------------------
 
 # main.py
 import sys
@@ -1240,13 +1376,17 @@ def main():
 if __name__ == "__main__":
     main()
 
-================================================================================
---- FILE: observation.py ---
+------------------------------
+---  END OF FILE: main.py  ---
 
 
+---------------------------------------
+---  END OF FILE: project_dump.txt  ---
 ================================================================================
---- FILE: readme.md ---
------------------------
+
+================================================================================
+--- START OF FILE: readme.md ---
+--------------------------------
 
 前置安裝：你需要安裝 PyYAML。在你的終端機中執行：
 pip install onnxruntime numpy
@@ -1258,9 +1398,13 @@ pip install pyserial
 
 
 
+--------------------------------
+---  END OF FILE: readme.md  ---
 ================================================================================
---- FILE: rendering.py ---
---------------------------
+
+================================================================================
+--- START OF FILE: rendering.py ---
+-----------------------------------
 
 # rendering.py
 import mujoco
@@ -1494,9 +1638,13 @@ class DebugOverlay:
         world_ang_vel = data.cvel[torso_id, :3]
         return 2 * np.dot(u, world_ang_vel) * u + (s*s - np.dot(u, u)) * world_ang_vel + 2*s*np.cross(u, world_ang_vel)
 
+-----------------------------------
+---  END OF FILE: rendering.py  ---
 ================================================================================
---- FILE: serial_communicator.py ---
-------------------------------------
+
+================================================================================
+--- START OF FILE: serial_communicator.py ---
+---------------------------------------------
 
 # serial_communicator.py
 import serial
@@ -1632,9 +1780,13 @@ class SerialCommunicator:
             print(f"序列埠 {self.port_name} 已安全關閉。")
         self.is_connected = False
 
+---------------------------------------------
+---  END OF FILE: serial_communicator.py  ---
 ================================================================================
---- FILE: simulation.py ---
----------------------------
+
+================================================================================
+--- START OF FILE: simulation.py ---
+------------------------------------
 
 # simulation.py
 import mujoco
@@ -1800,9 +1952,13 @@ class Simulation:
     def close(self):
         glfw.terminate()
 
+------------------------------------
+---  END OF FILE: simulation.py  ---
 ================================================================================
---- FILE: state.py ---
-----------------------
+
+================================================================================
+--- START OF FILE: state.py ---
+-------------------------------
 
 # state.py
 from __future__ import annotations
@@ -1926,9 +2082,13 @@ class SimulationState:
                 self.policy_ref.reset()
             self.clear_command()
 
+-------------------------------
+---  END OF FILE: state.py  ---
 ================================================================================
---- FILE: terrain_manager.py ---
---------------------------------
+
+================================================================================
+--- START OF FILE: terrain_manager.py ---
+-----------------------------------------
 
 # terrain_manager.py
 import mujoco
@@ -1939,218 +2099,116 @@ class TerrainManager:
     管理和動態切換 MuJoCo 高度場 (hfield) 地形。
     """
     def __init__(self, model, data):
-        self.model = model
-        self.data = data
-        self.hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, 'terrain')
+        self.model = model # 儲存 MuJoCo 模型物件
+        self.data = data # 儲存 MuJoCo 資料物件
+        self.hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, 'terrain') # 根據名稱 'terrain' 獲取高度場的 ID
         
-        self.needs_scene_update = False
+        self.needs_scene_update = False # 標記是否需要更新渲染場景
         
-        if self.hfield_id == -1:
+        if self.hfield_id == -1: # 檢查是否成功找到高度場
             print("❌ 錯誤: 在 XML 中找不到名為 'terrain' 的 hfield。地形切換功能將被禁用。")
-            self.is_functional = False
+            self.is_functional = False # 若找不到，則禁用此功能
             return
 
-        self.nrow = model.hfield_nrow[self.hfield_id]
-        self.ncol = model.hfield_ncol[self.hfield_id]
-        self.size = model.hfield_size[self.hfield_id]
-        self.adr = model.hfield_adr[self.hfield_id]
+        self.nrow = model.hfield_nrow[self.hfield_id] # 從模型中獲取高度場的行數
+        self.ncol = model.hfield_ncol[self.hfield_id] # 從模型中獲取高度場的列數
+        self.size = model.hfield_size[self.hfield_id] # 從模型中獲取高度場的物理尺寸
+        self.adr = model.hfield_adr[self.hfield_id] # 從模型中獲取高度場資料在 mjModel.hfield_data 中的起始位址
         
+        # 【修改】在地形字典中加入新的金字塔地形
         self.terrains = {
             "Flat": self.generate_flat,
             "Sine Waves": self.generate_sine_waves,
             "Steps": self.generate_steps,
-            "Random Noise": self.generate_random_noise
+            "Random Noise": self.generate_random_noise,
+            "Pyramid": self.generate_pyramid, # <-- 新增金字塔地形
         }
-        self.terrain_names = list(self.terrains.keys())
-        self.current_terrain_index = 0
-        self.is_functional = True
+        self.terrain_names = list(self.terrains.keys()) # 獲取所有地形的名稱列表
+        self.current_terrain_index = 0 # 將目前地形索引初始化為 0
+        self.is_functional = True # 標記功能為可用
         
-        self.switch_terrain(0)
+        self.switch_terrain(0) # 初始化時，切換到第一個地形（平地）
         print("✅ 地形管理器初始化完成 (使用高度場)。")
 
     def generate_flat(self):
-        return np.zeros((self.nrow, self.ncol))
+        """生成一個完全平坦的地形。"""
+        return np.zeros((self.nrow, self.ncol)) # 回傳一個全為 0 的二維陣列
 
     def generate_sine_waves(self):
-        x = np.linspace(0, 2 * np.pi, self.ncol)
-        y = np.linspace(0, 2 * np.pi, self.nrow)
-        X, Y = np.meshgrid(x, y)
-        return 0.05 * (np.sin(X * 3) + np.sin(Y * 2))
+        """生成由正弦波組成的波浪狀地形。"""
+        x = np.linspace(0, 2 * np.pi, self.ncol) # 建立 x 軸座標
+        y = np.linspace(0, 2 * np.pi, self.nrow) # 建立 y 軸座標
+        X, Y = np.meshgrid(x, y) # 建立二維網格
+        return 0.05 * (np.sin(X * 3) + np.sin(Y * 2)) # 計算每個點的高度
 
     def generate_steps(self):
-        hfield = np.zeros((self.nrow, self.ncol))
-        step_height = 0.03
-        step_width = self.nrow // 10
-        for i in range(10):
+        """生成階梯狀地形。"""
+        hfield = np.zeros((self.nrow, self.ncol)) # 初始化為平地
+        step_height = 0.03 # 設定每個階梯的高度
+        step_width = self.nrow // 10 # 設定每個階梯的寬度
+        for i in range(10): # 循環生成 10 個階梯
             hfield[i*step_width:(i+1)*step_width, :] = i * step_height
-        return hfield
+        return hfield # 回傳階梯地形資料
 
     def generate_random_noise(self):
-        return np.random.rand(self.nrow, self.ncol) * 0.05
+        """生成隨機的崎嶇地形。"""
+        return np.random.rand(self.nrow, self.ncol) * 0.05 # 生成 0 到 0.05 之間的隨機高度
+
+    # 【新增】生成金字塔地形的函式
+    def generate_pyramid(self):
+        """生成一個中央高、四周低的正金字塔地形。"""
+        max_height = 1.0  # 設定金字塔的最高點高度（單位：米）
+        
+        # 建立從 -1 到 1 的標準化座標系，這樣中心點就是 (0,0)
+        x = np.linspace(-1, 1, self.ncol)
+        y = np.linspace(-1, 1, self.nrow)
+        # 使用 meshgrid 產生二維座標網格
+        X, Y = np.meshgrid(x, y)
+        
+        # 計算每個點到中心的切比雪夫距離 (Chebyshev distance)，即 max(|dx|, |dy|)
+        # 這會形成一個方形的等高線，正好是金字塔的形狀
+        dist = np.maximum(np.abs(X), np.abs(Y))
+        
+        # 高度 = 最高高度 * (1 - 距離)
+        # 在中心點 (dist=0)，高度為 max_height
+        # 在邊界 (dist=1)，高度為 0
+        hfield_data = max_height * (1 - dist)
+        
+        return hfield_data # 回傳金字塔高度場資料
 
     def cycle_terrain(self):
-        if not self.is_functional: return
-        self.current_terrain_index = (self.current_terrain_index + 1) % len(self.terrain_names)
-        self.switch_terrain(self.current_terrain_index)
+        """循環切換到下一個地形。"""
+        if not self.is_functional: return # 如果功能未啟用，直接返回
+        self.current_terrain_index = (self.current_terrain_index + 1) % len(self.terrain_names) # 計算下一個地形的索引
+        self.switch_terrain(self.current_terrain_index) # 切換到該地形
 
     def get_current_terrain_name(self):
-        if not self.is_functional: return "N/A (hfield missing)"
-        return self.terrain_names[self.current_terrain_index]
+        """獲取目前地形的名稱。"""
+        if not self.is_functional: return "N/A (hfield missing)" # 如果功能未啟用，返回提示訊息
+        return self.terrain_names[self.current_terrain_index] # 返回目前地形的名稱
 
     def switch_terrain(self, index):
-        if not self.is_functional: return
+        """切換到指定索引的地形。"""
+        if not self.is_functional: return # 如果功能未啟用，直接返回
         
-        terrain_name = self.terrain_names[index]
-        print(f"🏞️ 切換地形至: {terrain_name}")
+        terrain_name = self.terrain_names[index] # 獲取地形名稱
+        print(f"🏞️ 切換地形至: {terrain_name}") # 在控制台輸出提示
         
-        generator = self.terrains[terrain_name]
-        hfield_data = generator()
+        generator = self.terrains[terrain_name] # 根據名稱獲取對應的生成函式
+        hfield_data = generator() # 呼叫生成函式，產生高度資料
         
+        # 將新生成的高度資料寫入 MuJoCo 模型的高度場資料緩衝區
         self.model.hfield_data[self.adr:self.adr + self.nrow*self.ncol] = hfield_data.flatten()
         
-        self.needs_scene_update = True
+        self.needs_scene_update = True # 設定標記，通知渲染迴圈需要更新場景
+
+-----------------------------------------
+---  END OF FILE: terrain_manager.py  ---
+================================================================================
 
 ================================================================================
---- FILE: tree_structure.txt ---
---------------------------------
-
-RQxx@S  W i n d o w s   vǌe>Y  P A T H 
- 
- xx@S^_p  D 6 5 2 - B 1 0 3 
- 
- C : . 
- 
- |       c o n f i g . p y 
- 
- |       c o n f i g . y a m l 
- 
- |       d u m p _ p r o j e c t . p y 
- 
- |       f l o a t i n g _ c o n t r o l l e r . p y 
- 
- |       k e y b o a r d _ i n p u t _ h a n d l e r . p y 
- 
- |       m a i n . p y 
- 
- |       o b s e r v a t i o n . p y 
- 
- |       p o l i c y . p y 
- 
- |       p r o j e c t _ d u m p . t x t 
- 
- |       r e a d m e . m d 
- 
- |       r e n d e r i n g . p y 
- 
- |       s e r i a l _ c o m m u n i c a t o r . p y 
- 
- |       s i m u l a t i o n . p y 
- 
- |       s t a t e . p y 
- 
- |       t e s t _ j o y s t i c k . p y 
- 
- |       t r e e _ s t r u c t u r e . t x t 
- 
- |       v e r i f y _ m o d e l _ m o d e . p y 
- 
- |       x b o x _ c o n t r o l l e r . p y 
- 
- |       x b o x _ i n p u t _ h a n d l e r . p y 
- 
- |       
- 
- + - - - . v s c o d e 
- 
- + - - - a s s e t s 
- 
- |       |       p u p p e r . x m l 
- 
- |       |       p u p p e r _ m j x . x m l 
- 
- |       |       p u p p e r _ m j x _ 1 . x m l 
- 
- |       |       s c e n e . x m l 
- 
- |       |       s c e n e _ m j x . x m l 
- 
- |       |       
- 
- |       \ - - - m e s h 
- 
- |                       b o d y . s t l 
- 
- |                       H i p _ L . s t l 
- 
- |                       H i p _ R . s t l 
- 
- |                       L o w e r _ L e g _ L . s t l 
- 
- |                       L o w e r _ L e g _ R . s t l 
- 
- |                       U p p e r _ L e g _ L . s t l 
- 
- |                       U p p e r _ L e g _ R . s t l 
- 
- |                       
- 
- + - - - m o d e l s 
- 
- |               p u p p e r _ p p o _ p o l i c y _ 2 0 0 5 4 0 1 6 0 _ t f _ c o n v e r t e d . o n n x 
- 
- |               p u p p e r _ p p o _ p o l i c y _ 3 0 9 6 5 7 6 0 _ t f _ c o n v e r t e d _ iz[ekKaHr. o n n x 
- 
- |               p u p p e r _ p p o _ p o l i c y _ 3 0 9 6 5 7 6 0 _ t f _ c o n v e r t e d _ iz[ekKaHr. o p t i m i z e d . o r t 
- 
- |               
- 
- \ - - - _ _ p y c a c h e _ _ 
- 
-                 c o n f i g . c p y t h o n - 3 1 1 . p y c 
- 
-                 c o n f i g . c p y t h o n - 3 1 2 . p y c 
- 
-                 f l o a t i n g _ c o n t r o l l e r . c p y t h o n - 3 1 2 . p y c 
- 
-                 i n p u t _ h a n d l e r . c p y t h o n - 3 1 1 . p y c 
- 
-                 i n p u t _ h a n d l e r . c p y t h o n - 3 1 2 . p y c 
- 
-                 k e y b o a r d _ i n p u t _ h a n d l e r . c p y t h o n - 3 1 2 . p y c 
- 
-                 o b s e r v a t i o n . c p y t h o n - 3 1 1 . p y c 
- 
-                 o b s e r v a t i o n . c p y t h o n - 3 1 2 . p y c 
- 
-                 p o l i c y . c p y t h o n - 3 1 1 . p y c 
- 
-                 p o l i c y . c p y t h o n - 3 1 2 . p y c 
- 
-                 r e n d e r i n g . c p y t h o n - 3 1 1 . p y c 
- 
-                 r e n d e r i n g . c p y t h o n - 3 1 2 . p y c 
- 
-                 s e r i a l _ c o m m u n i c a t o r . c p y t h o n - 3 1 2 . p y c 
- 
-                 s i m u l a t i o n . c p y t h o n - 3 1 1 . p y c 
- 
-                 s i m u l a t i o n . c p y t h o n - 3 1 2 . p y c 
- 
-                 s t a t e . c p y t h o n - 3 1 1 . p y c 
- 
-                 s t a t e . c p y t h o n - 3 1 2 . p y c 
- 
-                 x b o x _ c o n t r o l l e r . c p y t h o n - 3 1 2 . p y c 
- 
-                 x b o x _ i n p u t _ h a n d l e r . c p y t h o n - 3 1 2 . p y c 
- 
-                 
- 
- 
-
-================================================================================
---- FILE: xbox_controller.py ---
---------------------------------
+--- START OF FILE: xbox_controller.py ---
+-----------------------------------------
 
 # xbox_controller.py
 import pygame
@@ -2241,9 +2299,13 @@ class XboxController:
         """關閉 Pygame。"""
         pygame.quit()
 
+-----------------------------------------
+---  END OF FILE: xbox_controller.py  ---
 ================================================================================
---- FILE: xbox_input_handler.py ---
------------------------------------
+
+================================================================================
+--- START OF FILE: xbox_input_handler.py ---
+--------------------------------------------
 
 # xbox_input_handler.py
 from state import SimulationState
@@ -2322,9 +2384,13 @@ class XboxInputHandler:
         if self.controller:
             self.controller.close()
 
+--------------------------------------------
+---  END OF FILE: xbox_input_handler.py  ---
 ================================================================================
---- FILE: assets/pupper.xml ---
--------------------------------
+
+================================================================================
+--- START OF FILE: assets/pupper.xml ---
+----------------------------------------
 
 <!-- 
   Pupper Model - Final Corrected Version
@@ -2482,9 +2548,13 @@ class XboxInputHandler:
     </keyframe>
 </mujoco>
 
+----------------------------------------
+---  END OF FILE: assets/pupper.xml  ---
 ================================================================================
---- FILE: assets/pupper_mjx.xml ---
------------------------------------
+
+================================================================================
+--- START OF FILE: assets/pupper_mjx.xml ---
+--------------------------------------------
 
 <!-- =================================================================
      Pupper Model - Final Version with Global PD(Kp, Kv) Settings
@@ -2659,9 +2729,13 @@ class XboxInputHandler:
   </sensor>
 </mujoco>
 
+--------------------------------------------
+---  END OF FILE: assets/pupper_mjx.xml  ---
 ================================================================================
---- FILE: assets/pupper_mjx_1.xml ---
--------------------------------------
+
+================================================================================
+--- START OF FILE: assets/pupper_mjx_1.xml ---
+----------------------------------------------
 
 <!-- =================================================================
      Pupper Model - Final Version with Global PD(Kp, Kv) Settings
@@ -2836,9 +2910,13 @@ class XboxInputHandler:
   </sensor>
 </mujoco>
 
+----------------------------------------------
+---  END OF FILE: assets/pupper_mjx_1.xml  ---
 ================================================================================
---- FILE: assets/scene.xml ---
-------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene.xml ---
+---------------------------------------
 
 <mujoco model="pupper scene">
   <!-- 包含機器人模型 -->
@@ -2903,9 +2981,13 @@ class XboxInputHandler:
 
 </mujoco>
 
+---------------------------------------
+---  END OF FILE: assets/scene.xml  ---
 ================================================================================
---- FILE: assets/scene_hfield_mjx.xml ---
------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_hfield_mjx.xml ---
+--------------------------------------------------
 
 <mujoco model="barkour vB scene">
   <include file="pupper_mjx.xml"/>
@@ -2933,9 +3015,13 @@ class XboxInputHandler:
   </worldbody>
 </mujoco>
 
+--------------------------------------------------
+---  END OF FILE: assets/scene_hfield_mjx.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx.xml ---
-----------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx.xml ---
+-------------------------------------------
 
 <!-- assets/scene_mjx.xml -->
 <mujoco model="Pupper Scene MJX">
@@ -2986,9 +3072,13 @@ class XboxInputHandler:
   </keyframe>
 </mujoco>
 
+-------------------------------------------
+---  END OF FILE: assets/scene_mjx.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx_feetonly_bowl.xml ---
-------------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx_feetonly_bowl.xml ---
+---------------------------------------------------------
 
 <mujoco model="go1 feet only scene">
   <include file="go1_mjx_feetonly.xml"/>
@@ -3025,9 +3115,13 @@ class XboxInputHandler:
 </mujoco>
 
 
+---------------------------------------------------------
+---  END OF FILE: assets/scene_mjx_feetonly_bowl.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx_feetonly_flat_terrain.xml ---
---------------------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx_feetonly_flat_terrain.xml ---
+-----------------------------------------------------------------
 
 <mujoco model="go1 feetonly flat terrain scene">
   <include file="go1_mjx_feetonly.xml"/>
@@ -3088,9 +3182,13 @@ class XboxInputHandler:
 </mujoco>
 
 
+-----------------------------------------------------------------
+---  END OF FILE: assets/scene_mjx_feetonly_flat_terrain.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx_feetonly_rough_terrain.xml ---
----------------------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx_feetonly_rough_terrain.xml ---
+------------------------------------------------------------------
 
 <mujoco model="go1 feet only rough terrain scene">
   <include file="go1_mjx_feetonly.xml"/>
@@ -3132,9 +3230,13 @@ class XboxInputHandler:
 </mujoco>
 
 
+------------------------------------------------------------------
+---  END OF FILE: assets/scene_mjx_feetonly_rough_terrain.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx_feetonly_stairs.xml ---
---------------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx_feetonly_stairs.xml ---
+-----------------------------------------------------------
 
 <mujoco model="go1 scene">
   <include file="go1_mjx_feetonly.xml"/>
@@ -3198,9 +3300,13 @@ class XboxInputHandler:
 </mujoco>
 
 
+-----------------------------------------------------------
+---  END OF FILE: assets/scene_mjx_feetonly_stairs.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx_flat_terrain.xml ---
------------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx_flat_terrain.xml ---
+--------------------------------------------------------
 
 <mujoco model="go1 scene">
   <include file="go1_mjx.xml"/>
@@ -3251,9 +3357,13 @@ class XboxInputHandler:
 </mujoco>
 
 
+--------------------------------------------------------
+---  END OF FILE: assets/scene_mjx_flat_terrain.xml  ---
 ================================================================================
---- FILE: assets/scene_mjx_fullcollisions_flat_terrain.xml ---
---------------------------------------------------------------
+
+================================================================================
+--- START OF FILE: assets/scene_mjx_fullcollisions_flat_terrain.xml ---
+-----------------------------------------------------------------------
 
 <mujoco model="go1 scene">
   <include file="go1_mjx_fullcollisions.xml"/>
@@ -3304,27 +3414,26 @@ class XboxInputHandler:
 </mujoco>
 
 
+-----------------------------------------------------------------------
+---  END OF FILE: assets/scene_mjx_fullcollisions_flat_terrain.xml  ---
 ================================================================================
---- FILE: test/dump_project.py ---
-----------------------------------
+
+================================================================================
+--- START OF FILE: test/dump_project.py ---
+-------------------------------------------
 
 import os
 import sys
 
-# (如需產生目錄樹結構，請在命令提示字元或 PowerShell 執行: tree /F /A > tree_structure.txt)
-
-
 # --- 組態設定 (可依需求修改) ---
 
 # 1. 要忽略的資料夾名稱 (使用集合 set 查詢速度較快)
-#    通常是版本控制、虛擬環境、相依性套件等
 EXCLUDE_DIRS = {
     '.git', 'node_modules', '__pycache__', 'venv', '.vscode', 
     'dist', 'build', 'env', '.idea', 'target', '.DS_Store'
 }
 
 # 2. 要忽略的檔案類型 (副檔名)
-#    通常是二進位檔案、日誌、壓縮檔等
 EXCLUDE_EXTENSIONS = {
     '.pyc', '.pyo', '.o', '.so', '.dll', '.exe',
     '.img', '.iso', '.zip', '.tar', '.gz', '.rar',
@@ -3333,18 +3442,64 @@ EXCLUDE_EXTENSIONS = {
     '.lock', '.log', '.swp', '.swo', '.stl', '.onnx'
 }
 
-# 3. (可選) 如果你只想包含特定類型的檔案，可以設定這個清單
-#    如果此清單不是空的，腳本將只處理這些副檔名的檔案。
-#    例如: INCLUDE_EXTENSIONS = {'.py', '.js', '.html', '.css'}
+# 3. (可選) 如果只想包含特定類型的檔案，可以設定這個清單
 INCLUDE_EXTENSIONS = set() 
 
-# --- 腳本主體 ---
+# --- 樹狀結構產生函式 ---
+
+def generate_tree_structure(root_dir):
+    """產生專案的目錄樹結構字串。"""
+    tree_lines = []
+    
+    # 內部的遞迴函式
+    def _generate_tree_recursive(current_dir, prefix=""):
+        # 獲取目錄下的所有檔案和資料夾，並過濾掉要忽略的
+        items = []
+        try:
+            items = os.listdir(current_dir)
+        except OSError as e:
+            print(f"警告：無法存取目錄 {current_dir} ({e})")
+            return
+
+        # 分離檔案和資料夾以便分別處理和排序
+        dirs = sorted([d for d in items if os.path.isdir(os.path.join(current_dir, d)) and d not in EXCLUDE_DIRS])
+        files = sorted([f for f in items if os.path.isfile(os.path.join(current_dir, f))])
+
+        # 合併清單，資料夾優先
+        all_items = dirs + files
+        
+        for i, item_name in enumerate(all_items):
+            path = os.path.join(current_dir, item_name)
+            is_last = (i == len(all_items) - 1)
+            
+            # 決定連接線的樣式
+            connector = "└── " if is_last else "├── "
+            
+            if os.path.isdir(path):
+                tree_lines.append(f"{prefix}{connector}{item_name}/")
+                # 準備下一層的縮排
+                new_prefix = prefix + ("    " if is_last else "│   ")
+                _generate_tree_recursive(path, new_prefix)
+            else: # 是檔案
+                _, extension = os.path.splitext(item_name)
+                # 過濾檔案
+                if extension.lower() in EXCLUDE_EXTENSIONS:
+                    continue
+                if INCLUDE_EXTENSIONS and extension.lower() not in INCLUDE_EXTENSIONS:
+                    continue
+                tree_lines.append(f"{prefix}{connector}{item_name}")
+
+    # 從根目錄開始遞迴
+    tree_lines.append(f"{os.path.basename(os.path.abspath(root_dir))}/")
+    _generate_tree_recursive(root_dir)
+    return "\n".join(tree_lines)
+
+# --- 程式碼彙整主函式 ---
 
 def generate_code_dump(root_dir, output_filename):
     """
-    遞迴掃描一個目錄，並將所有非忽略檔案的內容寫入單一輸出檔。
+    掃描目錄，產生樹狀結構，並將所有非忽略檔案的內容寫入單一輸出檔。
     """
-    # 檢查根目錄是否存在
     if not os.path.isdir(root_dir):
         print(f"錯誤：目錄 '{root_dir}' 不存在。")
         return
@@ -3352,62 +3507,62 @@ def generate_code_dump(root_dir, output_filename):
     processed_files_count = 0
     
     try:
-        # 使用 'w' (寫入模式) 和 utf-8 編碼開啟檔案
-        # errors='ignore' 會在遇到無法解碼的字元時忽略它，避免因二進位檔案出錯
         with open(output_filename, 'w', encoding='utf-8', errors='ignore') as outfile:
-            # 在輸出檔案的開頭加上標題
+            # 1. 寫入檔案總標題
             outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
             outfile.write("=" * 80 + "\n\n")
 
-            # os.walk 會遞迴地走過目錄樹
+            # 2. 產生並寫入專案結構樹
+            outfile.write("#" + "-" * 78 + "#\n")
+            outfile.write("#" + " " * 30 + "專案目錄結構" + " " * 30 + "#\n")
+            outfile.write("#" + "-" * 78 + "#\n\n")
+            tree_structure = generate_tree_structure(root_dir)
+            outfile.write(tree_structure)
+            outfile.write("\n\n\n")
+
+            # 3. 寫入檔案內容分隔標題
+            outfile.write("#" + "-" * 78 + "#\n")
+            outfile.write("#" + " " * 31 + "各檔案內容" + " " * 32 + "#\n")
+            outfile.write("#" + "-" * 78 + "#\n\n")
+            
+            # 4. 遞迴走訪目錄，寫入各檔案內容
             for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True):
-                
-                # --- 過濾資料夾 ---
-                # 這是 os.walk 的一個技巧：直接修改 dirnames 列表，
-                # os.walk 就不會再進入這些被移除的資料夾。
                 dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
 
-                # 排序檔案，讓輸出結果更一致
                 for filename in sorted(filenames):
-                    # 取得檔案副檔名
                     _, extension = os.path.splitext(filename)
                     extension = extension.lower()
 
-                    # --- 過濾檔案 ---
                     if extension in EXCLUDE_EXTENSIONS:
                         continue
-                    
                     if INCLUDE_EXTENSIONS and extension not in INCLUDE_EXTENSIONS:
                         continue
 
-                    # 組合完整檔案路徑
                     file_path = os.path.join(dirpath, filename)
-                    
-                    # 取得相對於根目錄的路徑，讓輸出更簡潔
                     relative_path = os.path.relpath(file_path, root_dir)
+                    relative_path_str = relative_path.replace(os.sep, '/')
 
                     try:
-                        # 寫入檔案分隔線和路徑標題
-                        header = f"--- FILE: {relative_path.replace(os.sep, '/')} ---"
-                        outfile.write("=" * 80 + "\n")
-                        outfile.write(header + "\n")
-                        outfile.write("-" * len(header) + "\n\n")
-                        
-                        print(f"正在處理: {relative_path}")
+                        print(f"正在處理: {relative_path_str}")
 
-                        # 讀取原始檔案內容並寫入輸出檔
+                        start_header = f"--- START OF FILE: {relative_path_str} ---"
+                        end_header   = f"---  END OF FILE: {relative_path_str}  ---"
+                        separator    = "=" * 80
+                        
+                        outfile.write(f"{separator}\n")
+                        outfile.write(f"{start_header}\n")
+                        outfile.write(f"{'-' * len(start_header)}\n\n")
+                        
                         with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
-                            content = infile.read()
-                            outfile.write(content)
-                            outfile.write("\n\n")
+                            outfile.write(infile.read())
+                        
+                        outfile.write(f"\n\n{'-' * len(end_header)}\n")
+                        outfile.write(f"{end_header}\n")
+                        outfile.write(f"{separator}\n\n")
                         
                         processed_files_count += 1
-
                     except Exception as e:
-                        # 處理讀取檔案時可能發生的其他錯誤
-                        error_msg = f"--- 無法讀取檔案: {relative_path} (錯誤: {e}) ---\n\n"
-                        outfile.write(error_msg)
-                        print(f"警告: {error_msg.strip()}")
+                        print(f"警告：無法讀取 {relative_path_str} ({e})")
 
         # 顯示成功訊息
         print("\n" + "=" * 80)
@@ -3416,25 +3571,23 @@ def generate_code_dump(root_dir, output_filename):
         print("=" * 80)
 
     except IOError as e:
-        print(f"錯誤：無法寫入輸出檔案 '{output_filename}'。請檢查權限。 ({e})")
+        print(f"錯誤：無法寫入輸出檔案 '{output_filename}'。 ({e})")
     except Exception as e:
         print(f"發生未預期的錯誤: {e}")
 
 
 if __name__ == "__main__":
-    # 決定要掃描的根目錄
-    # 如果執行時有給參數，就用第一個參數當作路徑，否則使用當前目錄 "."
     target_dir = sys.argv[1] if len(sys.argv) > 1 else '.'
-    
-    # 決定輸出檔案的名稱
     output_file = 'project_dump.txt'
-    
-    # 執行主函式
     generate_code_dump(target_dir, output_file)
 
+-------------------------------------------
+---  END OF FILE: test/dump_project.py  ---
 ================================================================================
---- FILE: test/test_joystick.py ---
------------------------------------
+
+================================================================================
+--- START OF FILE: test/test_joystick.py ---
+--------------------------------------------
 
 # test_joystick.py
 import pygame
@@ -3466,9 +3619,13 @@ except KeyboardInterrupt:
 
 pygame.quit()
 
+--------------------------------------------
+---  END OF FILE: test/test_joystick.py  ---
 ================================================================================
---- FILE: test/verify_model_mode.py ---
----------------------------------------
+
+================================================================================
+--- START OF FILE: test/verify_model_mode.py ---
+------------------------------------------------
 
 # verify_model_mode.py
 import numpy as np
@@ -3638,4 +3795,8 @@ def verify():
 
 if __name__ == "__main__":
     verify()
+
+------------------------------------------------
+---  END OF FILE: test/verify_model_mode.py  ---
+================================================================================
 
