@@ -20,8 +20,7 @@ onnx_models:
 
 # 【新】模型平滑切換設定
 policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
-
-# ... 其他設定保持不變
+# ==================================
 
 # 核心參數 (Core Parameters)
 num_motors: 12

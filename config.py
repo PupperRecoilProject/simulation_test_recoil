@@ -24,7 +24,11 @@ class FloatingControllerConfig:
 class AppConfig:
     """儲存所有應用程式設定的資料類別。"""
     mujoco_model_file: str
-    onnx_model_path: str
+    
+    # onnx_model_path: str # 舊的屬性
+    onnx_models: Dict[str, str] # <-- 新增: 模型字典
+    policy_transition_duration: float # <-- 新增: 過渡時間
+    
     num_motors: int
     physics_timestep: float
     control_freq: float
@@ -57,7 +61,11 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
-        onnx_model_path=config_data['onnx_model_path'],
+        
+        # onnx_model_path=config_data['onnx_model_path'], # 移除舊的
+        onnx_models=config_data['onnx_models'], # <-- 新增
+        policy_transition_duration=config_data.get('policy_transition_duration', 0.5), # <-- 新增, 帶預設值
+                
         num_motors=config_data['num_motors'],
         physics_timestep=config_data['physics_timestep'],
         control_freq=config_data['control_freq'],

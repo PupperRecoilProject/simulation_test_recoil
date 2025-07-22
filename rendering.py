@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
     from simulation import Simulation
-    from serial_communicator import SerialCommunicator
 
 class DebugOverlay:
     """
@@ -38,23 +37,25 @@ class DebugOverlay:
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """渲染硬體控制模式的專用介面。"""
-        # 繪製一個深色半透明背景，以示區別
-        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95)
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95) # 繪製一個深色半透明背景，以示區別
         
-        ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
-        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
-        help_text = "Press 'H' to exit to simulation mode | Press 'K' to toggle AI control"
+        ai_status = "啟用" if state.hardware_ai_is_active else "禁用" # 獲取AI狀態文字
+        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---" # 組合標題
+        help_text = "Press 'H' to exit | Press 'K' to toggle AI | Press 'P' to cycle policy" # 定義幫助文字
         
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context) # 繪製標題
+        # 【修正】修正 mujo_co 的拼寫錯誤
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context) # 繪製幫助文字
 
-        # 顯示來自 state 的即時硬體狀態文字
-        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{state.hardware_status_text}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
+        active_policy_name = state.available_policies[state.active_policy_index] if state.available_policies else "N/A" # 獲取當前模型名稱
+        transition_status = " (Transitioning...)" if state.policy_manager_ref and state.policy_manager_ref.is_transitioning else "" # 檢查是否在過渡中
+        policy_text = f"Active Policy: {active_policy_name}{transition_status}" # 組合模型狀態文字
+
+        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{policy_text}\n{state.hardware_status_text}" # 組合硬體狀態文字
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context) # 繪製狀態文字
         
-        # 也可以顯示使用者命令
-        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context)
+        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}" # 組合使用者命令文字
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context) # 繪製命令文字
 
     def render_serial_console(self, viewport, context, state: SimulationState):
         """渲染一個全螢幕的序列埠控制台介面。"""
@@ -79,10 +80,8 @@ class DebugOverlay:
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
         joint_names = [
-            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
-            "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
-            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
-            "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
+            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee", "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
+            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee", "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
         ]
         num_joints_per_col = 6
         left_col_text, right_col_text = "", ""
@@ -102,7 +101,6 @@ class DebugOverlay:
         """渲染手動 Final Ctrl 模式的專用介面。"""
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
-
         help_text = (
             f"{help_title}\n\n"
             "Press 'F' to Toggle Floating\n\n"
@@ -112,35 +110,24 @@ class DebugOverlay:
             "Press 'G' to Return to Walking Mode"
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
-        
         joint_names = [
-            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee",
-            "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
-            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee",
-            "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
+            "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee", "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
+            "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee", "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
         ]
         num_joints_per_col = 6
         left_col_text, right_col_text = "", ""
-        
         current_joint_positions = sim.data.qpos[7:]
-        
         for i, name in enumerate(joint_names):
             prefix = ">> " if i == state.manual_ctrl_index else "   "
             target_val = state.manual_final_ctrl[i]
             actual_val = current_joint_positions[i]
             error = target_val - actual_val
-            
             line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n"
-            
-            if i < num_joints_per_col:
-                left_col_text += line_text
-            else:
-                right_col_text += line_text
+            if i < num_joints_per_col: left_col_text += line_text
+            else: right_col_text += line_text
         
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
-        
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
@@ -157,7 +144,7 @@ class DebugOverlay:
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset       | T: Serial Console\n"
             "  X: Soft Reset   | TAB: Info Page | H: Hardware Mode\n"
-            "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
+            "  M: Input Mode   | C: Clear Cmd   | P: Cycle Policy\n"
             "  U: Scan Serial  | J: Scan Gamepad\n"
             "  V: Cycle Terrain  | K: Toggle HW AI\n\n"
             "[Keyboard Mode]\n"
@@ -174,12 +161,16 @@ class DebugOverlay:
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
         terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
 
+        active_policy_name = state.available_policies[state.active_policy_index] if state.available_policies else "N/A"
+        transition_status = " (Transitioning...)" if state.policy_manager_ref and state.policy_manager_ref.is_transitioning else ""
+
         p = state.tuning_params
         prefixes = ["   "] * 4
         prefixes[state.tuning_param_index] = ">> "
 
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
+            f"Policy: {active_policy_name}{transition_status}\n"
             f"Time: {sim.data.time:.2f} s\n"
             f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
@@ -226,7 +217,7 @@ class DebugOverlay:
         torso_ang_vel_local = self._get_local_ang_vel(sim.data, sim.torso_id)
         bottom_right_text = (
             f"--- ONNX OUTPUTS & STATE ---\n"
-            f"{format_vec('Raw Action:', state.latest_action_raw)}\n"
+            f"{format_vec('Final Action:', state.latest_action_raw)}\n"
             f"{format_vec('Final Ctrl:', state.latest_final_ctrl)}\n\n"
             f"--- Robot State (Sim) ---\n"
             f"{format_vec('Torso Z:', np.array([sim.data.qpos[2]]))}\n"

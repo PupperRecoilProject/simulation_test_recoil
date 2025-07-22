@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from floating_controller import FloatingController
-    from policy import ONNXPolicy
-    from hardware_controller import HardwareController # <-- 新增
+    from policy import PolicyManager # <-- 修改
+    from hardware_controller import HardwareController
 
 @dataclass
 class TuningParams:
@@ -32,7 +32,7 @@ class SimulationState:
     
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
-    control_mode: str = "WALKING" # "WALKING", "FLOATING", "HARDWARE_MODE", etc.
+    control_mode: str = "WALKING"
 
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
@@ -59,10 +59,13 @@ class SimulationState:
     tuning_param_index: int = 0
 
     floating_controller_ref: 'FloatingController' = None
-    policy_ref: 'ONNXPolicy' = None
     
-    # --- 新增硬體模式相關狀態 ---
-    hardware_controller_ref: 'HardwareController' = None # 硬體控制器物件的參考
+    # --- 修改為 PolicyManager 參考 ---
+    policy_manager_ref: 'PolicyManager' = None
+    available_policies: list = field(default_factory=list)
+    active_policy_index: int = 0
+    
+    hardware_controller_ref: 'HardwareController' = None
     hardware_is_connected: bool = False
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "未連接"
@@ -104,7 +107,6 @@ class SimulationState:
         elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
              if self.floating_controller_ref: self.floating_controller_ref.disable()
              self.manual_mode_is_floating = False
-        # --- 新增：離開硬體模式時的清理工作 ---
         elif old_mode == "HARDWARE_MODE":
             if self.hardware_controller_ref:
                 self.hardware_controller_ref.stop()
@@ -121,26 +123,20 @@ class SimulationState:
             self.joint_test_offsets.fill(0.0)
         elif new_mode == "MANUAL_CTRL":
             self.manual_final_ctrl[:] = self.latest_final_ctrl
-        # --- 新增：進入硬體模式時的設定工作 ---
         elif new_mode == "HARDWARE_MODE":
              if self.hardware_controller_ref and self.hardware_controller_ref.connect_and_start():
                  self.hardware_is_connected = True
              else:
                  print("❌ 硬體連接失敗，自動返回 WALKING 模式。")
-                 # 因為連接失敗，我們需要將 control_mode 設回舊的模式，或者一個安全模式
-                 # 注意：直接在這裡再次修改 self.control_mode 可能會導致無限遞迴
-                 # 最好是在呼叫端處理這種失敗情況，但為了簡單起見，我們在這裡直接設定
                  self.control_mode = "WALKING" 
                  print(f"控制模式已自動切換至: {self.control_mode}")
 
-
         # --- 【核心】模式切換穩定性修復 ---
-        # 如果是從手動模式切換回 AI 模式
         is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
         is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL"]
         
         if is_entering_ai_mode and is_leaving_manual_mode:
             print("從手動模式返回，正在重置 AI 狀態以確保平滑過渡...")
-            if self.policy_ref:
-                self.policy_ref.reset()
+            if self.policy_manager_ref:
+                self.policy_manager_ref.reset()
             self.clear_command()

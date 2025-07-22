@@ -6,7 +6,6 @@ class KeyboardInputHandler:
     """
     處理所有鍵盤輸入事件，並根據當前模式進行分派。
     """
-    # 【修改】__init__ 以移除 hw_controller，因為可以從 state 中獲取
     def __init__(self, state: SimulationState, serial_comm, xbox_handler, terrain_manager):
         self.state = state
         self.config = state.config
@@ -42,23 +41,28 @@ class KeyboardInputHandler:
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
             
-            # --- 新增硬體模式相關按鍵 ---
+            # 硬體模式相關按鍵
             if key == glfw.KEY_H: # 'H' for Hardware
-                # 在 "WALKING"(或任何非硬體模式) 和 "HARDWARE_MODE" 之間切換
                 new_mode = "HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"
                 self.state.set_control_mode(new_mode)
                 return
-            
             if key == glfw.KEY_K: # 'K' for Kill-switch/Activate
                 if self.state.control_mode == "HARDWARE_MODE" and self.state.hardware_controller_ref:
                     if self.state.hardware_ai_is_active:
                         self.state.hardware_controller_ref.disable_ai()
                     else:
                         self.state.hardware_controller_ref.enable_ai()
-                else:
-                    print("請先按 'H' 進入硬體模式。")
+                else: print("請先按 'H' 進入硬體模式。")
                 return
 
+            # 【新】切換策略模型
+            if key == glfw.KEY_P:
+                if self.state.policy_manager_ref and self.state.available_policies:
+                    next_index = (self.state.active_policy_index + 1) % len(self.state.available_policies)
+                    self.state.active_policy_index = next_index
+                    new_policy_name = self.state.available_policies[next_index]
+                    self.state.policy_manager_ref.switch_policy(new_policy_name)
+                return
 
         # --- 2. 可重複觸發的模式特定功能 ---
         if action in [glfw.PRESS, glfw.REPEAT]:
@@ -95,7 +99,6 @@ class KeyboardInputHandler:
 
         # --- 3. 如果以上模式都不是，則執行 WALKING/FLOATING 模式的預設按鍵邏輯 ---
         if action == glfw.PRESS:
-            # 注意: H 鍵已在通用區處理
             if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
             if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
             if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
