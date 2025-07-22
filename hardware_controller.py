@@ -50,10 +50,10 @@ class HardwareController:
         # 注意: 這個值需要根據您的實體機器人精確測量或從 URDF/CAD 模型中導出
         # 這個值是根據您專案中的 `pupper.xml` 推算的，您可能需要微調
         self.foot_positions_in_body = np.array([
-            [-0.080, -0.176, -0.2],  # FR (Front Right)
-            [ 0.080, -0.176, -0.2],  # FL (Front Left)
-            [-0.080,  0.024, -0.2],  # RR (Rear Right)
-            [ 0.080,  0.024, -0.2]   # RL (Rear Left)
+            [-0.0804, -0.1759, -0.1964],  # FR (Front Right)
+            [ 0.0806, -0.1759, -0.1964],  # FL (Front Left)
+            [-0.0804,  0.0239, -0.1964],  # RR (Rear Right)
+            [ 0.0806,  0.0239, -0.1964],  # RL (Rear Left)
         ], dtype=np.float32)
 
         print("✅ 硬體控制器已初始化。")

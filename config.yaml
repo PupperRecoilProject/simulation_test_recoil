@@ -3,7 +3,25 @@
 # ==================================
 # 檔案路徑 (File Paths)
 mujoco_model_file: "assets/scene_mjx.xml"
-onnx_model_path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
+# config.yaml
+
+# ==================================
+# === 模擬與模型設定 (Simulation & Model Settings)
+# ==================================
+# ...
+# onnx_model_path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx" # 舊的單一模型路徑，可以先註解掉
+
+# 【新】ONNX 模型庫 (ONNX Model Library)
+onnx_models:
+  stable_walk: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
+  agile_model: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
+  # 您可以在此處繼續添加更多模型...
+  # another_model: "models/another_policy.onnx"
+
+# 【新】模型平滑切換設定
+policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
+
+# ... 其他設定保持不變
 
 # 核心參數 (Core Parameters)
 num_motors: 12
