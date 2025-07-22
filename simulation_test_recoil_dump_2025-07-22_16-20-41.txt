@@ -1,4 +1,4 @@
-# 專案程式碼彙整: C:\git_project\simulation_test_recoil
+# 專案程式碼彙整: c:\git_project\simulation_test_recoil
 ================================================================================
 
 #------------------------------------------------------------------------------#
@@ -8,6 +8,15 @@
 simulation_test_recoil/
 ├── assets/
 │   ├── mesh/
+│   │   ├── Hip_L.stl
+│   │   ├── Hip_R.stl
+│   │   ├── Lower_Leg_L.stl
+│   │   ├── Lower_Leg_R.stl
+│   │   ├── Upper_Leg_L.stl
+│   │   ├── Upper_Leg_R.stl
+│   │   ├── body.stl
+│   │   ├── hfield.png
+│   │   └── rocky_texture.png
 │   ├── pupper.xml
 │   ├── pupper_mjx.xml
 │   ├── pupper_mjx_1.xml
@@ -21,6 +30,9 @@ simulation_test_recoil/
 │   ├── scene_mjx_flat_terrain.xml
 │   └── scene_mjx_fullcollisions_flat_terrain.xml
 ├── models/
+│   ├── pupper_ppo_policy_200540160_tf_converted.onnx
+│   ├── pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx
+│   └── pupper_ppo_policy_30965760_tf_converted_穩定步態版.optimized.ort
 ├── test/
 │   ├── dump_project.py
 │   ├── test_joystick.py
@@ -28,11 +40,11 @@ simulation_test_recoil/
 ├── config.py
 ├── config.yaml
 ├── floating_controller.py
+├── hardware_controller.py
 ├── keyboard_input_handler.py
 ├── main.py
 ├── observation.py
 ├── policy.py
-├── project_dump.txt
 ├── readme.md
 ├── rendering.py
 ├── serial_communicator.py
@@ -273,6 +285,274 @@ class FloatingController:
 ================================================================================
 
 ================================================================================
+--- START OF FILE: hardware_controller.py ---
+---------------------------------------------
+
+# hardware_controller.py
+import serial
+import serial.tools.list_ports
+import threading
+import time
+import re
+import numpy as np
+from scipy.spatial.transform import Rotation
+from typing import TYPE_CHECKING
+
+# 為了型別提示，避免迴圈匯入
+if TYPE_CHECKING:
+    from config import AppConfig
+    from policy import ONNXPolicy
+    from state import SimulationState
+
+class RobotStateHardware:
+    """一個專門用來儲存從實體機器人獲取的即時狀態的數據類。"""
+    def __init__(self):
+        self.imu_gyro_radps = np.zeros(3, dtype=np.float32)
+        self.imu_acc_g = np.zeros(3, dtype=np.float32)
+        self.joint_positions_rad = np.zeros(12, dtype=np.float32)
+        self.joint_velocities_radps = np.zeros(12, dtype=np.float32)
+        self.lin_vel_local = np.zeros(3, dtype=np.float32)
+        self.gravity_vector_local = np.zeros(3, dtype=np.float32)
+        self.last_action = np.zeros(12, dtype=np.float32)
+        self.command = np.zeros(3, dtype=np.float32)
+        self.last_update_time = 0.0
+
+class HardwareController:
+    """管理與實體硬體(例如Teensy)的連接和高頻控制迴圈。"""
+    
+    def __init__(self, config: 'AppConfig', policy: 'ONNXPolicy', global_state: 'SimulationState'):
+        """初始化硬體控制器。"""
+        self.config = config
+        self.policy = policy
+        self.global_state = global_state
+        
+        self.ser = None
+        self.is_running = False
+        self.read_thread = None
+        self.control_thread = None
+        
+        self.hw_state = RobotStateHardware()
+        self.lock = threading.Lock()
+        self.ai_control_enabled = threading.Event()
+
+        # 【重要】: 機器人運動學參數
+        # 預設站姿下，腳尖相對於身體中心的座標 (米)
+        # 注意: 這個值需要根據您的實體機器人精確測量或從 URDF/CAD 模型中導出
+        # 這個值是根據您專案中的 `pupper.xml` 推算的，您可能需要微調
+        self.foot_positions_in_body = np.array([
+            [-0.080, -0.176, -0.2],  # FR (Front Right)
+            [ 0.080, -0.176, -0.2],  # FL (Front Left)
+            [-0.080,  0.024, -0.2],  # RR (Rear Right)
+            [ 0.080,  0.024, -0.2]   # RL (Rear Left)
+        ], dtype=np.float32)
+
+        print("✅ 硬體控制器已初始化。")
+
+    def connect_and_start(self) -> bool:
+        """掃描並連接到序列埠，如果成功，則啟動所有背景執行緒。"""
+        if self.is_running:
+            print("硬體控制器已在運行中。")
+            return True
+            
+        print("\n" + "="*20 + " 正在掃描可用序列埠 " + "="*20)
+        ports = serial.tools.list_ports.comports()
+        if not ports:
+            print("❌ 錯誤: 未找到任何序列埠。")
+            return False
+        
+        # 這裡我們自動選擇第一個找到的埠，您可以根據需要修改為手動選擇
+        port_name = ports[0].device
+        print(f"自動選擇埠: {port_name} (波特率: 115200)")
+
+        try:
+            self.ser = serial.Serial(port_name, 115200, timeout=1)
+            time.sleep(1.0)
+            self.ser.flushInput()
+            print(f"✅ 成功連接到 {port_name}")
+            
+            self.is_running = True
+            self.read_thread = threading.Thread(target=self._read_from_port, daemon=True)
+            self.read_thread.start()
+            self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
+            self.control_thread.start()
+            
+            print("✅ 硬體控制執行緒已啟動。")
+            return True
+        except serial.SerialException as e:
+            print(f"❌ 連接失敗: {e}")
+            self.ser = None
+            return False
+
+    def stop(self):
+        """安全地停止所有執行緒和序列埠連接。"""
+        if not self.is_running: return
+        
+        print("正在停止硬體控制器...")
+        self.is_running = False
+        self.disable_ai()
+        self.ai_control_enabled.set()
+        
+        if self.control_thread and self.control_thread.is_alive(): self.control_thread.join(timeout=1)
+        if self.read_thread and self.read_thread.is_alive(): self.read_thread.join(timeout=1)
+        
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+            print(f"序列埠 {self.ser.port} 已關閉。")
+        
+        self.ser = None
+        print("硬體控制器已完全停止。")
+        
+    def enable_ai(self):
+        """啟用 AI 控制。"""
+        if not self.is_running:
+            print("無法啟用 AI：硬體控制器未運行。")
+            return
+        print("🤖 AI 控制已啟用。")
+        self.policy.reset()
+        self.ai_control_enabled.set()
+        self.global_state.hardware_ai_is_active = True
+
+    def disable_ai(self):
+        """禁用 AI 控制。"""
+        print("⏸️ AI 控制已暫停。")
+        self.ai_control_enabled.clear()
+        self.global_state.hardware_ai_is_active = False
+        if self.ser and self.ser.is_open:
+            try: self.ser.write(b"stop\n")
+            except serial.SerialException as e: print(f"發送停止指令失敗: {e}")
+
+    def parse_teensy_data(self, line: str):
+        """使用正則表達式解析來自 Teensy 的單行字串數據。"""
+        acc_match = re.search(r"IMU Acc\(g\) -> X: ([+-]?[\d.]+)\s+Y: ([+-]?[\d.]+)\s+Z: ([+-]?[\d.]+)", line)
+        gyro_match = re.search(r"IMU Gyro\(dps\)-> X: ([+-]?[\d.]+)\s+Y: ([+-]?[\d.]+)\s+Z: ([+-]?[\d.]+)", line)
+        motor_match = re.search(r"Motor\s+(\d+)\s*\|\s*Pos:\s+([+-]?[\d.]+)\s*\|\s*Vel:\s+([+-]?[\d.]+)", line)
+
+        with self.lock:
+            if acc_match:
+                self.hw_state.imu_acc_g = np.array([float(g) for g in acc_match.groups()], dtype=np.float32)
+            elif gyro_match:
+                dps = np.array([float(g) for g in gyro_match.groups()], dtype=np.float32)
+                self.hw_state.imu_gyro_radps = dps * (np.pi / 180.0)
+            elif motor_match:
+                motor_id = int(motor_match.group(1))
+                if 0 <= motor_id < self.config.num_motors:
+                    self.hw_state.joint_positions_rad[motor_id] = float(motor_match.group(2))
+                    self.hw_state.joint_velocities_radps[motor_id] = float(motor_match.group(3))
+            self.hw_state.last_update_time = time.time()
+
+    def estimate_linear_velocity(self):
+        """[核心演算法] 根據 IMU 和運動學模型，估算機身的線速度。"""
+        with self.lock:
+            acc_g = self.hw_state.imu_acc_g.copy()
+            w_body = self.hw_state.imu_gyro_radps.copy()
+        
+        body_gravity_vec = acc_g * 9.81
+        world_gravity_vec = np.array([0, 0, -9.81])
+        
+        if np.linalg.norm(body_gravity_vec) < 1e-6: return
+
+        try:
+            rot_body_to_world, _ = Rotation.align_vectors(world_gravity_vec.reshape(1, -1), body_gravity_vec.reshape(1, -1))
+        except (ValueError, np.linalg.LinAlgError): return
+
+        w_world = rot_body_to_world.apply(w_body)
+
+        foot_velocities_world = []
+        for i in range(4):
+            r_foot_in_world = rot_body_to_world.apply(self.foot_positions_in_body[i])
+            v_foot_world = np.cross(w_world, r_foot_in_world)
+            foot_velocities_world.append(np.linalg.norm(v_foot_world))
+
+        stance_foot_idx = np.argmin(foot_velocities_world)
+        r_stance_foot_in_world = rot_body_to_world.apply(self.foot_positions_in_body[stance_foot_idx])
+        v_body_world_est = -np.cross(w_world, r_stance_foot_in_world)
+
+        with self.lock:
+            self.hw_state.gravity_vector_local = body_gravity_vec
+            self.hw_state.lin_vel_local = rot_body_to_world.inv().apply(v_body_world_est)
+
+    def construct_observation(self) -> np.ndarray:
+        """建立提供給 ONNX 模型的觀察向量。"""
+        self.estimate_linear_velocity()
+        
+        with self.lock:
+            self.hw_state.command = self.global_state.command * np.array(self.config.command_scaling_factors)
+            
+            # 根據 config.yaml 中48維的配方來建立觀察向量
+            obs_list = {
+                'linear_velocity': self.hw_state.lin_vel_local,
+                'angular_velocity': self.hw_state.imu_gyro_radps,
+                'gravity_vector': self.hw_state.gravity_vector_local,
+                'joint_positions': self.hw_state.joint_positions_rad,
+                'joint_velocities': self.hw_state.joint_velocities_radps,
+                'last_action': self.hw_state.last_action,
+                'commands': self.hw_state.command,
+            }
+            # 確保順序與 config.yaml 中定義的一致
+            recipe = self.config.observation_recipes.get(48, [])
+            final_obs_list = [obs_list[key] for key in recipe if key in obs_list]
+
+            if not final_obs_list:
+                print("⚠️ 警告: 無法根據配方建立觀察向量。")
+                return np.zeros(48)
+                
+            return np.concatenate(final_obs_list).astype(np.float32)
+
+    def _read_from_port(self):
+        """[背景執行緒] 持續從序列埠讀取數據並調用解析器。"""
+        print("[硬體讀取線程已啟動] 等待來自 Teensy 的數據...")
+        while self.is_running:
+            if not self.ser or not self.ser.is_open:
+                self.stop()
+                break
+            try:
+                line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                if line: self.parse_teensy_data(line)
+            except (serial.SerialException, OSError):
+                print("❌ 錯誤：序列埠斷開連接或讀取錯誤。")
+                self.stop()
+                break
+            except Exception as e: print(f"❌ _read_from_port 發生未知錯誤: {e}")
+                
+    def _control_loop(self):
+        """[背景執行緒] 以固定頻率執行 AI 控制。"""
+        print("\n--- 硬體控制線程已就緒，等待 AI 啟用 ---")
+        # 假設硬體的預設站姿與模擬中的 `default_pose` 相同
+        default_pose_hardware = self.global_state.sim.default_pose
+
+        while self.is_running:
+            self.ai_control_enabled.wait()
+            if not self.is_running: break
+
+            loop_start_time = time.perf_counter()
+            
+            observation = self.construct_observation()
+            
+            _, action_raw = self.policy.get_action(observation)
+            
+            with self.lock:
+                self.hw_state.last_action[:] = action_raw
+            
+            # 根據您的模擬器邏輯，最終控制指令是 default_pose + scaled_action
+            final_command = default_pose_hardware + action_raw * self.global_state.tuning_params.action_scale
+
+            action_str = ' '.join(f"{a:.4f}" for a in final_command)
+            command_to_send = f"jpos {action_str}\n"
+
+            if self.ser and self.ser.is_open:
+                try: self.ser.write(command_to_send.encode('utf-8'))
+                except serial.SerialException: self.stop()
+            
+            loop_duration = time.perf_counter() - loop_start_time
+            sleep_time = (1.0 / self.config.control_freq) - loop_duration
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+---------------------------------------------
+---  END OF FILE: hardware_controller.py  ---
+================================================================================
+
+================================================================================
 --- START OF FILE: keyboard_input_handler.py ---
 ------------------------------------------------
 
@@ -284,13 +564,13 @@ class KeyboardInputHandler:
     """
     處理所有鍵盤輸入事件，並根據當前模式進行分派。
     """
-    # 【修改】接收 terrain_manager
+    # 【修改】__init__ 以移除 hw_controller，因為可以從 state 中獲取
     def __init__(self, state: SimulationState, serial_comm, xbox_handler, terrain_manager):
         self.state = state
         self.config = state.config
         self.serial_comm = serial_comm
         self.xbox_handler = xbox_handler
-        self.terrain_manager = terrain_manager # <-- 【新增】
+        self.terrain_manager = terrain_manager
         self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
         self.num_params = len(self.param_keys)
 
@@ -312,7 +592,6 @@ class KeyboardInputHandler:
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
-            # 【新增】V 鍵切換地形
             if key == glfw.KEY_V: 
                 self.terrain_manager.cycle_terrain()
                 return
@@ -320,9 +599,26 @@ class KeyboardInputHandler:
             # 設備掃描
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
+            
+            # --- 新增硬體模式相關按鍵 ---
+            if key == glfw.KEY_H: # 'H' for Hardware
+                # 在 "WALKING"(或任何非硬體模式) 和 "HARDWARE_MODE" 之間切換
+                new_mode = "HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"
+                self.state.set_control_mode(new_mode)
+                return
+            
+            if key == glfw.KEY_K: # 'K' for Kill-switch/Activate
+                if self.state.control_mode == "HARDWARE_MODE" and self.state.hardware_controller_ref:
+                    if self.state.hardware_ai_is_active:
+                        self.state.hardware_controller_ref.disable_ai()
+                    else:
+                        self.state.hardware_controller_ref.enable_ai()
+                else:
+                    print("請先按 'H' 進入硬體模式。")
+                return
+
 
         # --- 2. 可重複觸發的模式特定功能 ---
-        # 這是最關鍵的修改：優先處理特定模式的按鍵，如果處理了就 return
         if action in [glfw.PRESS, glfw.REPEAT]:
             if self.state.control_mode == "SERIAL_MODE":
                 if key == glfw.KEY_ENTER: self.state.serial_command_to_send = self.state.serial_command_buffer; self.state.serial_command_buffer = ""
@@ -357,6 +653,7 @@ class KeyboardInputHandler:
 
         # --- 3. 如果以上模式都不是，則執行 WALKING/FLOATING 模式的預設按鍵邏輯 ---
         if action == glfw.PRESS:
+            # 注意: H 鍵已在通用區處理
             if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
             if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
             if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
@@ -401,6 +698,7 @@ class KeyboardInputHandler:
 import sys
 import numpy as np
 import mujoco
+import time # <-- 新增
 
 from config import load_config
 from state import SimulationState
@@ -412,30 +710,26 @@ from keyboard_input_handler import KeyboardInputHandler
 from xbox_input_handler import XboxInputHandler
 from floating_controller import FloatingController
 from serial_communicator import SerialCommunicator
-from terrain_manager import TerrainManager # <-- 【新增】導入 TerrainManager
+from terrain_manager import TerrainManager
+from hardware_controller import HardwareController # <-- 新增
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
     from xbox_controller import XboxController 
-    print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
+    print("\n--- 機器人模擬控制器 (含硬體模式) ---")
     
     config = load_config()
     state = SimulationState(config)
     sim = Simulation(config)
     
-    # 【新增】初始化地形管理器
     terrain_manager = TerrainManager(sim.model, sim.data)
-    state.terrain_manager_ref = terrain_manager # 將引用存入 state，方便 UI 讀取
+    state.terrain_manager_ref = terrain_manager
     
     floating_controller = FloatingController(config, sim.model, sim.data)
     state.floating_controller_ref = floating_controller
     
     serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
-    
-    # 【修改】將 terrain_manager 也傳入
-    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
-    keyboard_handler.register_callbacks(sim.window)
     
     try:
         assumed_dim = next(iter(config.observation_recipes))
@@ -446,13 +740,15 @@ def main():
     obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
     policy = ONNXPolicy(config, base_obs_dim)
-
-    # =========================================================================
-    # === 【新增】將 policy 的引用設定到 state 中，以便在模式切換時呼叫 reset ===
-    # =========================================================================
     state.policy_ref = policy
-    # =========================================================================
     
+    # --- 初始化硬體控制器 ---
+    hw_controller = HardwareController(config, policy, state)
+    state.hardware_controller_ref = hw_controller # 將參考存入 state
+
+    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
+    keyboard_handler.register_callbacks(sim.window)
+
     if policy.model_input_dim != base_obs_dim:
         if policy.model_input_dim in config.observation_recipes:
             print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
@@ -469,106 +765,111 @@ def main():
     def hard_reset():
         """完全重置整個模擬環境。"""
         print("\n--- 正在執行完全重置 (Hard Reset) ---")
+        if state.control_mode == "HARDWARE_MODE":
+            print("硬體模式下無法重置模擬。")
+            return
         sim.reset()
         policy.reset()
-        if state.control_mode == "FLOATING":
-            state.set_control_mode("WALKING")
+        if state.control_mode == "FLOATING": state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
-        
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
-        
         state.hard_reset_requested = False
 
     def soft_reset():
         """僅重置機器人姿態和控制器狀態，不重置模擬時間和物理世界。"""
         print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
+        if state.control_mode == "HARDWARE_MODE":
+            print("硬體模式下無法軟重置。")
+            return
         sim.data.qpos[7:] = sim.default_pose
         sim.data.qvel[6:] = 0
         policy.reset()
         state.clear_command()
-
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
-
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
 
     hard_reset()
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
-    print("    (U: 掃描序列埠, J: 掃描搖桿)")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, H: 硬體模式)")
+    print("    (M: 輸入模式, R: 硬重置, X: 軟重置, U: 掃描序列埠, J: 掃描搖桿)")
+    print("    (在硬體模式下，按 K 啟用/禁用 AI)")
+
 
     state.execute_one_step = False
 
     while not sim.should_close():
+        # --- 模式無關的通用更新 ---
         if state.single_step_mode and not state.execute_one_step:
             sim.render(state, overlay)
             continue
-        if state.execute_one_step:
-            state.execute_one_step = False
+        if state.execute_one_step: state.execute_one_step = False
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
-        
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()
-        if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
-        if state.serial_command_to_send:
-            serial_comm.send_command(state.serial_command_to_send)
-            state.serial_command_to_send = ""
 
-        if state.control_mode != "SERIAL_MODE":
-            if state.single_step_mode:
-                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
+        # --- 模式分派邏輯 ---
+        if state.control_mode == "HARDWARE_MODE":
+            # 在硬體模式下，Python 主執行緒比較閒置，主要負責更新UI
+            # 真正的控制在 hw_controller 的背景執行緒中
+            if hw_controller.is_running:
+                with hw_controller.lock:
+                    t_since_update = time.time() - hw_controller.hw_state.last_update_time
+                    conn_status = f"數據延遲: {t_since_update:.2f}s" if t_since_update < 1.0 else "數據超時!"
+                    state.hardware_status_text = f"連接狀態: {conn_status}\n"
+                    state.hardware_status_text += f"LinVel: {np.array2string(hw_controller.hw_state.lin_vel_local, precision=2)}\n"
+                    state.hardware_status_text += f"Gyro: {np.array2string(hw_controller.hw_state.imu_gyro_radps, precision=2)}"
+            else:
+                state.hardware_status_text = "硬體控制器未運行。"
+            # 在此模式下，不執行模擬步進，只渲染
+        
+        elif state.control_mode == "SERIAL_MODE":
+            # 序列埠主控台模式下也不執行模擬步進
+            if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
+            if state.serial_command_to_send:
+                serial_comm.send_command(state.serial_command_to_send)
+                state.serial_command_to_send = ""
+        else:
+            # 所有模擬相關的模式 (WALKING, FLOATING, JOINT_TEST, MANUAL_CTRL)
+            if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
             base_obs = obs_builder.get_observation(state.command, policy.last_action)
-            if state.single_step_mode:
-                current_joint_angles = sim.data.qpos[7:]
-                current_joint_positions = current_joint_angles - sim.default_pose
-                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
-
             onnx_input, action_raw = policy.get_action(base_obs)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_raw
-            if state.single_step_mode:
-                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
 
             if state.control_mode == "MANUAL_CTRL":
-                state.sim_mode_text = "Manual Ctrl"
                 final_ctrl = state.manual_final_ctrl.copy() 
             elif state.control_mode == "JOINT_TEST":
-                state.sim_mode_text = "Joint Test"
                 final_ctrl = sim.default_pose + state.joint_test_offsets
-            else:
-                state.sim_mode_text = state.control_mode
+            else: # WALKING or FLOATING
                 final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
 
             state.latest_final_ctrl = final_ctrl
-            if state.single_step_mode:
-                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
-
             sim.apply_position_control(final_ctrl, state.tuning_params)
             
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
 
-            if state.single_step_mode:
-                next_joint_angles = sim.data.qpos[7:]
-                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
-        
+        # 渲染永遠在迴圈的最後執行
         sim.render(state, overlay)
 
+    # --- 程式結束時，確保所有資源都被安全關閉 ---
+    hw_controller.stop()
     sim.close()
     xbox_handler.close()
     serial_comm.close()
-    print("\n模擬結束，程式退出。")
+    print("\n程式已安全退出。")
 
 if __name__ == "__main__":
     main()
@@ -798,593 +1099,6 @@ class ONNXPolicy:
 ================================================================================
 
 ================================================================================
---- START OF FILE: project_dump.txt ---
----------------------------------------
-
-# 專案程式碼彙整: C:\git_project\simulation_test_recoil
-================================================================================
-
-#------------------------------------------------------------------------------#
-#                              專案目錄結構                              #
-#------------------------------------------------------------------------------#
-
-simulation_test_recoil/
-├── assets/
-│   ├── mesh/
-│   ├── pupper.xml
-│   ├── pupper_mjx.xml
-│   ├── pupper_mjx_1.xml
-│   ├── scene.xml
-│   ├── scene_hfield_mjx.xml
-│   ├── scene_mjx.xml
-│   ├── scene_mjx_feetonly_bowl.xml
-│   ├── scene_mjx_feetonly_flat_terrain.xml
-│   ├── scene_mjx_feetonly_rough_terrain.xml
-│   ├── scene_mjx_feetonly_stairs.xml
-│   ├── scene_mjx_flat_terrain.xml
-│   └── scene_mjx_fullcollisions_flat_terrain.xml
-├── models/
-├── test/
-│   ├── dump_project.py
-│   ├── test_joystick.py
-│   └── verify_model_mode.py
-├── config.py
-├── config.yaml
-├── floating_controller.py
-├── keyboard_input_handler.py
-├── main.py
-├── observation.py
-├── policy.py
-├── project_dump.txt
-├── readme.md
-├── rendering.py
-├── serial_communicator.py
-├── simulation.py
-├── state.py
-├── terrain_manager.py
-├── xbox_controller.py
-└── xbox_input_handler.py
-
-
-#------------------------------------------------------------------------------#
-#                               各檔案內容                                #
-#------------------------------------------------------------------------------#
-
-================================================================================
---- START OF FILE: config.py ---
---------------------------------
-
-# config.py
-import yaml
-from dataclasses import dataclass, field
-from typing import Dict, List, Any
-
-@dataclass
-class TuningParamsConfig:
-    """從設定檔載入的初始調校參數資料類別。"""
-    kp: float
-    kd: float
-    action_scale: float
-    bias: float
-
-@dataclass
-class FloatingControllerConfig:
-    """懸浮控制器的設定。"""
-    target_height: float
-    kp_vertical: float
-    kd_vertical: float
-    kp_attitude: float
-    kd_attitude: float
-
-@dataclass
-class AppConfig:
-    """儲存所有應用程式設定的資料類別。"""
-    mujoco_model_file: str
-    onnx_model_path: str
-    num_motors: int
-    physics_timestep: float
-    control_freq: float
-    control_dt: float
-    warmup_duration: float
-    command_scaling_factors: List[float]
-    
-    keyboard_velocity_adjust_step: float
-    gamepad_sensitivity: Dict[str, float]
-    param_adjust_steps: Dict[str, float]
-
-    initial_tuning_params: TuningParamsConfig
-    observation_recipes: Dict[int, List[str]]
-    floating_controller: FloatingControllerConfig
-
-def load_config(path: str = "config.yaml") -> AppConfig:
-    """
-    從 YAML 檔案載入設定並回傳一個 AppConfig 物件。
-    """
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            config_data = yaml.safe_load(f)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"設定檔 '{path}' 不存在。請確保檔案路徑正確。")
-    except Exception as e:
-        raise IOError(f"讀取或解析設定檔 '{path}' 時發生錯誤: {e}")
-
-    tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
-    floating_config = FloatingControllerConfig(**config_data['floating_controller'])
-    
-    config_obj = AppConfig(
-        mujoco_model_file=config_data['mujoco_model_file'],
-        onnx_model_path=config_data['onnx_model_path'],
-        num_motors=config_data['num_motors'],
-        physics_timestep=config_data['physics_timestep'],
-        control_freq=config_data['control_freq'],
-        control_dt=1.0 / config_data['control_freq'],
-        warmup_duration=config_data['warmup_duration'],
-        command_scaling_factors=config_data['command_scaling_factors'],
-        
-        keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
-        gamepad_sensitivity=config_data['gamepad_sensitivity'],
-        param_adjust_steps=config_data['param_adjust_steps'],
-        
-        initial_tuning_params=tuning_params,
-        observation_recipes=config_data['observation_recipes'],
-        floating_controller=floating_config
-    )
-    
-    print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
-    return config_obj
-
---------------------------------
----  END OF FILE: config.py  ---
-================================================================================
-
-================================================================================
---- START OF FILE: config.yaml ---
-----------------------------------
-
-# ==================================
-# === 模擬與模型設定 (Simulation & Model Settings)
-# ==================================
-# 檔案路徑 (File Paths)
-mujoco_model_file: "assets/scene_mjx.xml"
-onnx_model_path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
-
-# 核心參數 (Core Parameters)
-num_motors: 12
-physics_timestep: 0.004 # <-- 建議修改：提高模擬精度以增強穩定性
-control_freq: 50.0
-warmup_duration: 0.0
-
-# ONNX 模型命令輸入縮放因子
-# 順序: [vy 縮放, vx 縮放, wz 縮放]
-command_scaling_factors: [1.0, 1.0, 1.0] 
-
-# ==================================
-# === 輸入控制設定 (Input Control Settings)
-# ==================================
-keyboard_velocity_adjust_step: 0.1 # m/s or rad/s per key press
-
-gamepad_sensitivity:
-  vx: 1.0   # 前後速度靈敏度 (左搖桿 Y)
-  vy: 1.0   # 左右速度靈敏度 (左搖桿 X)
-  wz: -1.5  # 轉向角速度靈敏度 (右搖桿 X), 負值表示右推右轉
-
-param_adjust_steps:
-  kp: 0.5
-  kd: 0.05
-  action_scale: 0.05
-  bias: 5
-
-# ==================================
-# === 初始調校參數 (Initial Tuning Parameters)
-# ==================================
-initial_tuning_params:
-  kp: 4.0
-  kd: 0.40
-  action_scale: 0.5
-  bias: -0.0
-
-# ==================================
-# === 觀察配方 (Observation Recipes)
-# ==================================
-observation_recipes:
-  31:
-    - 'z_angular_velocity'
-    - 'gravity_vector'
-    - 'commands'
-    - 'joint_positions'
-    - 'last_action'
-  48: # <-- 修改這個 48 維的順序
-    - 'linear_velocity'
-    - 'angular_velocity'
-    - 'gravity_vector'
-    - 'joint_positions'
-    - 'joint_velocities'
-    - 'last_action'
-    - 'commands' # <-- 將 commands 移動到最後
-
-# ================================================================= #
-# === 懸浮控制器設定 (Floating Controller Settings) - 精細調校版 ===
-# ================================================================= #
-floating_controller:
-  target_height: 0.50     # 懸浮的目標高度 (米)
-  kp_vertical: 80.0       # 垂直 P (再次降低以求平滑)
-  kd_vertical: 18.0       # 垂直 D (保持與Kp的關係)
-  kp_attitude: 20.0       # 姿態 P (再次降低)
-  kd_attitude: 4.0        # 姿態 D (相應調整)
-
-----------------------------------
----  END OF FILE: config.yaml  ---
-================================================================================
-
-================================================================================
---- START OF FILE: floating_controller.py ---
----------------------------------------------
-
-# floating_controller.py
-import mujoco
-import numpy as np
-from config import AppConfig
-
-class FloatingController:
-    """
-    透過啟用/禁用 weld 約束和設定 mocap body 的位置，
-    來將機器人主幹固定在空中。
-    """
-    def __init__(self, config: AppConfig, model, data):
-        """
-        初始化懸浮控制器，並獲取必要的 MuJoCo ID 和索引。
-        """
-        self.config = config.floating_controller
-        self.model = model
-        self.data = data
-        self.is_functional = False
-        
-        try:
-            anchor_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'anchor')
-            if anchor_body_id == -1: raise ValueError("在 XML 中找不到名為 'anchor' 的 body。")
-            
-            self.mocap_index = model.body_mocapid[anchor_body_id]
-            if self.mocap_index == -1: raise ValueError("'anchor' body 不是一個 mocap body。")
-
-            self.weld_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY, 'torso_anchor_weld')
-            if self.weld_id == -1: raise ValueError("在 XML 中找不到名為 'torso_anchor_weld' 的 weld 約束。")
-
-            self.is_functional = True
-            print(f"✅ 固定式懸浮控制器初始化完成。Mocap Index: {self.mocap_index}")
-        except ValueError as e:
-            print(f"❌ 懸浮控制器初始化錯誤: {e}")
-            print("     請確保 scene_mjx.xml 檔案已正確定義 'anchor' body 和 'torso_anchor_weld' 約束。懸浮功能將被禁用。")
-
-    def enable(self, current_pos: np.ndarray):
-        """啟用懸浮模式。"""
-        if not self.is_functional: return
-        
-        target_pos = np.array([current_pos[0], current_pos[1], self.config.target_height])
-        self.data.mocap_pos[self.mocap_index] = target_pos
-        self.data.mocap_quat[self.mocap_index] = np.array([1., 0, 0, 0]) # 保持水平姿態
-        self.data.eq_active[self.weld_id] = 1
-        print("🚀 已啟用固定懸浮模式。")
-
-    def disable(self):
-        """禁用懸浮模式。"""
-        if not self.is_functional: return
-        self.data.eq_active[self.weld_id] = 0
-        print("🐾 已禁用固定懸浮模式。")
-
----------------------------------------------
----  END OF FILE: floating_controller.py  ---
-================================================================================
-
-================================================================================
---- START OF FILE: keyboard_input_handler.py ---
-------------------------------------------------
-
-# keyboard_input_handler.py
-import glfw
-from state import SimulationState
-
-class KeyboardInputHandler:
-    """
-    處理所有鍵盤輸入事件，並根據當前模式進行分派。
-    """
-    # 【修改】接收 terrain_manager
-    def __init__(self, state: SimulationState, serial_comm, xbox_handler, terrain_manager):
-        self.state = state
-        self.config = state.config
-        self.serial_comm = serial_comm
-        self.xbox_handler = xbox_handler
-        self.terrain_manager = terrain_manager # <-- 【新增】
-        self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
-        self.num_params = len(self.param_keys)
-
-    def register_callbacks(self, window):
-        glfw.set_key_callback(window, self.key_callback)
-        glfw.set_char_callback(window, self.char_callback)
-
-    def char_callback(self, window, codepoint):
-        if self.state.control_mode == "SERIAL_MODE":
-            self.state.serial_command_buffer += chr(codepoint)
-
-    def key_callback(self, window, key, scancode, action, mods):
-        # --- 1. 只在按鍵按下時觸發的通用功能 (模式切換、重置等) ---
-        if action == glfw.PRESS:
-            if key == glfw.KEY_SPACE: self.state.single_step_mode = not self.state.single_step_mode; print(f"\n--- SIMULATION {'PAUSED' if self.state.single_step_mode else 'PLAYING'} ---"); return
-            if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
-            if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
-            if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
-            if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
-            if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
-            if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
-            # 【新增】V 鍵切換地形
-            if key == glfw.KEY_V: 
-                self.terrain_manager.cycle_terrain()
-                return
-            
-            # 設備掃描
-            if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return
-            if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
-
-        # --- 2. 可重複觸發的模式特定功能 ---
-        # 這是最關鍵的修改：優先處理特定模式的按鍵，如果處理了就 return
-        if action in [glfw.PRESS, glfw.REPEAT]:
-            if self.state.control_mode == "SERIAL_MODE":
-                if key == glfw.KEY_ENTER: self.state.serial_command_to_send = self.state.serial_command_buffer; self.state.serial_command_buffer = ""
-                elif key == glfw.KEY_BACKSPACE: self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
-                elif key == glfw.KEY_T and action == glfw.PRESS: self.state.set_control_mode("WALKING")
-                return
-
-            if self.state.control_mode == "JOINT_TEST":
-                if key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
-                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
-                elif key == glfw.KEY_UP: self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
-                elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
-                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.joint_test_offsets.fill(0.0)
-                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
-                return
-
-            if self.state.control_mode == "MANUAL_CTRL":
-                if key == glfw.KEY_F and action == glfw.PRESS:
-                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
-                    is_floating = self.state.manual_mode_is_floating
-                    if is_floating:
-                        if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
-                    else:
-                        if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
-                elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
-                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
-                elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
-                elif key == glfw.KEY_DOWN: self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
-                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.manual_final_ctrl.fill(0.0)
-                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
-                return
-
-        # --- 3. 如果以上模式都不是，則執行 WALKING/FLOATING 模式的預設按鍵邏輯 ---
-        if action == glfw.PRESS:
-            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
-            if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
-            if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
-            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
-        
-        if self.state.input_mode != "KEYBOARD": return
-            
-        if action in [glfw.PRESS, glfw.REPEAT]:
-            # 參數調整
-            if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
-            elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
-            elif key == glfw.KEY_UP or key == glfw.KEY_DOWN:
-                param_to_adjust = self.param_keys[self.state.tuning_param_index]
-                step = self.config.param_adjust_steps.get(param_to_adjust, 0.1)
-                current_value = getattr(self.state.tuning_params, param_to_adjust)
-                direction = 1 if key == glfw.KEY_UP else -1
-                setattr(self.state.tuning_params, param_to_adjust, current_value + step * direction)
-                
-                self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
-                self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
-                self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
-
-            # 移動控制
-            step = self.config.keyboard_velocity_adjust_step
-            if key == glfw.KEY_C: self.state.clear_command()
-            elif key == glfw.KEY_W: self.state.command[1] += step
-            elif key == glfw.KEY_S: self.state.command[1] -= step
-            elif key == glfw.KEY_A: self.state.command[0] += step
-            elif key == glfw.KEY_D: self.state.command[0] -= step
-            elif key == glfw.KEY_Q: self.state.command[2] += step
-            elif key == glfw.KEY_E: self.state.command[2] -= step
-
-------------------------------------------------
----  END OF FILE: keyboard_input_handler.py  ---
-================================================================================
-
-================================================================================
---- START OF FILE: main.py ---
-------------------------------
-
-# main.py
-import sys
-import numpy as np
-import mujoco
-
-from config import load_config
-from state import SimulationState
-from simulation import Simulation
-from policy import ONNXPolicy
-from observation import ObservationBuilder
-from rendering import DebugOverlay
-from keyboard_input_handler import KeyboardInputHandler
-from xbox_input_handler import XboxInputHandler
-from floating_controller import FloatingController
-from serial_communicator import SerialCommunicator
-from terrain_manager import TerrainManager # <-- 【新增】導入 TerrainManager
-
-def main():
-    """主程式入口：初始化所有組件並運行模擬迴圈。"""
-    from xbox_controller import XboxController 
-    print("\n--- 機器人模擬控制器 (多輸入模式版) ---")
-    
-    config = load_config()
-    state = SimulationState(config)
-    sim = Simulation(config)
-    
-    # 【新增】初始化地形管理器
-    terrain_manager = TerrainManager(sim.model, sim.data)
-    state.terrain_manager_ref = terrain_manager # 將引用存入 state，方便 UI 讀取
-    
-    floating_controller = FloatingController(config, sim.model, sim.data)
-    state.floating_controller_ref = floating_controller
-    
-    serial_comm = SerialCommunicator()
-    xbox_handler = XboxInputHandler(state)
-    
-    # 【修改】將 terrain_manager 也傳入
-    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
-    keyboard_handler.register_callbacks(sim.window)
-    
-    try:
-        assumed_dim = next(iter(config.observation_recipes))
-        recipe = config.observation_recipes[assumed_dim]
-    except StopIteration:
-        sys.exit("❌ 錯誤: 在 config.yaml 中沒有定義任何 observation_recipes。")
-
-    obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
-    base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-    policy = ONNXPolicy(config, base_obs_dim)
-
-    # =========================================================================
-    # === 【新增】將 policy 的引用設定到 state 中，以便在模式切換時呼叫 reset ===
-    # =========================================================================
-    state.policy_ref = policy
-    # =========================================================================
-    
-    if policy.model_input_dim != base_obs_dim:
-        if policy.model_input_dim in config.observation_recipes:
-            print(f"⚠️ 維度不匹配，自動切換到維度 {policy.model_input_dim} 的正確配方...")
-            recipe = config.observation_recipes[policy.model_input_dim]
-            obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
-            base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-        else:
-            sys.exit(f"❌ 致命錯誤: 模型期望維度 ({policy.model_input_dim}) 與配方產生的觀察維度 ({base_obs_dim}) 不符，且找不到匹配配方！")
-
-    ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 'phase_signal':1}
-    used_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
-    overlay = DebugOverlay(recipe, used_dims)
-
-    def hard_reset():
-        """完全重置整個模擬環境。"""
-        print("\n--- 正在執行完全重置 (Hard Reset) ---")
-        sim.reset()
-        policy.reset()
-        if state.control_mode == "FLOATING":
-            state.set_control_mode("WALKING")
-        state.reset_control_state(sim.data.time)
-        state.clear_command()
-        
-        state.joint_test_offsets.fill(0.0)
-        state.manual_final_ctrl.fill(0.0)
-        state.manual_mode_is_floating = False
-        
-        state.hard_reset_requested = False
-
-    def soft_reset():
-        """僅重置機器人姿態和控制器狀態，不重置模擬時間和物理世界。"""
-        print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
-        sim.data.qpos[7:] = sim.default_pose
-        sim.data.qvel[6:] = 0
-        policy.reset()
-        state.clear_command()
-
-        state.joint_test_offsets.fill(0.0)
-        state.manual_final_ctrl.fill(0.0)
-        state.manual_mode_is_floating = False
-
-        mujoco.mj_forward(sim.model, sim.data)
-        state.soft_reset_requested = False
-
-    hard_reset()
-    print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, M: 輸入模式, R: 硬重置, X: 軟重置)")
-    print("    (U: 掃描序列埠, J: 掃描搖桿)")
-
-    state.execute_one_step = False
-
-    while not sim.should_close():
-        if state.single_step_mode and not state.execute_one_step:
-            sim.render(state, overlay)
-            continue
-        if state.execute_one_step:
-            state.execute_one_step = False
-
-        if state.input_mode == "GAMEPAD": xbox_handler.update_state()
-        
-        if state.hard_reset_requested: hard_reset()
-        if state.soft_reset_requested: soft_reset()
-
-        state.latest_pos = sim.data.body('torso').xpos.copy()
-        state.latest_quat = sim.data.body('torso').xquat.copy()
-        if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
-        if state.serial_command_to_send:
-            serial_comm.send_command(state.serial_command_to_send)
-            state.serial_command_to_send = ""
-
-        if state.control_mode != "SERIAL_MODE":
-            if state.single_step_mode:
-                print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
-
-            base_obs = obs_builder.get_observation(state.command, policy.last_action)
-            if state.single_step_mode:
-                current_joint_angles = sim.data.qpos[7:]
-                current_joint_positions = current_joint_angles - sim.default_pose
-                print(f"1. [OBSERVED] joint_positions: {np.array2string(current_joint_positions, precision=3, suppress_small=True)}")
-
-            onnx_input, action_raw = policy.get_action(base_obs)
-            state.latest_onnx_input = onnx_input.flatten()
-            state.latest_action_raw = action_raw
-            if state.single_step_mode:
-                 print(f"2. [AI DECISION] Raw Action:      {np.array2string(action_raw, precision=3, suppress_small=True)}")
-
-            if state.control_mode == "MANUAL_CTRL":
-                state.sim_mode_text = "Manual Ctrl"
-                final_ctrl = state.manual_final_ctrl.copy() 
-            elif state.control_mode == "JOINT_TEST":
-                state.sim_mode_text = "Joint Test"
-                final_ctrl = sim.default_pose + state.joint_test_offsets
-            else:
-                state.sim_mode_text = state.control_mode
-                final_ctrl = sim.default_pose + action_raw * state.tuning_params.action_scale
-
-            state.latest_final_ctrl = final_ctrl
-            if state.single_step_mode:
-                print(f"3. [COMMAND] Final Ctrl:          {np.array2string(final_ctrl, precision=3, suppress_small=True)}")
-
-            sim.apply_position_control(final_ctrl, state.tuning_params)
-            
-            target_time = sim.data.time + config.control_dt
-            while sim.data.time < target_time:
-                mujoco.mj_step(sim.model, sim.data)
-
-            if state.single_step_mode:
-                next_joint_angles = sim.data.qpos[7:]
-                print(f"4. [RESULT] Next actual angles: {np.array2string(next_joint_angles, precision=3, suppress_small=True)}")
-        
-        sim.render(state, overlay)
-
-    sim.close()
-    xbox_handler.close()
-    serial_comm.close()
-    print("\n模擬結束，程式退出。")
-
-if __name__ == "__main__":
-    main()
-
-------------------------------
----  END OF FILE: main.py  ---
-
-
----------------------------------------
----  END OF FILE: project_dump.txt  ---
-================================================================================
-
-================================================================================
 --- START OF FILE: readme.md ---
 --------------------------------
 
@@ -1433,7 +1147,9 @@ class DebugOverlay:
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """根據當前控制模式，選擇並呼叫對應的渲染函式。"""
-        if state.control_mode == "SERIAL_MODE":
+        if state.control_mode == "HARDWARE_MODE":
+            self.render_hardware_overlay(viewport, context, state)
+        elif state.control_mode == "SERIAL_MODE":
             self.render_serial_console(viewport, context, state)
         elif state.control_mode == "JOINT_TEST":
             self.render_joint_test_overlay(viewport, context, state, sim)
@@ -1441,6 +1157,26 @@ class DebugOverlay:
             self.render_manual_ctrl_overlay(viewport, context, state, sim)
         else:
             self.render_simulation_overlay(viewport, context, state, sim)
+
+    def render_hardware_overlay(self, viewport, context, state: SimulationState):
+        """渲染硬體控制模式的專用介面。"""
+        # 繪製一個深色半透明背景，以示區別
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95)
+        
+        ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
+        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
+        help_text = "Press 'H' to exit to simulation mode | Press 'K' to toggle AI control"
+        
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
+
+        # 顯示來自 state 的即時硬體狀態文字
+        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{state.hardware_status_text}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
+        
+        # 也可以顯示使用者命令
+        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context)
 
     def render_serial_console(self, viewport, context, state: SimulationState):
         """渲染一個全螢幕的序列埠控制台介面。"""
@@ -1541,41 +1277,35 @@ class DebugOverlay:
             "[Universal]\n"
             "  SPACE: Pause/Play | N: Next Step\n"
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
-            "  ESC: Exit       | R: Reset\n"
-            "  X: Soft Reset   | TAB: Info Page\n"
+            "  ESC: Exit       | R: Reset       | T: Serial Console\n"
+            "  X: Soft Reset   | TAB: Info Page | H: Hardware Mode\n"
             "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
             "  U: Scan Serial  | J: Scan Gamepad\n"
-            "  V: Cycle Terrain\n\n"   # 【修改】更新幫助文字，加入 V 鍵提示
+            "  V: Cycle Terrain  | K: Toggle HW AI\n\n"
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
-            "  [/]: Select Param\n"
-            "  UP/DOWN: Adjust Value\n\n"
+            "  [/]: Select Param | UP/DOWN: Adjust Value\n\n"
             "[Gamepad Mode]\n"
             "  L-Stick: Move | R-Stick: Turn\n"
-            "  LB/RB: Select Param\n"
-            "  D-Pad U/D: Adjust Value\n"
+            "  LB/RB: Select Param | D-Pad U/D: Adjust Value\n"
             "  Select/View: Reset"
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
 
-        serial_status = "Connected" if state.serial_is_connected else "Disconnected (Press U to Scan)"
-        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (Press J to Scan)"
-
-        # 【新增】獲取當前地形名稱
+        serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)"
+        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
         terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
 
         p = state.tuning_params
-        
         prefixes = ["   "] * 4
         prefixes[state.tuning_param_index] = ">> "
 
-        # 【修改】在 UI 中加入地形資訊
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
             f"Time: {sim.data.time:.2f} s\n"
             f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
-            f"Serial: {serial_status}\n"
+            f"Serial Console: {serial_status}\n"
             f"Gamepad: {gamepad_status}\n\n"
             f"--- Tuning Params ---\n"
             f"{prefixes[0]}{format_vec('Kp:', np.array([p.kp]), 1)}\n"
@@ -1584,7 +1314,7 @@ class DebugOverlay:
             f"{prefixes[3]}{format_vec('Bias:', np.array([p.bias]), 1)}\n\n"
             f"--- Command ---\n"
             f"{format_vec('User Cmd:', state.command)}\n"
-        ) # <--- 【語法修復】在這裡補上了遺漏的右括號 ')'
+        )
 
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
@@ -1620,7 +1350,7 @@ class DebugOverlay:
             f"--- ONNX OUTPUTS & STATE ---\n"
             f"{format_vec('Raw Action:', state.latest_action_raw)}\n"
             f"{format_vec('Final Ctrl:', state.latest_final_ctrl)}\n\n"
-            f"--- Robot State ---\n"
+            f"--- Robot State (Sim) ---\n"
             f"{format_vec('Torso Z:', np.array([sim.data.qpos[2]]))}\n"
             f"{format_vec('Lin Vel (World):', torso_lin_vel)}\n"
             f"{format_vec('Ang Vel (Local):', torso_ang_vel_local)}"
@@ -1970,6 +1700,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from floating_controller import FloatingController
     from policy import ONNXPolicy
+    from hardware_controller import HardwareController # <-- 新增
 
 @dataclass
 class TuningParams:
@@ -1993,7 +1724,7 @@ class SimulationState:
     
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
-    control_mode: str = "WALKING"
+    control_mode: str = "WALKING" # "WALKING", "FLOATING", "HARDWARE_MODE", etc.
 
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
@@ -2021,6 +1752,12 @@ class SimulationState:
 
     floating_controller_ref: 'FloatingController' = None
     policy_ref: 'ONNXPolicy' = None
+    
+    # --- 新增硬體模式相關狀態 ---
+    hardware_controller_ref: 'HardwareController' = None # 硬體控制器物件的參考
+    hardware_is_connected: bool = False
+    hardware_ai_is_active: bool = False
+    hardware_status_text: str = "未連接"
 
     single_step_mode: bool = False
     execute_one_step: bool = False
@@ -2059,7 +1796,13 @@ class SimulationState:
         elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
              if self.floating_controller_ref: self.floating_controller_ref.disable()
              self.manual_mode_is_floating = False
-        
+        # --- 新增：離開硬體模式時的清理工作 ---
+        elif old_mode == "HARDWARE_MODE":
+            if self.hardware_controller_ref:
+                self.hardware_controller_ref.stop()
+            self.hardware_is_connected = False
+            self.hardware_ai_is_active = False
+            
         self.control_mode = new_mode
         print(f"控制模式已切換至: {self.control_mode}")
 
@@ -2070,6 +1813,18 @@ class SimulationState:
             self.joint_test_offsets.fill(0.0)
         elif new_mode == "MANUAL_CTRL":
             self.manual_final_ctrl[:] = self.latest_final_ctrl
+        # --- 新增：進入硬體模式時的設定工作 ---
+        elif new_mode == "HARDWARE_MODE":
+             if self.hardware_controller_ref and self.hardware_controller_ref.connect_and_start():
+                 self.hardware_is_connected = True
+             else:
+                 print("❌ 硬體連接失敗，自動返回 WALKING 模式。")
+                 # 因為連接失敗，我們需要將 control_mode 設回舊的模式，或者一個安全模式
+                 # 注意：直接在這裡再次修改 self.control_mode 可能會導致無限遞迴
+                 # 最好是在呼叫端處理這種失敗情況，但為了簡單起見，我們在這裡直接設定
+                 self.control_mode = "WALKING" 
+                 print(f"控制模式已自動切換至: {self.control_mode}")
+
 
         # --- 【核心】模式切換穩定性修復 ---
         # 如果是從手動模式切換回 AI 模式
@@ -3419,41 +3174,160 @@ class XboxInputHandler:
 ================================================================================
 
 ================================================================================
+--- START OF FILE: assets/mesh/Hip_L.stl ---
+--------------------------------------------
+
+[Content skipped for file type '.stl': Hip_L.stl (4.96 KB)]
+
+--------------------------------------------
+---  END OF FILE: assets/mesh/Hip_L.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/Hip_R.stl ---
+--------------------------------------------
+
+[Content skipped for file type '.stl': Hip_R.stl (4.96 KB)]
+
+--------------------------------------------
+---  END OF FILE: assets/mesh/Hip_R.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/Lower_Leg_L.stl ---
+--------------------------------------------------
+
+[Content skipped for file type '.stl': Lower_Leg_L.stl (31.72 KB)]
+
+--------------------------------------------------
+---  END OF FILE: assets/mesh/Lower_Leg_L.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/Lower_Leg_R.stl ---
+--------------------------------------------------
+
+[Content skipped for file type '.stl': Lower_Leg_R.stl (31.72 KB)]
+
+--------------------------------------------------
+---  END OF FILE: assets/mesh/Lower_Leg_R.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/Upper_Leg_L.stl ---
+--------------------------------------------------
+
+[Content skipped for file type '.stl': Upper_Leg_L.stl (2.33 KB)]
+
+--------------------------------------------------
+---  END OF FILE: assets/mesh/Upper_Leg_L.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/Upper_Leg_R.stl ---
+--------------------------------------------------
+
+[Content skipped for file type '.stl': Upper_Leg_R.stl (2.33 KB)]
+
+--------------------------------------------------
+---  END OF FILE: assets/mesh/Upper_Leg_R.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/body.stl ---
+-------------------------------------------
+
+[Content skipped for file type '.stl': body.stl (3.01 KB)]
+
+-------------------------------------------
+---  END OF FILE: assets/mesh/body.stl  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/hfield.png ---
+---------------------------------------------
+
+[Content skipped for file type '.png': hfield.png (165.70 KB)]
+
+---------------------------------------------
+---  END OF FILE: assets/mesh/hfield.png  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: assets/mesh/rocky_texture.png ---
+----------------------------------------------------
+
+[Content skipped for file type '.png': rocky_texture.png (1571.20 KB)]
+
+----------------------------------------------------
+---  END OF FILE: assets/mesh/rocky_texture.png  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: models/pupper_ppo_policy_200540160_tf_converted.onnx ---
+---------------------------------------------------------------------------
+
+[Content skipped for file type '.onnx': pupper_ppo_policy_200540160_tf_converted.onnx (756.39 KB)]
+
+---------------------------------------------------------------------------
+---  END OF FILE: models/pupper_ppo_policy_200540160_tf_converted.onnx  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx ---
+--------------------------------------------------------------------------------
+
+[Content skipped for file type '.onnx': pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx (756.39 KB)]
+
+--------------------------------------------------------------------------------
+---  END OF FILE: models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx  ---
+================================================================================
+
+================================================================================
+--- START OF FILE: models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.optimized.ort ---
+-----------------------------------------------------------------------------------------
+
+[Content skipped for file type '.ort': pupper_ppo_policy_30965760_tf_converted_穩定步態版.optimized.ort (762.41 KB)]
+
+-----------------------------------------------------------------------------------------
+---  END OF FILE: models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.optimized.ort  ---
+================================================================================
+
+================================================================================
 --- START OF FILE: test/dump_project.py ---
 -------------------------------------------
 
+# test/dump_project.py (最終防遞迴版)
 import os
 import sys
+from datetime import datetime
 
-# --- 組態設定 (可依需求修改) ---
+# --- 組態設定 ---
 
-# 1. 要忽略的資料夾名稱 (使用集合 set 查詢速度較快)
+# 1. 要忽略的資料夾名稱
 EXCLUDE_DIRS = {
-    '.git', 'node_modules', '__pycache__', 'venv', '.vscode', 
+    '.git', 'node_modules', '__pycache__', 'venv', '.vscode',
     'dist', 'build', 'env', '.idea', 'target', '.DS_Store'
 }
 
-# 2. 要忽略的檔案類型 (副檔名)
-EXCLUDE_EXTENSIONS = {
-    '.pyc', '.pyo', '.o', '.so', '.dll', '.exe',
-    '.img', '.iso', '.zip', '.tar', '.gz', '.rar',
-    '.pdf', '.docx', '.xlsx', '.pptx', '.ort',
-    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
-    '.lock', '.log', '.swp', '.swo', '.stl', '.onnx'
+# 2. 定義一個「內容跳過清單」。
+SKIP_CONTENT_EXTENSIONS = {
+    '.onnx', '.stl', '.ort', '.png', '.jpg', '.jpeg',
+    '.exe', '.dll', '.so', '.o', '.zip', '.rar', '.gz',
+    '.gif', '.bmp', '.ico', '.mp3', '.mp4', '.avi',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.pyc', '.pyo', '.lock', '.swp', '.swo',
 }
 
 # 3. (可選) 如果只想包含特定類型的檔案，可以設定這個清單
-INCLUDE_EXTENSIONS = set() 
+INCLUDE_EXTENSIONS = set()
 
-# --- 樹狀結構產生函式 ---
 
-def generate_tree_structure(root_dir):
-    """產生專案的目錄樹結構字串。"""
+# --- 樹狀結構產生函式 (無須修改) ---
+def generate_tree_structure(root_dir, project_name):
     tree_lines = []
     
-    # 內部的遞迴函式
     def _generate_tree_recursive(current_dir, prefix=""):
-        # 獲取目錄下的所有檔案和資料夾，並過濾掉要忽略的
         items = []
         try:
             items = os.listdir(current_dir)
@@ -3461,45 +3335,39 @@ def generate_tree_structure(root_dir):
             print(f"警告：無法存取目錄 {current_dir} ({e})")
             return
 
-        # 分離檔案和資料夾以便分別處理和排序
         dirs = sorted([d for d in items if os.path.isdir(os.path.join(current_dir, d)) and d not in EXCLUDE_DIRS])
-        files = sorted([f for f in items if os.path.isfile(os.path.join(current_dir, f))])
-
-        # 合併清單，資料夾優先
-        all_items = dirs + files
+        
+        # 【修改】過濾掉我們自己產生的輸出檔案
+        files_to_process = []
+        for f in sorted([f for f in items if os.path.isfile(os.path.join(current_dir, f))]):
+            is_old_dump = f.startswith(f"{project_name}_dump_") and f.endswith(".txt")
+            is_legacy_dump = f == "project_dump.txt"
+            if not is_old_dump and not is_legacy_dump:
+                files_to_process.append(f)
+        
+        all_items = dirs + files_to_process
         
         for i, item_name in enumerate(all_items):
             path = os.path.join(current_dir, item_name)
             is_last = (i == len(all_items) - 1)
-            
-            # 決定連接線的樣式
             connector = "└── " if is_last else "├── "
             
             if os.path.isdir(path):
                 tree_lines.append(f"{prefix}{connector}{item_name}/")
-                # 準備下一層的縮排
                 new_prefix = prefix + ("    " if is_last else "│   ")
                 _generate_tree_recursive(path, new_prefix)
-            else: # 是檔案
-                _, extension = os.path.splitext(item_name)
-                # 過濾檔案
-                if extension.lower() in EXCLUDE_EXTENSIONS:
-                    continue
-                if INCLUDE_EXTENSIONS and extension.lower() not in INCLUDE_EXTENSIONS:
+            else:
+                if INCLUDE_EXTENSIONS and os.path.splitext(item_name)[1].lower() not in INCLUDE_EXTENSIONS:
                     continue
                 tree_lines.append(f"{prefix}{connector}{item_name}")
 
-    # 從根目錄開始遞迴
-    tree_lines.append(f"{os.path.basename(os.path.abspath(root_dir))}/")
+    tree_lines.append(f"{project_name}/")
     _generate_tree_recursive(root_dir)
     return "\n".join(tree_lines)
 
-# --- 程式碼彙整主函式 ---
 
-def generate_code_dump(root_dir, output_filename):
-    """
-    掃描目錄，產生樹狀結構，並將所有非忽略檔案的內容寫入單一輸出檔。
-    """
+# --- 程式碼彙整主函式 ---
+def generate_code_dump(root_dir, output_filename, project_name):
     if not os.path.isdir(root_dir):
         print(f"錯誤：目錄 '{root_dir}' 不存在。")
         return
@@ -3508,53 +3376,62 @@ def generate_code_dump(root_dir, output_filename):
     
     try:
         with open(output_filename, 'w', encoding='utf-8', errors='ignore') as outfile:
-            # 1. 寫入檔案總標題
             outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
             outfile.write("=" * 80 + "\n\n")
 
-            # 2. 產生並寫入專案結構樹
             outfile.write("#" + "-" * 78 + "#\n")
             outfile.write("#" + " " * 30 + "專案目錄結構" + " " * 30 + "#\n")
             outfile.write("#" + "-" * 78 + "#\n\n")
-            tree_structure = generate_tree_structure(root_dir)
+            # 【修改】將 project_name 傳入
+            tree_structure = generate_tree_structure(root_dir, project_name)
             outfile.write(tree_structure)
             outfile.write("\n\n\n")
 
-            # 3. 寫入檔案內容分隔標題
             outfile.write("#" + "-" * 78 + "#\n")
             outfile.write("#" + " " * 31 + "各檔案內容" + " " * 32 + "#\n")
             outfile.write("#" + "-" * 78 + "#\n\n")
             
-            # 4. 遞迴走訪目錄，寫入各檔案內容
             for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True):
                 dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
 
                 for filename in sorted(filenames):
-                    _, extension = os.path.splitext(filename)
-                    extension = extension.lower()
+                    # =============================================================
+                    # ===        【核心修正：跳過舊的輸出檔】                     ===
+                    # =============================================================
+                    is_dynamic_dump = filename.startswith(f"{project_name}_dump_") and filename.endswith(".txt")
+                    is_legacy_dump = filename == "project_dump.txt"
 
-                    if extension in EXCLUDE_EXTENSIONS:
+                    if is_dynamic_dump or is_legacy_dump:
+                        print(f"正在跳過 (舊的輸出檔): {filename}")
                         continue
-                    if INCLUDE_EXTENSIONS and extension not in INCLUDE_EXTENSIONS:
-                        continue
+                    # =============================================================
 
                     file_path = os.path.join(dirpath, filename)
-                    relative_path = os.path.relpath(file_path, root_dir)
-                    relative_path_str = relative_path.replace(os.sep, '/')
+                    relative_path = os.path.relpath(file_path, root_dir).replace(os.sep, '/')
 
                     try:
-                        print(f"正在處理: {relative_path_str}")
+                        print(f"正在處理: {relative_path}")
 
-                        start_header = f"--- START OF FILE: {relative_path_str} ---"
-                        end_header   = f"---  END OF FILE: {relative_path_str}  ---"
+                        start_header = f"--- START OF FILE: {relative_path} ---"
+                        end_header   = f"---  END OF FILE: {relative_path}  ---"
                         separator    = "=" * 80
                         
                         outfile.write(f"{separator}\n")
                         outfile.write(f"{start_header}\n")
                         outfile.write(f"{'-' * len(start_header)}\n\n")
                         
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
-                            outfile.write(infile.read())
+                        _, extension = os.path.splitext(file_path)
+                        
+                        if extension.lower() in SKIP_CONTENT_EXTENSIONS:
+                            file_size = os.path.getsize(file_path)
+                            outfile.write(f"[Content skipped for file type '{extension}': {filename} ({file_size / 1024:.2f} KB)]")
+                        else:
+                            try:
+                                with open(file_path, 'r', encoding='utf-8', errors='strict') as infile:
+                                    outfile.write(infile.read())
+                            except (UnicodeDecodeError, IOError):
+                                file_size = os.path.getsize(file_path)
+                                outfile.write(f"[Content skipped due to read error: {filename} ({file_size / 1024:.2f} KB)]")
                         
                         outfile.write(f"\n\n{'-' * len(end_header)}\n")
                         outfile.write(f"{end_header}\n")
@@ -3562,9 +3439,8 @@ def generate_code_dump(root_dir, output_filename):
                         
                         processed_files_count += 1
                     except Exception as e:
-                        print(f"警告：無法讀取 {relative_path_str} ({e})")
+                        print(f"警告：無法讀取 {relative_path} ({e})")
 
-        # 顯示成功訊息
         print("\n" + "=" * 80)
         print(f"✅ 成功！共處理了 {processed_files_count} 個檔案。")
         print(f"輸出結果已儲存至: {os.path.abspath(output_filename)}")
@@ -3577,9 +3453,22 @@ def generate_code_dump(root_dir, output_filename):
 
 
 if __name__ == "__main__":
-    target_dir = sys.argv[1] if len(sys.argv) > 1 else '.'
-    output_file = 'project_dump.txt'
-    generate_code_dump(target_dir, output_file)
+    script_path = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_path)
+    
+    os.chdir(project_root)
+    
+    target_dir = '.'
+    
+    project_name = os.path.basename(os.path.abspath(project_root))
+    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_file = f"{project_name}_dump_{timestamp_str}.txt"
+    
+    print(f"設定專案根目錄為: {os.path.abspath(project_root)}")
+    print(f"將從 '{os.path.abspath(target_dir)}' 開始掃描...")
+    print(f"輸出檔案將命名為: {output_file}")
+    
+    generate_code_dump(target_dir, output_file, project_name)
 
 -------------------------------------------
 ---  END OF FILE: test/dump_project.py  ---

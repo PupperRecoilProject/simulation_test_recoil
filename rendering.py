@@ -25,7 +25,9 @@ class DebugOverlay:
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """根據當前控制模式，選擇並呼叫對應的渲染函式。"""
-        if state.control_mode == "SERIAL_MODE":
+        if state.control_mode == "HARDWARE_MODE":
+            self.render_hardware_overlay(viewport, context, state)
+        elif state.control_mode == "SERIAL_MODE":
             self.render_serial_console(viewport, context, state)
         elif state.control_mode == "JOINT_TEST":
             self.render_joint_test_overlay(viewport, context, state, sim)
@@ -33,6 +35,26 @@ class DebugOverlay:
             self.render_manual_ctrl_overlay(viewport, context, state, sim)
         else:
             self.render_simulation_overlay(viewport, context, state, sim)
+
+    def render_hardware_overlay(self, viewport, context, state: SimulationState):
+        """渲染硬體控制模式的專用介面。"""
+        # 繪製一個深色半透明背景，以示區別
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95)
+        
+        ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
+        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
+        help_text = "Press 'H' to exit to simulation mode | Press 'K' to toggle AI control"
+        
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
+
+        # 顯示來自 state 的即時硬體狀態文字
+        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{state.hardware_status_text}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
+        
+        # 也可以顯示使用者命令
+        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context)
 
     def render_serial_console(self, viewport, context, state: SimulationState):
         """渲染一個全螢幕的序列埠控制台介面。"""
@@ -133,41 +155,35 @@ class DebugOverlay:
             "[Universal]\n"
             "  SPACE: Pause/Play | N: Next Step\n"
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
-            "  ESC: Exit       | R: Reset\n"
-            "  X: Soft Reset   | TAB: Info Page\n"
+            "  ESC: Exit       | R: Reset       | T: Serial Console\n"
+            "  X: Soft Reset   | TAB: Info Page | H: Hardware Mode\n"
             "  M: Input Mode   | C: Clear Cmd (Kbd)\n"
             "  U: Scan Serial  | J: Scan Gamepad\n"
-            "  V: Cycle Terrain\n\n"   # 【修改】更新幫助文字，加入 V 鍵提示
+            "  V: Cycle Terrain  | K: Toggle HW AI\n\n"
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
-            "  [/]: Select Param\n"
-            "  UP/DOWN: Adjust Value\n\n"
+            "  [/]: Select Param | UP/DOWN: Adjust Value\n\n"
             "[Gamepad Mode]\n"
             "  L-Stick: Move | R-Stick: Turn\n"
-            "  LB/RB: Select Param\n"
-            "  D-Pad U/D: Adjust Value\n"
+            "  LB/RB: Select Param | D-Pad U/D: Adjust Value\n"
             "  Select/View: Reset"
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
 
-        serial_status = "Connected" if state.serial_is_connected else "Disconnected (Press U to Scan)"
-        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (Press J to Scan)"
-
-        # 【新增】獲取當前地形名稱
+        serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)"
+        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
         terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
 
         p = state.tuning_params
-        
         prefixes = ["   "] * 4
         prefixes[state.tuning_param_index] = ">> "
 
-        # 【修改】在 UI 中加入地形資訊
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
             f"Time: {sim.data.time:.2f} s\n"
             f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
-            f"Serial: {serial_status}\n"
+            f"Serial Console: {serial_status}\n"
             f"Gamepad: {gamepad_status}\n\n"
             f"--- Tuning Params ---\n"
             f"{prefixes[0]}{format_vec('Kp:', np.array([p.kp]), 1)}\n"
@@ -176,7 +192,7 @@ class DebugOverlay:
             f"{prefixes[3]}{format_vec('Bias:', np.array([p.bias]), 1)}\n\n"
             f"--- Command ---\n"
             f"{format_vec('User Cmd:', state.command)}\n"
-        ) # <--- 【語法修復】在這裡補上了遺漏的右括號 ')'
+        )
 
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
@@ -212,7 +228,7 @@ class DebugOverlay:
             f"--- ONNX OUTPUTS & STATE ---\n"
             f"{format_vec('Raw Action:', state.latest_action_raw)}\n"
             f"{format_vec('Final Ctrl:', state.latest_final_ctrl)}\n\n"
-            f"--- Robot State ---\n"
+            f"--- Robot State (Sim) ---\n"
             f"{format_vec('Torso Z:', np.array([sim.data.qpos[2]]))}\n"
             f"{format_vec('Lin Vel (World):', torso_lin_vel)}\n"
             f"{format_vec('Ang Vel (Local):', torso_ang_vel_local)}"
