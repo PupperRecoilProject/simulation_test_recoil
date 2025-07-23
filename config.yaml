@@ -101,6 +101,17 @@ initial_tuning_params:
   bias: -0.0
 
 # ==================================
+# === 級聯控制器設定 (Cascade Controller Settings)
+# ==================================
+cascade_controller:
+  # 這些值應參考訓練腳本
+  pos_kp: 16 # 外環位置 P 增益
+  vel_kp: 500    # 內環速度 P 增益 (單位: N*m / (rad/s))
+  max_target_velocity_rad_s: 8 # 最大目標速度 (rad/s)
+  torque_limit: 1.6 # 最終輸出力矩的安全限制 (N*m)
+
+
+# ==================================
 # === 觀察配方 (Observation Recipes)
 # ==================================
 #observation_recipes:

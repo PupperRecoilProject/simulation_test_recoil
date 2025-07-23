@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from floating_controller import FloatingController
-    from policy import PolicyManager # <-- 修改
+    from policy import PolicyManager
     from hardware_controller import HardwareController
 
 @dataclass
@@ -60,10 +60,11 @@ class SimulationState:
 
     floating_controller_ref: 'FloatingController' = None
     
-    # --- 修改為 PolicyManager 參考 ---
+    # --- 【新架構】參考 PolicyManager ---
     policy_manager_ref: 'PolicyManager' = None
+    # available_policies 列表儲存所有模型的名稱，供 UI 和鍵盤處理器使用
     available_policies: list = field(default_factory=list)
-    active_policy_index: int = 0
+    # 不再需要 active_policy_index，因為 PolicyManager 內部管理主要/目標策略
     
     hardware_controller_ref: 'HardwareController' = None
     hardware_is_connected: bool = False

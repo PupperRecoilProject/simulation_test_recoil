@@ -35,17 +35,16 @@ def main():
     serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
 
-    # --- 【新】初始化流程 ---
+    # --- 初始化流程 ---
     obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
-    overlay = DebugOverlay() # <-- 先建立 overlay
+    overlay = DebugOverlay() # 先建立 overlay
     
     # 將 obs_builder 和 overlay 傳入 PolicyManager
     policy_manager = PolicyManager(config, obs_builder, overlay)
     
     state.policy_manager_ref = policy_manager
-    state.available_policies = policy_manager.model_names
-    state.active_policy_index = 0
-
+    state.available_policies = policy_manager.model_names # 讓 state 知道有哪些可用的模型名稱
+    
     hw_controller = HardwareController(config, policy_manager, state)
     state.hardware_controller_ref = hw_controller
 
@@ -56,7 +55,7 @@ def main():
         print("\n--- 正在執行完全重置 (Hard Reset) ---")
         if state.control_mode == "HARDWARE_MODE": return
         sim.reset()
-        policy_manager.reset()
+        policy_manager.reset() # 重置策略管理器狀態
         if state.control_mode == "FLOATING": state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
         state.clear_command()
@@ -70,7 +69,7 @@ def main():
         if state.control_mode == "HARDWARE_MODE": return
         sim.data.qpos[7:] = sim.default_pose
         sim.data.qvel[6:] = 0
-        policy_manager.reset()
+        policy_manager.reset() # 重置策略管理器狀態
         state.clear_command()
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
@@ -79,10 +78,11 @@ def main():
         state.soft_reset_requested = False
 
     hard_reset()
+    # --- 【新】更新啟動提示訊息 ---
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, H: 硬體模式, P: 切換模型)")
+    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, H: 硬體模式)")
     print("    (M: 輸入模式, R: 硬重置, X: 軟重置, U: 掃描序列埠, J: 掃描搖桿)")
-    print("    (在硬體模式下，按 K 啟用/禁用 AI)")
+    print("    (1,2,3..: 選擇目標策略 | 在硬體模式下，按 K 啟用/禁用 AI)")
 
     state.execute_one_step = False
 
@@ -118,6 +118,7 @@ def main():
         else:
             if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
+            # 主迴圈的這一部分不需要改變，因為所有複雜性都已封裝在 PolicyManager 中
             onnx_input, action_final = policy_manager.get_action(state.command)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_final
@@ -138,7 +139,7 @@ def main():
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
 
-        sim.render(state, overlay)
+        sim.render(state, overlay) # 渲染場景和除錯資訊
 
     hw_controller.stop()
     sim.close()

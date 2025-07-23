@@ -16,12 +16,12 @@ class KeyboardInputHandler:
         self.num_params = len(self.param_keys)
 
     def register_callbacks(self, window):
-        glfw.set_key_callback(window, self.key_callback)
-        glfw.set_char_callback(window, self.char_callback)
+        glfw.set_key_callback(window, self.key_callback) # 註冊按鍵回呼函式
+        glfw.set_char_callback(window, self.char_callback) # 註冊字元回呼函式
 
     def char_callback(self, window, codepoint):
         if self.state.control_mode == "SERIAL_MODE":
-            self.state.serial_command_buffer += chr(codepoint)
+            self.state.serial_command_buffer += chr(codepoint) # 如果在序列埠模式，將輸入的字元加入緩衝區
 
     def key_callback(self, window, key, scancode, action, mods):
         # --- 1. 只在按鍵按下時觸發的通用功能 (模式切換、重置等) ---
@@ -34,7 +34,7 @@ class KeyboardInputHandler:
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
             if key == glfw.KEY_V: 
-                self.terrain_manager.cycle_terrain()
+                self.terrain_manager.cycle_terrain() # 循環切換地形
                 return
             
             # 設備掃描
@@ -55,13 +55,22 @@ class KeyboardInputHandler:
                 else: print("請先按 'H' 進入硬體模式。")
                 return
 
-            # 【新】切換策略模型
-            if key == glfw.KEY_P:
+            # --- 【新】使用數字鍵選擇性切換策略模型 ---
+            # 建立一個從 GLFW 按鍵碼到策略索引的映射
+            policy_keys = {
+                glfw.KEY_1: 0, glfw.KEY_2: 1, glfw.KEY_3: 2, glfw.KEY_4: 3,
+                glfw.KEY_5: 4, glfw.KEY_6: 5, # 可依需求擴充
+            }
+            if key in policy_keys:
+                target_index = policy_keys[key] # 獲取按鍵對應的索引
                 if self.state.policy_manager_ref and self.state.available_policies:
-                    next_index = (self.state.active_policy_index + 1) % len(self.state.available_policies)
-                    self.state.active_policy_index = next_index
-                    new_policy_name = self.state.available_policies[next_index]
-                    self.state.policy_manager_ref.switch_policy(new_policy_name)
+                    # 檢查索引是否在可用策略的範圍內
+                    if target_index < len(self.state.available_policies):
+                        target_policy_name = self.state.available_policies[target_index] # 獲取目標策略的名稱
+                        # 呼叫新的選擇性切換函式
+                        self.state.policy_manager_ref.select_target_policy(target_policy_name)
+                    else:
+                        print(f"⚠️ 警告: 策略索引 {target_index+1} 超出範圍。")
                 return
 
         # --- 2. 可重複觸發的模式特定功能 ---

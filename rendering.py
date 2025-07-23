@@ -14,32 +14,29 @@ class DebugOverlay:
     """
     def __init__(self):
         # 【修改】初始化時不再接收固定的 recipe 和 dims
-        self.recipe: List[str] = []
-        self.component_dims: Dict[str, int] = {}
+        self.recipe: List[str] = [] # 初始化一個空列表，用於儲存當前觀察配方
+        self.component_dims: Dict[str, int] = {} # 初始化一個空字典，儲存配方中各元件的維度
         
         # 顯示頁面的定義保持不變
         self.display_pages_content = [
             ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'], # 新增 accelerometer
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
-        state_class_ref = SimulationState
-        state_class_ref.num_display_pages = len(self.display_pages_content)
+        state_class_ref = SimulationState # 引用 SimulationState 類別
+        state_class_ref.num_display_pages = len(self.display_pages_content) # 設定總顯示頁數
 
     def set_recipe(self, recipe: List[str]):
         """【新增】動態設定當前要顯示的觀察配方。"""
-        self.recipe = recipe
+        self.recipe = recipe # 更新當前配方
         # 根據新配方，更新 component_dims 以便計算
         ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 
                         'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 
                         'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 
                         'phase_signal':1, 'accelerometer': 3}
+        # 從總維度字典中，挑出新配方裡存在的元件及其維度
         self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
         print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
 
-    # ... (其餘所有 render_... 方法和輔助方法完全不變) ...
-    # ... 您可以從您提供的最新 dump 檔案中直接複製過來 ...
-    # --- 為了完整性，這裡貼出所有 render 方法 ---
-    
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """根據當前控制模式，選擇並呼叫對應的渲染函式。"""
         if state.control_mode == "HARDWARE_MODE":
@@ -58,14 +55,22 @@ class DebugOverlay:
         mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95)
         ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
         title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
-        help_text = "Press 'H' to exit | Press 'K' to toggle AI | Press 'P' to cycle policy"
-        
+        help_text = "Press 'H' to exit | Press 'K' to toggle AI | Press 1-4 to select policy"
+
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
-
-        active_policy_name = state.available_policies[state.active_policy_index] if state.available_policies else "N/A"
-        transition_status = " (Transitioning...)" if state.policy_manager_ref and state.policy_manager_ref.is_transitioning else ""
-        policy_text = f"Active Policy: {active_policy_name}{transition_status}"
+        
+        # 動態顯示策略融合狀態
+        policy_text = ""
+        pm = state.policy_manager_ref
+        if pm:
+            if pm.is_transitioning:
+                source = pm.source_policy_name
+                target = pm.target_policy_name
+                alpha_percent = pm.transition_alpha * 100
+                policy_text = f"Active Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)"
+            else:
+                policy_text = f"Active Policy: {pm.primary_policy_name}"
 
         status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{policy_text}\n{state.hardware_status_text}"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
@@ -153,6 +158,7 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
+        # --- 【新】更新幫助文本 ---
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
@@ -160,7 +166,7 @@ class DebugOverlay:
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset       | T: Serial Console\n"
             "  X: Soft Reset   | TAB: Info Page | H: Hardware Mode\n"
-            "  M: Input Mode   | C: Clear Cmd   | P: Cycle Policy\n"
+            "  M: Input Mode   | C: Clear Cmd   | 1-4: Select Policy\n" # <-- 修改 P 為 1-4
             "  U: Scan Serial  | J: Scan Gamepad\n"
             "  V: Cycle Terrain  | K: Toggle HW AI\n\n"
             "[Keyboard Mode]\n"
@@ -177,8 +183,17 @@ class DebugOverlay:
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
         terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
 
-        active_policy_name = state.available_policies[state.active_policy_index] if state.available_policies else "N/A"
-        transition_status = " (Transitioning...)" if state.policy_manager_ref and state.policy_manager_ref.is_transitioning else ""
+        # --- 【新】動態顯示策略融合狀態 ---
+        policy_text = ""
+        pm = state.policy_manager_ref # 獲取 PolicyManager 的參考
+        if pm:
+            if pm.is_transitioning: # 如果正在融合中
+                source = pm.source_policy_name # 來源策略名稱
+                target = pm.target_policy_name # 目標策略名稱
+                alpha_percent = pm.transition_alpha * 100 # 融合權重百分比
+                policy_text = f"Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)"
+            else: # 如果不在融合中
+                policy_text = f"Policy: {pm.primary_policy_name}" # 顯示主要策略名稱
 
         p = state.tuning_params
         prefixes = ["   "] * 4
@@ -186,7 +201,7 @@ class DebugOverlay:
 
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
-            f"Policy: {active_policy_name}{transition_status}\n"
+            f"{policy_text}\n" # <-- 使用新的 policy_text
             f"Time: {sim.data.time:.2f} s\n"
             f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
