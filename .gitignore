@@ -1,0 +1,4 @@
+# 忽略 Python bytecode 檔案
+*.pyc
+*.pyo
+__pycache__/
