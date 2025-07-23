@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from floating_controller import FloatingController
     from policy import PolicyManager
     from hardware_controller import HardwareController
+    from terrain_manager import TerrainManager
 
 @dataclass
 class TuningParams:
@@ -27,8 +28,7 @@ class SimulationState:
     
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
-    # --- 【新功能】新增姿態重置旗標 ---
-    pose_reset_requested: bool = False
+    # 【移除】pose_reset_requested 已被合併到 soft_reset 中
 
     control_timer: float = 0.0
     
@@ -61,10 +61,9 @@ class SimulationState:
     tuning_param_index: int = 0
 
     floating_controller_ref: 'FloatingController' = None
+    terrain_manager_ref: 'TerrainManager' = None # 確保有 terrain manager 的參考
     
-    # --- 【新架構】參考 PolicyManager ---
     policy_manager_ref: 'PolicyManager' = None
-    # available_policies 列表儲存所有模型的名稱，供 UI 和鍵盤處理器使用
     available_policies: list = field(default_factory=list)
     
     hardware_controller_ref: 'HardwareController' = None
@@ -103,7 +102,6 @@ class SimulationState:
 
         old_mode = self.control_mode
         
-        # --- 離開舊模式時的清理工作 ---
         if old_mode == "FLOATING":
             if self.floating_controller_ref: self.floating_controller_ref.disable()
         elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
@@ -118,7 +116,6 @@ class SimulationState:
         self.control_mode = new_mode
         print(f"控制模式已切換至: {self.control_mode}")
 
-        # --- 進入新模式時的設定工作 ---
         if new_mode == "FLOATING":
             if self.floating_controller_ref: self.floating_controller_ref.enable(self.latest_pos)
         elif new_mode == "JOINT_TEST":
@@ -133,7 +130,6 @@ class SimulationState:
                  self.control_mode = "WALKING" 
                  print(f"控制模式已自動切換至: {self.control_mode}")
 
-        # --- 【核心】模式切換穩定性修復 ---
         is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
         is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL"]
         

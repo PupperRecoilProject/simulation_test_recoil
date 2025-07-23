@@ -5,4 +5,4 @@ pip install mujoco glfw //這個看看環境有沒有載，我不是用這個
 pip install inputs //搖桿用的
 pip install pygame
 pip install pyserial
-
+pip install Pillow

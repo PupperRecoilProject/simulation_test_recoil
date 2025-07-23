@@ -3,24 +3,26 @@
      ================================================================= -->
 <mujoco model="pupper_global_pd">
   <compiler angle="radian" meshdir="assets/mesh" autolimits="true"/> <!-- assets to assets/mesh -->
-  <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">
+  
+  <!-- 【核心修正】增加求解器迭代次數以提高接觸計算的精度 -->
+  <!-- iterations 從 1 增加到 10 -->
+  <!-- ls_iterations 從 5 增加到 20 -->
+  <option iterations="10" ls_iterations="20" timestep="0.004" integrator="Euler">
     <flag eulerdamp="disable"/>
   </option>
+
   <custom>
     <numeric data="30" name="max_contact_points"/>
     <numeric data="12" name="max_geom_pairs"/>
   </custom>
 
-  <!-- [MODIFIED] All physical and control parameters are now globally defined here -->
   <default>
     <default class="pupper">
       <!-- 1. Global physical properties for ALL joints -->
       <joint armature="0.005" damping="0.1" frictionloss="0.2"/>
       
       <!-- 2. Global controller template for ALL position actuators -->
-      <!--    kp and kv are placeholders to be modified by the Python script -->
       <general gainprm="0.333" ctrlrange="-5.0 5.0" gear="1" biastype="none"/>
-
 
       <!-- Joint-specific kinematics -->
       <default class="abduction">
@@ -35,7 +37,7 @@
       
       <!-- Visual and collision definitions -->
       <default class="visual"> <geom type="mesh" contype="0" conaffinity="0" group="2"/> </default>
-      <default class="collision"> <geom group="3"/>
+      <default class="collision"> <geom/>
         <default class="foot"> <geom type="sphere" size="0.009525" solimp="0.9 .95 0.01" condim="3" friction="0.8 0.1 0.1"/> </default>
       </default>
     </default>

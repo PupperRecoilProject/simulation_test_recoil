@@ -158,17 +158,18 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
-        # --- 【新】更新幫助文本 ---
+        # --- 【修改】更新幫助文本 ---
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
             "  SPACE: Pause/Play | N: Next Step\n"
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
-            "  ESC: Exit       | R: Reset       | T: Serial Console\n"
-            "  X: Soft Reset   | Y: Pose Reset  | H: Hardware Mode\n" # <-- 新增 Y
+            "  ESC: Exit       | R: Hard Reset  | T: Serial Console\n"
+            "  X: Soft Reset   | Y: Regen Terrain | H: Hardware Mode\n"
+            "  P: Save Terrain PNG\n\n"
+            "[Input & Policy]\n"
             "  M: Input Mode   | C: Clear Cmd   | 1-4: Select Policy\n"
-            "  U: Scan Serial  | J: Scan Gamepad\n"
-            "  V: Cycle Terrain  | K: Toggle HW AI\n\n"
+            "  U: Scan Serial  | J: Scan Gamepad| K: Toggle HW AI\n\n"
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
             "  [/]: Select Param | UP/DOWN: Adjust Value\n\n"
@@ -216,11 +217,12 @@ class DebugOverlay:
         )
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
-            target_height = sim.config.floating_controller.target_height
+            # 顯示目標世界Z座標，而不是相對高度，這樣更直觀
+            target_world_z = state.floating_controller_ref.data.mocap_pos[state.floating_controller_ref.mocap_index][2]
             top_left_text += (
                 f"\n--- Floating Info ---\n"
-                f"{format_vec('Target H:', np.array([target_height]), 3)}\n"
-                f"{format_vec('Current H:', np.array([current_height]), 3)}\n"
+                f"{format_vec('Target World Z:', np.array([target_world_z]), 3)}\n"
+                f"{format_vec('Current Z:', np.array([current_height]), 3)}\n"
             )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, top_left_text, None, context)
         

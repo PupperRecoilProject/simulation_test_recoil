@@ -16,16 +16,16 @@
       width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
     
-    <!-- 【新增】定義高度場資產 -->
-    <!-- nrow 和 ncol 定義了解析度 (例如 100x100 的網格) -->
-    <!-- size 定義了物理尺寸 (例如 10米 x 10米 x 最大高度1米) -->
-    <hfield name="terrain" nrow="100" ncol="100" size="5 5 1 0.1"/>
+    <!-- 【修改】定義一個更大的高度場資產，以容納 9x9 的地塊網格 -->
+    <!-- nrow/ncol: (地塊解析度-1) * 網格大小 + 1 => (101-1) * 9 + 1 = 901 -->
+    <!-- size: [地塊物理尺寸 * 網格大小, ... ] => 5米 * 9 = 45米 -->
+    <hfield name="terrain" nrow="901" ncol="901" size="45 45 1.5 0.1"/>
   </asset>
 
   <worldbody>
-    <!-- 【修改】將原來的平面地板 geom 替換為高度場 geom -->
-    <!-- <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" condim="3" contype="1" conaffinity="0"/> -->
-    <geom name="floor" type="hfield" hfield="terrain" material="groundplane" condim="3" contype="1" conaffinity="0"/>
+    <geom name="floor" type="hfield" hfield="terrain" material="groundplane" 
+          condim="3" contype="1" conaffinity="1" 
+          solimp="0.99 0.999 0.001" solref="0.001 1"/>
     
     <body name="anchor" pos="0 0 0.35" mocap="true">
       <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>

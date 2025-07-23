@@ -11,45 +11,51 @@ class KeyboardInputHandler:
         self.config = state.config
         self.serial_comm = serial_comm
         self.xbox_handler = xbox_handler
-        self.terrain_manager = terrain_manager
+        self.terrain_manager = terrain_manager # 持有 terrain_manager 的參考
         self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
         self.num_params = len(self.param_keys)
 
     def register_callbacks(self, window):
-        glfw.set_key_callback(window, self.key_callback) # 註冊按鍵回呼函式
-        glfw.set_char_callback(window, self.char_callback) # 註冊字元回呼函式
+        glfw.set_key_callback(window, self.key_callback)
+        glfw.set_char_callback(window, self.char_callback)
 
     def char_callback(self, window, codepoint):
         if self.state.control_mode == "SERIAL_MODE":
-            self.state.serial_command_buffer += chr(codepoint) # 如果在序列埠模式，將輸入的字元加入緩衝區
+            self.state.serial_command_buffer += chr(codepoint)
 
     def key_callback(self, window, key, scancode, action, mods):
-        # --- 1. 只在按鍵按下時觸發的通用功能 (模式切換、重置等) ---
         if action == glfw.PRESS:
             if key == glfw.KEY_SPACE: self.state.single_step_mode = not self.state.single_step_mode; print(f"\n--- SIMULATION {'PAUSED' if self.state.single_step_mode else 'PLAYING'} ---"); return
             if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
             if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
+            
+            # 'R' 鍵現在只觸發機器人重置
             if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
+            
+            # 'X' 鍵觸發軟重置
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
-            # --- 【新功能】綁定 'Y' 鍵到姿態重置 ---
-            if key == glfw.KEY_Y: self.state.pose_reset_requested = True; return
+            
+            # 'Y' 鍵觸發地形重置並調整機器人高度
+            if key == glfw.KEY_Y:
+                # 調用 terrain_manager 的新方法，它內部會使用 self.data 調整高度
+                self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
+                return
+
+            # 'P' 鍵儲存地形快照
+            if key == glfw.KEY_P: self.terrain_manager.save_hfield_to_png(); return
+
 
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
-            if key == glfw.KEY_V: 
-                self.terrain_manager.cycle_terrain() # 循環切換地形
-                return
             
-            # 設備掃描
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
             
-            # 硬體模式相關按鍵
-            if key == glfw.KEY_H: # 'H' for Hardware
+            if key == glfw.KEY_H:
                 new_mode = "HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"
                 self.state.set_control_mode(new_mode)
                 return
-            if key == glfw.KEY_K: # 'K' for Kill-switch/Activate
+            if key == glfw.KEY_K:
                 if self.state.control_mode == "HARDWARE_MODE" and self.state.hardware_controller_ref:
                     if self.state.hardware_ai_is_active:
                         self.state.hardware_controller_ref.disable_ai()
@@ -58,25 +64,20 @@ class KeyboardInputHandler:
                 else: print("請先按 'H' 進入硬體模式。")
                 return
 
-            # --- 【新】使用數字鍵選擇性切換策略模型 ---
-            # 建立一個從 GLFW 按鍵碼到策略索引的映射
             policy_keys = {
                 glfw.KEY_1: 0, glfw.KEY_2: 1, glfw.KEY_3: 2, glfw.KEY_4: 3,
-                glfw.KEY_5: 4, glfw.KEY_6: 5, # 可依需求擴充
+                glfw.KEY_5: 4, glfw.KEY_6: 5,
             }
             if key in policy_keys:
-                target_index = policy_keys[key] # 獲取按鍵對應的索引
+                target_index = policy_keys[key]
                 if self.state.policy_manager_ref and self.state.available_policies:
-                    # 檢查索引是否在可用策略的範圍內
                     if target_index < len(self.state.available_policies):
-                        target_policy_name = self.state.available_policies[target_index] # 獲取目標策略的名稱
-                        # 呼叫新的選擇性切換函式
+                        target_policy_name = self.state.available_policies[target_index]
                         self.state.policy_manager_ref.select_target_policy(target_policy_name)
                     else:
                         print(f"⚠️ 警告: 策略索引 {target_index+1} 超出範圍。")
                 return
 
-        # --- 2. 可重複觸發的模式特定功能 ---
         if action in [glfw.PRESS, glfw.REPEAT]:
             if self.state.control_mode == "SERIAL_MODE":
                 if key == glfw.KEY_ENTER: self.state.serial_command_to_send = self.state.serial_command_buffer; self.state.serial_command_buffer = ""
@@ -109,7 +110,6 @@ class KeyboardInputHandler:
                 elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
                 return
 
-        # --- 3. 如果以上模式都不是，則執行 WALKING/FLOATING 模式的預設按鍵邏輯 ---
         if action == glfw.PRESS:
             if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
             if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
@@ -119,7 +119,6 @@ class KeyboardInputHandler:
         if self.state.input_mode != "KEYBOARD": return
             
         if action in [glfw.PRESS, glfw.REPEAT]:
-            # 參數調整
             if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
             elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
             elif key == glfw.KEY_UP or key == glfw.KEY_DOWN:
@@ -133,7 +132,6 @@ class KeyboardInputHandler:
                 self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
                 self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
 
-            # 移動控制
             step = self.config.keyboard_velocity_adjust_step
             if key == glfw.KEY_C: self.state.clear_command()
             elif key == glfw.KEY_W: self.state.command[1] += step
