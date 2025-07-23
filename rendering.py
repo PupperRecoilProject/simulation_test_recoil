@@ -13,32 +13,48 @@ class DebugOverlay:
     負責在 MuJoCo 視窗上渲染所有文字除錯資訊。
     """
     def __init__(self):
-        # 【修改】初始化時不再接收固定的 recipe 和 dims
-        self.recipe: List[str] = [] # 初始化一個空列表，用於儲存當前觀察配方
-        self.component_dims: Dict[str, int] = {} # 初始化一個空字典，儲存配方中各元件的維度
+        self.recipe: List[str] = []
+        self.component_dims: Dict[str, int] = {}
         
-        # 顯示頁面的定義保持不變
         self.display_pages_content = [
-            ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'], # 新增 accelerometer
+            ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'],
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
-        state_class_ref = SimulationState # 引用 SimulationState 類別
-        state_class_ref.num_display_pages = len(self.display_pages_content) # 設定總顯示頁數
+        state_class_ref = SimulationState
+        state_class_ref.num_display_pages = len(self.display_pages_content)
 
     def set_recipe(self, recipe: List[str]):
-        """【新增】動態設定當前要顯示的觀察配方。"""
-        self.recipe = recipe # 更新當前配方
-        # 根據新配方，更新 component_dims 以便計算
+        """動態設定當前要顯示的觀察配方。"""
+        self.recipe = recipe
         ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 
                         'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 
                         'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 
                         'phase_signal':1, 'accelerometer': 3}
-        # 從總維度字典中，挑出新配方裡存在的元件及其維度
         self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
         print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
-        """根據當前控制模式，選擇並呼叫對應的渲染函式。"""
+        """
+        【核心修改】統一渲染邏輯。
+        無論在哪種模式下，都會先渲染3D場景，然後再疊加對應模式的文字資訊。
+        """
+        # --- 步驟 1: 始終更新和渲染 3D 場景 ---
+        # 確保攝影機追蹤機器人 (除非使用者正在手動操作視角)
+        if not (sim.mouse_button_left or sim.mouse_button_right):
+             sim.cam.lookat = sim.data.body('torso').xpos
+
+        # 如果地形被更新，則將新數據上傳到GPU
+        terrain_manager = getattr(state, 'terrain_manager_ref', None)
+        if terrain_manager and terrain_manager.needs_scene_update:
+            mujoco.mjr_uploadHField(sim.model, sim.context, terrain_manager.hfield_id)
+            terrain_manager.needs_scene_update = False
+            print("🔄 地形幾何已上傳至 GPU 進行渲染。")
+        
+        # 更新場景物件並進行渲染
+        mujoco.mjv_updateScene(sim.model, sim.data, sim.opt, None, sim.cam, mujoco.mjtCatBit.mjCAT_ALL, sim.scene)
+        mujoco.mjr_render(viewport, sim.scene, sim.context)
+        
+        # --- 步驟 2: 根據當前模式，選擇並疊加對應的文字資訊 ---
         if state.control_mode == "HARDWARE_MODE":
             self.render_hardware_overlay(viewport, context, state)
         elif state.control_mode == "SERIAL_MODE":
@@ -52,15 +68,14 @@ class DebugOverlay:
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """渲染硬體控制模式的專用介面。"""
-        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95)
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95) # 加上半透明背景以突顯文字
         ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
         title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
-        help_text = "Press 'H' to exit | Press 'K' to toggle AI | Press 1-4 to select policy"
+        help_text = "Press 'H' to exit | 'K': Toggle AI | 'G': Joint Test | 1-4: Select Policy"
 
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
         
-        # 動態顯示策略融合狀態
         policy_text = ""
         pm = state.policy_manager_ref
         if pm:
@@ -73,14 +88,25 @@ class DebugOverlay:
                 policy_text = f"Active Policy: {pm.primary_policy_name}"
 
         status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{policy_text}\n{state.hardware_status_text}"
+        
+        hw_ctrl = state.hardware_controller_ref
+        if hw_ctrl and hw_ctrl.is_running:
+            with hw_ctrl.lock:
+                imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True)
+                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
+                
+                status_text += f"\n\n--- Sensor Readings (from Robot) ---\n"
+                status_text += f"IMU Acc (g): {imu_acc_str}\n"
+                status_text += f"Joint Pos (rad):\n{joint_pos_str}"
+
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
         
         user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context)
 
     def render_serial_console(self, viewport, context, state: SimulationState):
-        """渲染一個全螢幕的序列埠控制台介面。"""
-        mujoco.mjr_rectangle(viewport, 0.2, 0.2, 0.2, 0.9)
+        """渲染序列埠控制台介面。"""
+        mujoco.mjr_rectangle(viewport, 0.2, 0.2, 0.2, 0.9) # 加上半透明背景
         title = "--- SERIAL CONSOLE MODE (Press T to exit) ---"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
         log_text = "\n".join(state.serial_latest_messages)
@@ -158,19 +184,18 @@ class DebugOverlay:
             vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
             return f"{label:<{label_width}}{vec_str}"
 
-        # --- 【修改】更新幫助文本 ---
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
             "  SPACE: Pause/Play | N: Next Step\n"
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Hard Reset  | T: Serial Console\n"
-            "  X: Soft Reset   | Y: Regen Terrain | H: Hardware Mode\n"
+            "  X: Soft Reset   | Y: Regen Infinite | H: Hardware Mode\n"
             "  P: Save Terrain PNG\n\n"
             "[Input & Policy]\n"
             "  M: Input Mode   | C: Clear Cmd   | 1-4: Select Policy\n"
             "  U: Scan Serial  | J: Scan Gamepad| K: Toggle HW AI\n"
-            "  V: Cycle Terrain Mode\n\n" 
+            "  V: Cycle Terrain Mode\n\n"
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
             "  [/]: Select Param | UP/DOWN: Adjust Value\n\n"
@@ -183,7 +208,6 @@ class DebugOverlay:
         
         serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)"
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
-        # 【修改】從 terrain_manager 獲取新的、包含模式的名稱
         terrain_name = state.terrain_manager_ref.get_current_terrain_name(state) if state.terrain_manager_ref else "N/A"
 
         policy_text = ""
@@ -219,7 +243,6 @@ class DebugOverlay:
         )
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
-            # 顯示目標世界Z座標，而不是相對高度，這樣更直觀
             target_world_z = state.floating_controller_ref.data.mocap_pos[state.floating_controller_ref.mocap_index][2]
             top_left_text += (
                 f"\n--- Floating Info ---\n"

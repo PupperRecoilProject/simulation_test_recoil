@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 class Simulation:
     """
     封裝 MuJoCo 模擬、GLFW 視窗和渲染邏輯。
-    新增了完整的滑鼠視角控制功能。
     """
     def __init__(self, config: AppConfig):
         """初始化 MuJoCo 模型、資料、GLFW 視窗以及滑鼠控制相關狀態。"""
@@ -81,17 +80,11 @@ class Simulation:
 
     def _mouse_button_callback(self, window, button, action, mods):
         if button == glfw.MOUSE_BUTTON_LEFT:
-            if action == glfw.PRESS:
-                self.mouse_button_left = True
-                self.last_mouse_x, self.last_mouse_y = glfw.get_cursor_pos(window)
-            elif action == glfw.RELEASE:
-                self.mouse_button_left = False
+            self.mouse_button_left = (action == glfw.PRESS)
         elif button == glfw.MOUSE_BUTTON_RIGHT:
-            if action == glfw.PRESS:
-                self.mouse_button_right = True
-                self.last_mouse_x, self.last_mouse_y = glfw.get_cursor_pos(window)
-            elif action == glfw.RELEASE:
-                self.mouse_button_right = False
+            self.mouse_button_right = (action == glfw.PRESS)
+        if action == glfw.PRESS:
+            self.last_mouse_x, self.last_mouse_y = glfw.get_cursor_pos(window)
 
     def _mouse_move_callback(self, window, xpos, ypos):
         if not (self.mouse_button_left or self.mouse_button_right):
@@ -101,10 +94,15 @@ class Simulation:
         self.last_mouse_x = xpos
         self.last_mouse_y = ypos
         width, height = glfw.get_window_size(window)
-        action_type = None
-        if self.mouse_button_right: action_type = mujoco.mjtMouse.mjMOUSE_MOVE_H
-        elif self.mouse_button_left: action_type = mujoco.mjtMouse.mjMOUSE_ROTATE_H
-        if action_type: mujoco.mjv_moveCamera(self.model, action_type, dx / height, dy / height, self.scene, self.cam)
+        
+        action_type = mujoco.mjtMouse.mjMOUSE_NONE
+        if self.mouse_button_right:
+            action_type = mujoco.mjtMouse.mjMOUSE_MOVE_H
+        elif self.mouse_button_left:
+            action_type = mujoco.mjtMouse.mjMOUSE_ROTATE_H
+        
+        if action_type != mujoco.mjtMouse.mjMOUSE_NONE:
+            mujoco.mjv_moveCamera(self.model, action_type, dx / height, dy / height, self.scene, self.cam)
 
     def _scroll_callback(self, window, xoffset, yoffset):
         mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0, -0.05 * yoffset, self.scene, self.cam)
@@ -133,29 +131,13 @@ class Simulation:
             mujoco.mj_step(self.model, self.data)
 
     def render(self, state: SimulationState, overlay: "DebugOverlay"):
-        if state.control_mode != "SERIAL_MODE":
-            if not (self.mouse_button_left or self.mouse_button_right):
-                 self.cam.lookat = self.data.body('torso').xpos
-        
+        """【修改】簡化 render 函式，將所有渲染邏輯集中到 DebugOverlay 中。"""
         viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
         
-        terrain_manager = getattr(state, 'terrain_manager_ref', None)
-        if terrain_manager and terrain_manager.needs_scene_update:
-            # =========================================================================
-            # === 【核心修復】調換 mjr_uploadHField 的前兩個參數順序             ===
-            # =========================================================================
-            # 正確順序: (model, context, hfield_id)
-            mujoco.mjr_uploadHField(self.model, self.context, terrain_manager.hfield_id)
-            terrain_manager.needs_scene_update = False
-            print("🔄 地形幾何已上傳至 GPU 進行渲染。")
-            # =========================================================================
-        
-        if state.control_mode != "SERIAL_MODE":
-            mujoco.mjv_updateScene(self.model, self.data, self.opt, None, self.cam, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
-            mujoco.mjr_render(viewport, self.scene, self.context)
-        
+        # 呼叫 DebugOverlay 的主渲染函式
         overlay.render(viewport, self.context, state, self)
         
+        # 交換緩衝區並處理事件
         glfw.swap_buffers(self.window)
         glfw.poll_events()
         
