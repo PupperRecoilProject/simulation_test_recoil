@@ -11,7 +11,7 @@ class KeyboardInputHandler:
         self.config = state.config
         self.serial_comm = serial_comm
         self.xbox_handler = xbox_handler
-        self.terrain_manager = terrain_manager # 持有 terrain_manager 的參考
+        self.terrain_manager = terrain_manager
         self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
         self.num_params = len(self.param_keys)
 
@@ -29,21 +29,23 @@ class KeyboardInputHandler:
             if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
             if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
             
-            # 'R' 鍵現在只觸發機器人重置
             if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
-            
-            # 'X' 鍵觸發軟重置
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
             
-            # 'Y' 鍵觸發地形重置並調整機器人高度
+            # 【修改】'Y'鍵只在無限模式下觸發地形重置
             if key == glfw.KEY_Y:
-                # 調用 terrain_manager 的新方法，它內部會使用 self.data 調整高度
-                self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
+                if self.state.terrain_mode == "INFINITE":
+                    self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
+                else:
+                    print("⚠️ 'Y'鍵 (重生地形) 只在無限地形模式下有效。")
+                return
+            
+            # 【新增】'V'鍵觸發地形模式循環
+            if key == glfw.KEY_V:
+                self.terrain_manager.cycle_terrain_mode(self.state)
                 return
 
-            # 'P' 鍵儲存地形快照
             if key == glfw.KEY_P: self.terrain_manager.save_hfield_to_png(); return
-
 
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return

@@ -132,8 +132,9 @@ def main():
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()
         
+        # 【修改】將 state.terrain_mode 傳入，讓 manager 知道當前模式
         if terrain_manager.is_functional:
-            terrain_manager.update(state.latest_pos)
+            terrain_manager.update(state.latest_pos, state.terrain_mode)
 
         if state.control_mode == "HARDWARE_MODE":
             if hw_controller.is_running:

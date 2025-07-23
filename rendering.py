@@ -169,7 +169,8 @@ class DebugOverlay:
             "  P: Save Terrain PNG\n\n"
             "[Input & Policy]\n"
             "  M: Input Mode   | C: Clear Cmd   | 1-4: Select Policy\n"
-            "  U: Scan Serial  | J: Scan Gamepad| K: Toggle HW AI\n\n"
+            "  U: Scan Serial  | J: Scan Gamepad| K: Toggle HW AI\n"
+            "  V: Cycle Terrain Mode\n\n" 
             "[Keyboard Mode]\n"
             "  WASD/QE: Move/Turn\n"
             "  [/]: Select Param | UP/DOWN: Adjust Value\n\n"
@@ -182,7 +183,8 @@ class DebugOverlay:
         
         serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)"
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
-        terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
+        # 【修改】從 terrain_manager 獲取新的、包含模式的名稱
+        terrain_name = state.terrain_manager_ref.get_current_terrain_name(state) if state.terrain_manager_ref else "N/A"
 
         policy_text = ""
         pm = state.policy_manager_ref

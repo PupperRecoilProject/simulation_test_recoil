@@ -28,13 +28,16 @@ class SimulationState:
     
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
-    # 【移除】pose_reset_requested 已被合併到 soft_reset 中
 
     control_timer: float = 0.0
     
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
     control_mode: str = "WALKING"
+
+    # --- 【新增】地形模式狀態 ---
+    terrain_mode: str = "INFINITE"  # "INFINITE" 或 "SINGLE"
+    single_terrain_index: int = 0   # 當處於 SINGLE 模式時，追蹤當前地形的索引
 
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
@@ -61,7 +64,7 @@ class SimulationState:
     tuning_param_index: int = 0
 
     floating_controller_ref: 'FloatingController' = None
-    terrain_manager_ref: 'TerrainManager' = None # 確保有 terrain manager 的參考
+    terrain_manager_ref: 'TerrainManager' = None
     
     policy_manager_ref: 'PolicyManager' = None
     available_policies: list = field(default_factory=list)
