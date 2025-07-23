@@ -35,30 +35,13 @@ def main():
     serial_comm = SerialCommunicator()
     xbox_handler = XboxInputHandler(state)
 
-    # =========================================================================
-    # === 【核心修正 v2】更穩健的 Observation Recipe 選擇邏輯 =====================
-    # =========================================================================
-    if not config.observation_recipes:
-        sys.exit("❌ 錯誤: 在 config.yaml 中沒有定義任何 observation_recipes。")
-
-    # 假設模型會使用維度最高的配方
-    try:
-        # 找到 config 中定義的最大維度
-        best_recipe_dim = max(config.observation_recipes.keys())
-        recipe = config.observation_recipes[best_recipe_dim]
-        print(f"✅ 根據設定檔，自動選擇基礎觀察維度: {best_recipe_dim}。")
-    except (ValueError, KeyError):
-        sys.exit("❌ 錯誤: 無法從 config.yaml 的 observation_recipes 中確定配方。")
-    # =========================================================================
-
-    obs_builder = ObservationBuilder(recipe, sim.data, sim.model, sim.torso_id, sim.default_pose, config)
-    base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
-
-    if base_obs_dim != best_recipe_dim:
-        print(f"⚠️ 警告: 配方產生的維度 ({base_obs_dim}) 與預期 ({best_recipe_dim}) 不符，請檢查 recipe 定義。")
-
-    # 使用正確的 base_obs_dim 初始化 PolicyManager
-    policy_manager = PolicyManager(config, base_obs_dim)
+    # --- 【新】初始化流程 ---
+    obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    overlay = DebugOverlay() # <-- 先建立 overlay
+    
+    # 將 obs_builder 和 overlay 傳入 PolicyManager
+    policy_manager = PolicyManager(config, obs_builder, overlay)
+    
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
     state.active_policy_index = 0
@@ -69,12 +52,7 @@ def main():
     keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
     keyboard_handler.register_callbacks(sim.window)
 
-    ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 'phase_signal':1}
-    used_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
-    overlay = DebugOverlay(recipe, used_dims)
-
     def hard_reset():
-        """完全重置整個模擬環境。"""
         print("\n--- 正在執行完全重置 (Hard Reset) ---")
         if state.control_mode == "HARDWARE_MODE": return
         sim.reset()
@@ -88,7 +66,6 @@ def main():
         state.hard_reset_requested = False
 
     def soft_reset():
-        """僅重置機器人姿態和控制器狀態。"""
         print("\n--- 正在執行空中姿態重置 (Soft Reset) ---")
         if state.control_mode == "HARDWARE_MODE": return
         sim.data.qpos[7:] = sim.default_pose
@@ -141,20 +118,21 @@ def main():
         else:
             if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
-            base_obs = obs_builder.get_observation(state.command, policy_manager.last_action)
-            onnx_input, action_final = policy_manager.get_action(base_obs)
+            onnx_input, action_final = policy_manager.get_action(state.command)
             state.latest_onnx_input = onnx_input.flatten()
             state.latest_action_raw = action_final
 
             if state.control_mode == "MANUAL_CTRL":
-                final_ctrl = state.manual_final_ctrl.copy() 
+                final_ctrl = state.manual_final_ctrl.copy()
+                sim.apply_position_control(final_ctrl, state.tuning_params)
             elif state.control_mode == "JOINT_TEST":
                 final_ctrl = sim.default_pose + state.joint_test_offsets
+                sim.apply_position_control(final_ctrl, state.tuning_params)
             else: # WALKING or FLOATING
                 final_ctrl = sim.default_pose + action_final * state.tuning_params.action_scale
-
+                sim.apply_position_control(final_ctrl, state.tuning_params)
+            
             state.latest_final_ctrl = final_ctrl
-            sim.apply_position_control(final_ctrl, state.tuning_params)
             
             target_time = sim.data.time + config.control_dt
             while sim.data.time < target_time:

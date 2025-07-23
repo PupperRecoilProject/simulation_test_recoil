@@ -25,9 +25,9 @@ class AppConfig:
     """儲存所有應用程式設定的資料類別。"""
     mujoco_model_file: str
     
-    # onnx_model_path: str # 舊的屬性
-    onnx_models: Dict[str, str] # <-- 新增: 模型字典
-    policy_transition_duration: float # <-- 新增: 過渡時間
+    # 【修改】使用新的 onnx_models 結構，可以包含路徑和配方
+    onnx_models: Dict[str, Dict[str, Any]]
+    policy_transition_duration: float
     
     num_motors: int
     physics_timestep: float
@@ -41,7 +41,6 @@ class AppConfig:
     param_adjust_steps: Dict[str, float]
 
     initial_tuning_params: TuningParamsConfig
-    observation_recipes: Dict[int, List[str]]
     floating_controller: FloatingControllerConfig
 
 def load_config(path: str = "config.yaml") -> AppConfig:
@@ -62,9 +61,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
         
-        # onnx_model_path=config_data['onnx_model_path'], # 移除舊的
-        onnx_models=config_data['onnx_models'], # <-- 新增
-        policy_transition_duration=config_data.get('policy_transition_duration', 0.5), # <-- 新增, 帶預設值
+        onnx_models=config_data['onnx_models'],
+        policy_transition_duration=config_data.get('policy_transition_duration', 0.5),
                 
         num_motors=config_data['num_motors'],
         physics_timestep=config_data['physics_timestep'],
@@ -78,7 +76,6 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         param_adjust_steps=config_data['param_adjust_steps'],
         
         initial_tuning_params=tuning_params,
-        observation_recipes=config_data['observation_recipes'],
         floating_controller=floating_config
     )
     

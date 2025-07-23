@@ -11,14 +11,57 @@ mujoco_model_file: "assets/scene_mjx.xml"
 # ...
 # onnx_model_path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx" # 舊的單一模型路徑，可以先註解掉
 
-# 【新】ONNX 模型庫 (ONNX Model Library)
+# ONNX 模型庫 (ONNX Model Library)
 onnx_models:
-  stable_walk: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
-  agile_model: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
-  # 您可以在此處繼續添加更多模型...
-  # another_model: "models/another_policy.onnx"
+  stable_walk: 
+    path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
+    # 【新】為每個模型指定觀察配方
+    observation_recipe:
+      - 'linear_velocity'
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands'
+  
+  agile_model: 
+    path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
+    # 假設 agile_model 使用與 stable_walk 相同的配方
+    observation_recipe:
+      - 'linear_velocity'
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands'
 
-# 【新】模型平滑切換設定
+  new_high_level: 
+    path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
+    # 【新】使用新的觀察配方
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands'
+
+  new_e2e: 
+    path: "models/pupper_ppo_policy_e2e_203161600.onnx"
+    # e2e 模型也使用新的觀察配方
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands'
+
+# 模型平滑切換設定
 policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
 # ==================================
 
@@ -60,21 +103,21 @@ initial_tuning_params:
 # ==================================
 # === 觀察配方 (Observation Recipes)
 # ==================================
-observation_recipes:
-  31:
-    - 'z_angular_velocity'
-    - 'gravity_vector'
-    - 'commands'
-    - 'joint_positions'
-    - 'last_action'
-  48: # <-- 修改這個 48 維的順序
-    - 'linear_velocity'
-    - 'angular_velocity'
-    - 'gravity_vector'
-    - 'joint_positions'
-    - 'joint_velocities'
-    - 'last_action'
-    - 'commands' # <-- 將 commands 移動到最後
+#observation_recipes:
+#  31:
+#    - 'z_angular_velocity'
+#    - 'gravity_vector'
+#    - 'commands'
+#    - 'joint_positions'
+#    - 'last_action'
+#  48: # <-- 修改這個 48 維的順序
+#    - 'linear_velocity'
+#    - 'angular_velocity'
+#    - 'gravity_vector'
+#    - 'joint_positions'
+#    - 'joint_velocities'
+#    - 'last_action'
+#    - 'commands' # <-- 將 commands 移動到最後
 
 # ================================================================= #
 # === 懸浮控制器設定 (Floating Controller Settings) - 精細調校版 ===

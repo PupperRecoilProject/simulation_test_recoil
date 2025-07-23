@@ -12,16 +12,34 @@ class DebugOverlay:
     """
     負責在 MuJoCo 視窗上渲染所有文字除錯資訊。
     """
-    def __init__(self, recipe: List[str], recipe_dims: Dict[str, int]):
-        self.recipe = recipe
-        self.component_dims = recipe_dims
+    def __init__(self):
+        # 【修改】初始化時不再接收固定的 recipe 和 dims
+        self.recipe: List[str] = []
+        self.component_dims: Dict[str, int] = {}
+        
+        # 顯示頁面的定義保持不變
         self.display_pages_content = [
-            ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands'],
+            ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'], # 新增 accelerometer
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
         state_class_ref = SimulationState
         state_class_ref.num_display_pages = len(self.display_pages_content)
 
+    def set_recipe(self, recipe: List[str]):
+        """【新增】動態設定當前要顯示的觀察配方。"""
+        self.recipe = recipe
+        # 根據新配方，更新 component_dims 以便計算
+        ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 
+                        'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 
+                        'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 
+                        'phase_signal':1, 'accelerometer': 3}
+        self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
+        print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
+
+    # ... (其餘所有 render_... 方法和輔助方法完全不變) ...
+    # ... 您可以從您提供的最新 dump 檔案中直接複製過來 ...
+    # --- 為了完整性，這裡貼出所有 render 方法 ---
+    
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """根據當前控制模式，選擇並呼叫對應的渲染函式。"""
         if state.control_mode == "HARDWARE_MODE":
@@ -37,25 +55,23 @@ class DebugOverlay:
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """渲染硬體控制模式的專用介面。"""
-        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95) # 繪製一個深色半透明背景，以示區別
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95)
+        ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
+        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
+        help_text = "Press 'H' to exit | Press 'K' to toggle AI | Press 'P' to cycle policy"
         
-        ai_status = "啟用" if state.hardware_ai_is_active else "禁用" # 獲取AI狀態文字
-        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---" # 組合標題
-        help_text = "Press 'H' to exit | Press 'K' to toggle AI | Press 'P' to cycle policy" # 定義幫助文字
-        
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context) # 繪製標題
-        # 【修正】修正 mujo_co 的拼寫錯誤
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context) # 繪製幫助文字
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
 
-        active_policy_name = state.available_policies[state.active_policy_index] if state.available_policies else "N/A" # 獲取當前模型名稱
-        transition_status = " (Transitioning...)" if state.policy_manager_ref and state.policy_manager_ref.is_transitioning else "" # 檢查是否在過渡中
-        policy_text = f"Active Policy: {active_policy_name}{transition_status}" # 組合模型狀態文字
+        active_policy_name = state.available_policies[state.active_policy_index] if state.available_policies else "N/A"
+        transition_status = " (Transitioning...)" if state.policy_manager_ref and state.policy_manager_ref.is_transitioning else ""
+        policy_text = f"Active Policy: {active_policy_name}{transition_status}"
 
-        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{policy_text}\n{state.hardware_status_text}" # 組合硬體狀態文字
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context) # 繪製狀態文字
+        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{policy_text}\n{state.hardware_status_text}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
         
-        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}" # 組合使用者命令文字
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context) # 繪製命令文字
+        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context)
 
     def render_serial_console(self, viewport, context, state: SimulationState):
         """渲染一個全螢幕的序列埠控制台介面。"""
@@ -197,18 +213,20 @@ class DebugOverlay:
         
         bottom_left_text = f"--- ONNX INPUTS (Page {state.display_page + 1}/{state.num_display_pages}) ---\n"
         onnx_input_vec = state.latest_onnx_input
-        if onnx_input_vec.size > 0 and state.display_page < len(self.display_pages_content):
+        if onnx_input_vec.size > 0 and self.recipe and state.display_page < len(self.display_pages_content):
             current_page_components = self.display_pages_content[state.display_page]
             base_obs_dim = sum(self.component_dims.values()) if self.component_dims else 0
             if base_obs_dim > 0:
                 history_len = len(onnx_input_vec) // base_obs_dim
+                current_frame_obs = onnx_input_vec[-base_obs_dim:] # 只顯示最新一幀的數據
+                
                 current_full_obs_idx = 0
                 for comp_name_in_recipe in self.recipe:
                     dim = self.component_dims.get(comp_name_in_recipe, 0)
                     if dim > 0:
                         if comp_name_in_recipe in current_page_components:
                             start_idx, end_idx = current_full_obs_idx, current_full_obs_idx + dim
-                            value_slice = onnx_input_vec[start_idx:end_idx]
+                            value_slice = current_frame_obs[start_idx:end_idx]
                             bottom_left_text += format_vec(f"{comp_name_in_recipe} [{dim}d]:", value_slice, 2) + "\n"
                         current_full_obs_idx += dim
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, bottom_left_text, None, context)
