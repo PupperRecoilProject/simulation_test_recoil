@@ -16,10 +16,10 @@
       width="300" height="300"/>
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
     
-    <!-- 【修改】定義一個更大的高度場資產，以容納 9x9 的地塊網格 -->
-    <!-- nrow/ncol: (地塊解析度-1) * 網格大小 + 1 => (101-1) * 9 + 1 = 901 -->
-    <!-- size: [地塊物理尺寸 * 網格大小, ... ] => 5米 * 9 = 45米 -->
-    <hfield name="terrain" nrow="901" ncol="901" size="45 45 1.5 0.1"/>
+    <!-- 【修改】定義一個 5x5 地塊網格對應的高度場資產 -->
+    <!-- nrow/ncol: (地塊解析度-1) * 網格大小 + 1 => (101-1) * 5 + 1 = 501 -->
+    <!-- size: [地塊物理尺寸 * 網格大小, ... ] => 5米 * 5 = 25米 -->
+    <hfield name="terrain" nrow="501" ncol="501" size="25 25 1.5 0.1"/>
   </asset>
 
   <worldbody>
