@@ -251,6 +251,7 @@ class HardwareController:
         """[背景執行緒] 以固定頻率執行 AI 控制。"""
         print("\n--- 硬體控制線程已就緒，等待 AI 啟用 ---")
         # 假設硬體的預設站姿與模擬中的 `default_pose` 相同
+        # 注意: 這裡的 sim 參考可能需要確認，但它通常在 state 中可用
         default_pose_hardware = self.global_state.sim.default_pose
 
         while self.is_running:
@@ -275,13 +276,18 @@ class HardwareController:
             # 這裡的邏輯與模擬中完全一致
             final_command = default_pose_hardware + action_raw * self.global_state.tuning_params.action_scale
 
-            # 4. 將指令格式化為字串並發送
+            # --- 【核心修改】將指令格式化為 "move all <12個數字>" ---
+            # 步驟 1: 將12個浮點數轉換為帶有4位小數的字串，並用空格連接
             action_str = ' '.join(f"{a:.4f}" for a in final_command)
-            command_to_send = f"jpos {action_str}\n"
+            # 步驟 2: 在字串前加上 "move all " 並在結尾加上換行符 "\n"
+            command_to_send = f"move all {action_str}\n"
 
+            # 將組裝好的指令發送到序列埠
             if self.ser and self.ser.is_open:
-                try: self.ser.write(command_to_send.encode('utf-8'))
-                except serial.SerialException: self.stop()
+                try: 
+                    self.ser.write(command_to_send.encode('utf-8'))
+                except serial.SerialException: 
+                    self.stop()
             
             # 5. 精確控制迴圈頻率
             loop_duration = time.perf_counter() - loop_start_time
