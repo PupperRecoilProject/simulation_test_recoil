@@ -95,8 +95,8 @@ param_adjust_steps:
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
 initial_tuning_params:
-  kp: 4.0
-  kd: 0.40
+  kp: 2.67  #8000/3000=2.6667
+  kd: 0.17 #500/3000=0.1667
   action_scale: 0.5
   bias: -0.0
 
