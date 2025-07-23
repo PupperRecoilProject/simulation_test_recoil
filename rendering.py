@@ -165,8 +165,8 @@ class DebugOverlay:
             "  SPACE: Pause/Play | N: Next Step\n"
             "  F: Float | G: Joint Test/Exit | B: Manual Ctrl\n"
             "  ESC: Exit       | R: Reset       | T: Serial Console\n"
-            "  X: Soft Reset   | TAB: Info Page | H: Hardware Mode\n"
-            "  M: Input Mode   | C: Clear Cmd   | 1-4: Select Policy\n" # <-- 修改 P 為 1-4
+            "  X: Soft Reset   | Y: Pose Reset  | H: Hardware Mode\n" # <-- 新增 Y
+            "  M: Input Mode   | C: Clear Cmd   | 1-4: Select Policy\n"
             "  U: Scan Serial  | J: Scan Gamepad\n"
             "  V: Cycle Terrain  | K: Toggle HW AI\n\n"
             "[Keyboard Mode]\n"
@@ -178,22 +178,21 @@ class DebugOverlay:
             "  Select/View: Reset"
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
-
+        
         serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)"
         gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
         terrain_name = state.terrain_manager_ref.get_current_terrain_name() if state.terrain_manager_ref else "N/A"
 
-        # --- 【新】動態顯示策略融合狀態 ---
         policy_text = ""
-        pm = state.policy_manager_ref # 獲取 PolicyManager 的參考
+        pm = state.policy_manager_ref
         if pm:
-            if pm.is_transitioning: # 如果正在融合中
-                source = pm.source_policy_name # 來源策略名稱
-                target = pm.target_policy_name # 目標策略名稱
-                alpha_percent = pm.transition_alpha * 100 # 融合權重百分比
+            if pm.is_transitioning:
+                source = pm.source_policy_name
+                target = pm.target_policy_name
+                alpha_percent = pm.transition_alpha * 100
                 policy_text = f"Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)"
-            else: # 如果不在融合中
-                policy_text = f"Policy: {pm.primary_policy_name}" # 顯示主要策略名稱
+            else:
+                policy_text = f"Policy: {pm.primary_policy_name}"
 
         p = state.tuning_params
         prefixes = ["   "] * 4
@@ -201,7 +200,7 @@ class DebugOverlay:
 
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
-            f"{policy_text}\n" # <-- 使用新的 policy_text
+            f"{policy_text}\n"
             f"Time: {sim.data.time:.2f} s\n"
             f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
@@ -215,7 +214,6 @@ class DebugOverlay:
             f"--- Command ---\n"
             f"{format_vec('User Cmd:', state.command)}\n"
         )
-
         if state.control_mode == "FLOATING":
             current_height = sim.data.qpos[2]
             target_height = sim.config.floating_controller.target_height
@@ -233,7 +231,7 @@ class DebugOverlay:
             base_obs_dim = sum(self.component_dims.values()) if self.component_dims else 0
             if base_obs_dim > 0:
                 history_len = len(onnx_input_vec) // base_obs_dim
-                current_frame_obs = onnx_input_vec[-base_obs_dim:] # 只顯示最新一幀的數據
+                current_frame_obs = onnx_input_vec[-base_obs_dim:]
                 
                 current_full_obs_idx = 0
                 for comp_name_in_recipe in self.recipe:

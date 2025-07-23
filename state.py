@@ -27,6 +27,8 @@ class SimulationState:
     
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
+    # --- 【新功能】新增姿態重置旗標 ---
+    pose_reset_requested: bool = False
 
     control_timer: float = 0.0
     
@@ -64,7 +66,6 @@ class SimulationState:
     policy_manager_ref: 'PolicyManager' = None
     # available_policies 列表儲存所有模型的名稱，供 UI 和鍵盤處理器使用
     available_policies: list = field(default_factory=list)
-    # 不再需要 active_policy_index，因為 PolicyManager 內部管理主要/目標策略
     
     hardware_controller_ref: 'HardwareController' = None
     hardware_is_connected: bool = False

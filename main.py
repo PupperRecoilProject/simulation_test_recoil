@@ -58,7 +58,7 @@ def main():
         policy_manager.reset() # 重置策略管理器狀態
         if state.control_mode == "FLOATING": state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
-        state.clear_command()
+        state.clear_command() # 清除指令
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
@@ -70,18 +70,33 @@ def main():
         sim.data.qpos[7:] = sim.default_pose
         sim.data.qvel[6:] = 0
         policy_manager.reset() # 重置策略管理器狀態
-        state.clear_command()
+        state.clear_command() # 清除指令
         state.joint_test_offsets.fill(0.0)
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
+        
+    # --- 【新功能】定義只重置姿態的函式 ---
+    def pose_reset():
+        """僅重置機器人姿態和物理狀態，但不重置使用者指令。"""
+        print("\n--- 正在執行姿態重置 (Pose Reset) ---")
+        if state.control_mode == "HARDWARE_MODE": return
+        sim.data.qpos[7:] = sim.default_pose
+        sim.data.qvel[6:] = 0
+        policy_manager.reset() # 重置AI策略的內部狀態（如觀察歷史）
+        state.joint_test_offsets.fill(0.0)
+        state.manual_final_ctrl.fill(0.0)
+        state.manual_mode_is_floating = False
+        mujoco.mj_forward(sim.model, sim.data)
+        state.pose_reset_requested = False # 完成後重置旗標
+        # 注意：這裡沒有呼叫 state.clear_command()
 
     hard_reset()
     # --- 【新】更新啟動提示訊息 ---
     print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
     print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, H: 硬體模式)")
-    print("    (M: 輸入模式, R: 硬重置, X: 軟重置, U: 掃描序列埠, J: 掃描搖桿)")
+    print("    (M: 輸入模式, R: 硬重置, X: 軟重置, Y: 姿態重置)")
     print("    (1,2,3..: 選擇目標策略 | 在硬體模式下，按 K 啟用/禁用 AI)")
 
     state.execute_one_step = False
@@ -95,6 +110,8 @@ def main():
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
+        # --- 【新功能】在主迴圈中檢查姿態重置請求 ---
+        if state.pose_reset_requested: pose_reset()
 
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()

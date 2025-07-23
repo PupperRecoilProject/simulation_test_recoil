@@ -31,6 +31,9 @@ class KeyboardInputHandler:
             if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
             if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
+            # --- 【新功能】綁定 'Y' 鍵到姿態重置 ---
+            if key == glfw.KEY_Y: self.state.pose_reset_requested = True; return
+
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
             if key == glfw.KEY_V: 
