@@ -22,10 +22,15 @@ def main():
     from xbox_controller import XboxController 
     print("\n--- 機器人模擬控制器 (含硬體與多模型模式) ---")
     
+    # --- 1. 初始化核心組件 ---
     config = load_config()
     state = SimulationState(config)
     sim = Simulation(config)
     
+    # --- 2. 【核心修改】將核心物件的參考存入 state，使其成為全域上下文 ---
+    state.sim = sim
+    
+    # --- 3. 按照依賴順序初始化所有管理器 ---
     terrain_manager = TerrainManager(sim.model, sim.data)
     state.terrain_manager_ref = terrain_manager
     
@@ -33,47 +38,40 @@ def main():
     state.floating_controller_ref = floating_controller
     
     serial_comm = SerialCommunicator()
+    state.serial_communicator_ref = serial_comm # 將 serial_comm 存入 state
+    
     xbox_handler = XboxInputHandler(state)
 
     obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     overlay = DebugOverlay()
     
     policy_manager = PolicyManager(config, obs_builder, overlay)
-    
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
     
-    hw_controller = HardwareController(config, policy_manager, state)
+    # 將 serial_comm 傳入 HardwareController 的建構函式
+    hw_controller = HardwareController(config, policy_manager, state, serial_comm) 
     state.hardware_controller_ref = hw_controller
 
-    keyboard_handler = KeyboardInputHandler(state, serial_comm, xbox_handler, terrain_manager)
+    # KeyboardInputHandler 不再需要直接傳入 serial_comm
+    keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager) 
     keyboard_handler.register_callbacks(sim.window)
 
+    # --- 4. 定義重置函式 ---
     def hard_reset():
-        """【加固版】硬重置，在交還控制權給AI前，增加一個短暫的物理穩定階段。"""
         print("\n--- 正在執行機器人硬重置 (R Key) ---")
         if state.control_mode == "HARDWARE_MODE": return
-
         mujoco.mj_resetData(sim.model, sim.data)
-
-        sim.data.qpos[0] = 0
-        sim.data.qpos[1] = 0
-        
+        sim.data.qpos[0], sim.data.qpos[1] = 0, 0
         start_ground_z = terrain_manager.get_height_at(0, 0)
         robot_height_offset = 0.3
         sim.data.qpos[2] = start_ground_z + robot_height_offset
         print(f"機器人重置至原點：地形高度({start_ground_z:.2f}m) + 偏移({robot_height_offset:.2f}m) = 世界Z({sim.data.qpos[2]:.2f}m)")
-
         sim.data.qpos[3:7] = np.array([1., 0, 0, 0])
         sim.data.qpos[7:] = sim.default_pose
         sim.data.qvel[:] = 0
-
-        # 【核心修正】在重置後，手動控制機器人保持home姿態並運行幾個物理步驟
-        # 這可以讓機器人與地面接觸的物理力得到穩定，防止AI接管的瞬間下沉。
         sim.data.ctrl[:] = sim.default_pose
-        for _ in range(10):
-            mujoco.mj_step(sim.model, sim.data)
-        
+        for _ in range(10): mujoco.mj_step(sim.model, sim.data)
         policy_manager.reset()
         if state.control_mode == "FLOATING": state.set_control_mode("WALKING")
         state.reset_control_state(sim.data.time)
@@ -82,18 +80,14 @@ def main():
         state.manual_final_ctrl.fill(0.0)
         state.manual_mode_is_floating = False
         state.hard_reset_requested = False
-        
         mujoco.mj_forward(sim.model, sim.data)
 
     def soft_reset():
-        """軟重置，僅重置機器人姿態和速度，保持當前位置。"""
         print("\n--- 正在執行空中姿態重置 (X Key) ---")
         if state.control_mode == "HARDWARE_MODE": return
-
         sim.data.qpos[3:7] = np.array([1., 0, 0, 0])
         sim.data.qpos[7:] = sim.default_pose
         sim.data.qvel[:] = 0
-        
         policy_manager.reset()
         state.clear_command()
         state.joint_test_offsets.fill(0.0)
@@ -102,11 +96,7 @@ def main():
         mujoco.mj_forward(sim.model, sim.data)
         state.soft_reset_requested = False
 
-    def regenerate_terrain():
-        """專門用於重新生成地形的函式。"""
-        if terrain_manager.is_functional:
-             terrain_manager.regenerate_terrain_and_adjust_robot(sim.data.qpos.copy())
-
+    # --- 5. 啟動程序 ---
     if terrain_manager.is_functional:
         terrain_manager.initial_generate()
     hard_reset()
@@ -115,9 +105,11 @@ def main():
     print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, H: 硬體模式)")
     print("    (M: 輸入模式, R: 重置機器人, X: 軟重置)")
     print("    (Y: 重生地形, P: 儲存地形PNG, 1..: 選策略 | K: 硬體AI開關)")
+    print("    (V: 切換地形模式)")
 
     state.execute_one_step = False
 
+    # --- 6. 主模擬迴圈 ---
     while not sim.should_close():
         if state.single_step_mode and not state.execute_one_step:
             sim.render(state, overlay)
@@ -125,14 +117,12 @@ def main():
         if state.execute_one_step: state.execute_one_step = False
 
         if state.input_mode == "GAMEPAD": xbox_handler.update_state()
-        
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
-        
+
         state.latest_pos = sim.data.body('torso').xpos.copy()
         state.latest_quat = sim.data.body('torso').xquat.copy()
         
-        # 【修改】將 state.terrain_mode 傳入，讓 manager 知道當前模式
         if terrain_manager.is_functional:
             terrain_manager.update(state.latest_pos, state.terrain_mode)
 
@@ -152,7 +142,7 @@ def main():
             if state.serial_command_to_send:
                 serial_comm.send_command(state.serial_command_to_send)
                 state.serial_command_to_send = ""
-        else:
+        else: # 模擬模式 (WALKING, FLOATING, etc.)
             if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
             onnx_input, action_final = policy_manager.get_action(state.command)
@@ -165,7 +155,7 @@ def main():
             elif state.control_mode == "JOINT_TEST":
                 final_ctrl = sim.default_pose + state.joint_test_offsets
                 sim.apply_position_control(final_ctrl, state.tuning_params)
-            else: # WALKING or FLOATING
+            else:
                 final_ctrl = sim.default_pose + action_final * state.tuning_params.action_scale
                 sim.apply_position_control(final_ctrl, state.tuning_params)
             
@@ -177,6 +167,7 @@ def main():
 
         sim.render(state, overlay)
 
+    # --- 7. 程式結束，清理資源 ---
     hw_controller.stop()
     sim.close()
     xbox_handler.close()

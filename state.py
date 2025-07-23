@@ -5,11 +5,14 @@ from dataclasses import dataclass, field
 from config import AppConfig
 from typing import TYPE_CHECKING
 
+# 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
     from floating_controller import FloatingController
     from policy import PolicyManager
     from hardware_controller import HardwareController
     from terrain_manager import TerrainManager
+    from serial_communicator import SerialCommunicator # 新增
+    from simulation import Simulation # 新增
 
 @dataclass
 class TuningParams:
@@ -35,9 +38,8 @@ class SimulationState:
     input_mode: str = "KEYBOARD"
     control_mode: str = "WALKING"
 
-    # --- 【新增】地形模式狀態 ---
-    terrain_mode: str = "INFINITE"  # "INFINITE" 或 "SINGLE"
-    single_terrain_index: int = 0   # 當處於 SINGLE 模式時，追蹤當前地形的索引
+    terrain_mode: str = "INFINITE"
+    single_terrain_index: int = 0
 
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
@@ -63,13 +65,16 @@ class SimulationState:
 
     tuning_param_index: int = 0
 
+    # --- 【核心修改】將所有主要物件的參考儲存在此，使其成為全域上下文 ---
+    sim: 'Simulation' = None
     floating_controller_ref: 'FloatingController' = None
     terrain_manager_ref: 'TerrainManager' = None
-    
     policy_manager_ref: 'PolicyManager' = None
+    hardware_controller_ref: 'HardwareController' = None
+    serial_communicator_ref: 'SerialCommunicator' = None # 新增 serial_communicator 的參考
+    
     available_policies: list = field(default_factory=list)
     
-    hardware_controller_ref: 'HardwareController' = None
     hardware_is_connected: bool = False
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "未連接"
