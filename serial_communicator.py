@@ -42,27 +42,28 @@ class SerialCommunicator:
 
     def _select_serial_port(self):
         """掃描並在終端機列出所有可用的序列埠供使用者選擇。"""
-        print("\n" + "="*20 + " 正在掃描序列埠 " + "="*20)
+        print("\n正在掃描可用的序列埠...")
         ports = serial.tools.list_ports.comports()
         if not ports:
-            print("--- 未找到任何序列埠 ---")
+            print("--- 錯誤: 未找到任何序列埠。請檢查您的設備連接。 ---")
             return None
 
-        teensy_ports = [p for p in ports if p.vid == 0x16C0 and p.pid == 0x0483]
+        TEENSY_VID = 0x16C0
+        TEENSY_PID = 0x0483
+        teensy_ports = [p for p in ports if p.vid == TEENSY_VID and p.pid == TEENSY_PID]
         if len(teensy_ports) == 1:
             print(f"自動檢測到 Teensy: {teensy_ports[0].device}")
             return teensy_ports[0].device
-        
-        print("\n請從以下列表中選擇您的設備:")
+
+        print("\n請從以下列表中選擇您的 Teensy 設備:")
         for i, port in enumerate(ports):
-            print(f"  [{i}] {port.device} - {port.description}")
+            vid = f"{port.vid:04X}" if port.vid is not None else "----"
+            pid = f"{port.pid:04X}" if port.pid is not None else "----"
+            print(f"  [{i}] {port.device} - {port.description} (VID:PID={vid}:{pid})")
+
         while True:
             try:
-                choice_str = input(f"請輸入選擇的編號 (0-{len(ports)-1}) 或直接按 Enter 跳過: ")
-                if not choice_str:
-                    print("已跳過序列埠選擇。")
-                    return None
-                choice = int(choice_str)
+                choice = int(input(f"請輸入選擇的編號 (0-{len(ports)-1}): "))
                 if 0 <= choice < len(ports):
                     return ports[choice].device
                 else:
