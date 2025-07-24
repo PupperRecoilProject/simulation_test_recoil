@@ -129,12 +129,15 @@ class HardwareController:
             except serial.SerialException as e: print(f"發送停止指令失敗: {e}")
 
     def parse_teensy_data(self, line: str):
-        """【穩健性強化】解析從 Teensy 傳來的一行數據。"""
+        """【核心修正】重構此函式，使其更具彈性，並能提供有用的除錯資訊。"""
         try:
             parts = line.split(',') # 使用逗號分割字串
-            if len(parts) != 57: # 檢查欄位數量是否正確
-                # print(f"⚠️ 解析警告: 預期 57 個欄位，實際收到 {len(parts)} 個。資料行: {line}")
-                return # 如果欄位數不對，則忽略此行數據
+            
+            # 【核心修正】檢查欄位數，如果數量不符，則在終端機印出提示，而不是默默忽略
+            if len(parts) != 57:
+                # 這個 print 非常重要，它會告訴您硬體傳來的數據格式到底是什麼樣的
+                print(f"[硬體數據除錯] 忽略格式不符的行 (欄位數: {len(parts)}): {line}")
+                return # 忽略此行數據
 
             with self.lock: # 鎖定狀態物件，防止多執行緒衝突
                 current_time = time.time() # 獲取當前時間
@@ -149,8 +152,8 @@ class HardwareController:
                 self.hw_state.target_current_ma = np.array(parts[33:45], dtype=np.float32) # 解析目標電流
                 self.hw_state.actual_current_ma = np.array(parts[45:57], dtype=np.float32) # 解析實際電流
                 
-                # 【核心修正】在成功解析後，立即更新最後更新時間
-                self.hw_state.last_update_time = current_time # 更新時間戳
+                # 在成功解析後，立即更新最後更新時間
+                self.hw_state.last_update_time = current_time
                 
         except (ValueError, IndexError) as e: # 捕捉解析時可能發生的錯誤
             print(f"❌ 解析硬體數據時出錯: {e} | 原始數據: {line}")
@@ -240,7 +243,7 @@ class HardwareController:
             try:
                 line = self.ser.readline().decode('utf-8', errors='ignore').strip() # 讀取一行數據
                 if line: # 如果讀取到內容
-                    self.parse_teensy_data(line) # 【核心修正】無論AI是否啟用，都持續解析數據
+                    self.parse_teensy_data(line) # 無論AI是否啟用，都持續解析數據
             except (serial.SerialException, OSError): # 捕捉序列埠錯誤
                 print("❌ 錯誤：序列埠斷開連接或讀取錯誤。"); self.stop(); break
             except Exception as e: # 捕捉未知錯誤

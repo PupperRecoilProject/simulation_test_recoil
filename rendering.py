@@ -78,10 +78,11 @@ class DebugOverlay:
         top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height) # 建立左上角矩形區域
 
         # --- 繪製主狀態面板背景 ---
-        mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8) # 【修正】只在定義的 top_left_rect 區域內繪製半透明黑色背景
+        mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8) # 在定義的矩形區域內繪製半透明黑色背景
 
         # --- 準備並繪製主狀態面板文字 ---
-        ai_status = "啟用" if state.hardware_ai_is_active else "禁用" # 根據狀態決定 AI 狀態文字
+        # 【中文化修正】將狀態文字從中文 "啟用/禁用" 改為英文，以確保在 MuJoCo 視窗中正確顯示。
+        ai_status = "Enabled" if state.hardware_ai_is_active else "Disabled" # 根據狀態決定 AI 狀態文字
         title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---" # 組合標題文字
         help_text = "Press 'H' to exit | 'K': Toggle AI | 'G': Joint Test | 1..: Select Policy" # 幫助文字
 
@@ -135,7 +136,7 @@ class DebugOverlay:
         console_rect = mujoco.MjrRect(left, bottom, panel_width, panel_height) # 建立置中的矩形區域
 
         # --- 繪製背景和文字 ---
-        mujoco.mjr_rectangle(console_rect, 0.2, 0.2, 0.2, 0.9) # 【修正】只在定義的 console_rect 區域內繪製半透明背景
+        mujoco.mjr_rectangle(console_rect, 0.2, 0.2, 0.2, 0.9) # 繪製半透明背景
 
         title = "--- SERIAL CONSOLE MODE (Press T to exit) ---" # 標題文字
         # 在矩形頂部繪製標題
