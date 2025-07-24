@@ -34,3 +34,7 @@ def test_teensy_connection():
         pytest.fail(f"Failed to open {port}: {exc}")
     else:
         ser.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__]))
