@@ -1,4 +1,6 @@
 import importlib
+import os
+import sys
 import pytest
 
 serial_spec = importlib.util.find_spec("serial")
@@ -7,6 +9,14 @@ if serial_spec is None:
 
 import serial
 import serial.tools.list_ports
+
+# When this file is run directly, the repository root is not automatically
+# on ``sys.path``. Add it so ``serial_utils`` can be imported without
+# installing the package.
+repo_root = os.path.dirname(os.path.dirname(__file__))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
 from serial_utils import TEENSY_VID, TEENSY_PID
 
 
