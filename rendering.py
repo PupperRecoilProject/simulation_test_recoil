@@ -78,7 +78,7 @@ class DebugOverlay:
         top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height) # 建立左上角矩形區域
 
         # --- 繪製主狀態面板背景 ---
-        mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8) # 在定義的矩形區域內繪製半透明黑色背景
+        mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8) # 【修正】只在定義的 top_left_rect 區域內繪製半透明黑色背景
 
         # --- 準備並繪製主狀態面板文字 ---
         ai_status = "啟用" if state.hardware_ai_is_active else "禁用" # 根據狀態決定 AI 狀態文字
@@ -104,7 +104,7 @@ class DebugOverlay:
             with hw_ctrl.lock: # 使用執行緒鎖確保資料安全
                 imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True) # 格式化 IMU 加速度數據
                 joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80) # 格式化關節角度數據
-                sensor_text = (
+                sensor_text = ( # 組合感測器讀數文字
                     f"\n\n--- Sensor Readings (from Robot) ---\n"
                     f"IMU Acc (g): {imu_acc_str}\n"
                     f"Joint Pos (rad):\n{joint_pos_str}"
@@ -112,6 +112,7 @@ class DebugOverlay:
         
         # 將所有文字組合在一起，用換行符分隔
         full_text = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{status_text}{sensor_text}"
+        # 在左上角矩形內繪製所有文字
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_left_rect, full_text, " ", context)
 
         # --- 定義並繪製使用者命令面板 (左下角) ---
@@ -120,6 +121,7 @@ class DebugOverlay:
         mujoco.mjr_rectangle(bottom_left_rect, 0.1, 0.1, 0.1, 0.8) # 繪製背景
 
         user_cmd_text = f"--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}" # 組合使用者命令文字
+        # 在左下角矩形內繪製命令文字
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, bottom_left_rect, user_cmd_text, " ", context)
 
 
@@ -133,23 +135,28 @@ class DebugOverlay:
         console_rect = mujoco.MjrRect(left, bottom, panel_width, panel_height) # 建立置中的矩形區域
 
         # --- 繪製背景和文字 ---
-        mujoco.mjr_rectangle(console_rect, 0.2, 0.2, 0.2, 0.9) # 繪製半透明背景
+        mujoco.mjr_rectangle(console_rect, 0.2, 0.2, 0.2, 0.9) # 【修正】只在定義的 console_rect 區域內繪製半透明背景
 
         title = "--- SERIAL CONSOLE MODE (Press T to exit) ---" # 標題文字
+        # 在矩形頂部繪製標題
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
         
         log_text = "\n".join(state.serial_latest_messages) # 將訊息日誌列表轉換為單一字串
+        
+        # 為日誌內容定義一個新的、稍微偏移的矩形，以產生邊距效果
         log_rect = mujoco.MjrRect(console_rect.left + 10, console_rect.bottom, console_rect.width - 20, console_rect.height - 50)
+        # 在標題下方繪製日誌內容
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, log_rect, "\n\n" + log_text, " ", context)
 
         cursor = "_" if int(time.time() * 2) % 2 == 0 else " " # 產生閃爍的游標效果
         buffer_text = f"> {state.serial_command_buffer}{cursor}" # 組合輸入緩衝區文字
+        # 在矩形底部繪製輸入提示符和緩衝區內容
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, console_rect, buffer_text, " ", context)
-
     
     def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染關節手動測試模式的專用介面。"""
         mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9) # 繪製背景
+        # 幫助文字
         help_text = (
             "--- JOINT TEST MODE ---\n\n"
             "Press '[ / ]' to Select Joint\n"
@@ -157,29 +164,31 @@ class DebugOverlay:
             "Press 'C' to Clear All Offsets\n\n"
             "Press 'G' to Return to Walking Mode"
         )
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context) # 繪製幫助文字
+        # 關節名稱列表
         joint_names = [
             "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee", "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
             "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee", "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
         ]
-        num_joints_per_col = 6
-        left_col_text, right_col_text = "", ""
-        for i, name in enumerate(joint_names):
-            prefix = ">> " if i == state.joint_test_index else "   "
-            offset_val = state.joint_test_offsets[i]
-            final_val = sim.default_pose[i] + offset_val
-            line_text = f"{prefix}{name:<15}: Offset={offset_val:+.2f}, Final={final_val:+.2f}\n"
-            if i < num_joints_per_col: left_col_text += line_text
-            else: right_col_text += line_text
+        num_joints_per_col = 6 # 每列顯示的關節數
+        left_col_text, right_col_text = "", "" # 初始化左右兩列的文字
+        for i, name in enumerate(joint_names): # 遍歷所有關節
+            prefix = ">> " if i == state.joint_test_index else "   " # 如果是當前選中的關節，則加上前綴
+            offset_val = state.joint_test_offsets[i] # 獲取偏移值
+            final_val = sim.default_pose[i] + offset_val # 計算最終角度
+            line_text = f"{prefix}{name:<15}: Offset={offset_val:+.2f}, Final={final_val:+.2f}\n" # 格式化單行文字
+            if i < num_joints_per_col: left_col_text += line_text # 加入左列
+            else: right_col_text += line_text # 加入右列
         
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context) # 繪製左列文字
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height) # 為右列定義一個新的矩形區域
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context) # 在新區域中繪製右列文字
 
     def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染手動 Final Ctrl 模式的專用介面。"""
-        floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
-        help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
+        floating_status = "Floating" if state.manual_mode_is_floating else "On Ground" # 獲取懸浮狀態
+        help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---" # 組合標題
+        # 幫助文字
         help_text = (
             f"{help_title}\n\n"
             "Press 'F' to Toggle Floating\n\n"
@@ -188,34 +197,37 @@ class DebugOverlay:
             "Press 'C' to Reset All Targets to 0\n\n"
             "Press 'G' to Return to Walking Mode"
         )
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context) # 繪製幫助文字
+        # 關節名稱
         joint_names = [
             "0: FR_Abduction", "1: FR_Hip", "2: FR_Knee", "3: FL_Abduction", "4: FL_Hip", "5: FL_Knee",
             "6: RR_Abduction", "7: RR_Hip", "8: RR_Knee", "9: RL_Abduction", "10: RL_Hip", "11: RL_Knee"
         ]
-        num_joints_per_col = 6
-        left_col_text, right_col_text = "", ""
-        current_joint_positions = sim.data.qpos[7:]
-        for i, name in enumerate(joint_names):
-            prefix = ">> " if i == state.manual_ctrl_index else "   "
-            target_val = state.manual_final_ctrl[i]
-            actual_val = current_joint_positions[i]
-            error = target_val - actual_val
-            line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n"
-            if i < num_joints_per_col: left_col_text += line_text
-            else: right_col_text += line_text
+        num_joints_per_col = 6 # 每列顯示的關節數
+        left_col_text, right_col_text = "", "" # 初始化左右列文字
+        current_joint_positions = sim.data.qpos[7:] # 獲取當前實際關節角度
+        for i, name in enumerate(joint_names): # 遍歷所有關節
+            prefix = ">> " if i == state.manual_ctrl_index else "   " # 選中關節的前綴
+            target_val = state.manual_final_ctrl[i] # 目標角度
+            actual_val = current_joint_positions[i] # 實際角度
+            error = target_val - actual_val # 計算誤差
+            line_text = f"{prefix}{name:<15}: Target={target_val:+.2f}, Actual={actual_val:+.2f}, Err={error:+.2f}\n" # 格式化單行文字
+            if i < num_joints_per_col: left_col_text += line_text # 加入左列
+            else: right_col_text += line_text # 加入右列
         
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context)
-        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, left_col_text, None, context) # 繪製左列
+        right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height) # 為右列定義矩形區域
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context) # 繪製右列
 
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
+        # 輔助函式，用於格式化向量為字串
         def format_vec(label: str, vec, precision=3, label_width=24):
-            if vec is None or vec.size == 0: return f"{label:<{label_width}}None"
-            vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100)
-            return f"{label:<{label_width}}{vec_str}"
+            if vec is None or vec.size == 0: return f"{label:<{label_width}}None" # 處理空向量
+            vec_str = np.array2string(vec, precision=precision, floatmode='fixed', suppress_small=True, threshold=100) # numpy 陣列轉字串
+            return f"{label:<{label_width}}{vec_str}" # 回傳格式化後的字串
 
+        # 幫助文字
         help_text = (
             "--- CONTROLS ---\n\n"
             "[Universal]\n"
@@ -236,27 +248,28 @@ class DebugOverlay:
             "  LB/RB: Select Param | D-Pad U/D: Adjust Value\n"
             "  Select/View: Reset"
         )
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPRIGHT, viewport, help_text, None, context) # 在右上角繪製幫助文字
         
-        serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)"
-        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)"
-        terrain_name = state.terrain_manager_ref.get_current_terrain_name(state) if state.terrain_manager_ref else "N/A"
+        serial_status = "Connected" if state.serial_is_connected else "Disconnected (U to Scan)" # 序列埠連接狀態
+        gamepad_status = "Connected" if state.gamepad_is_connected else "Disconnected (J to Scan)" # 遊戲搖桿連接狀態
+        terrain_name = state.terrain_manager_ref.get_current_terrain_name(state) if state.terrain_manager_ref else "N/A" # 地形名稱
 
-        policy_text = ""
-        pm = state.policy_manager_ref
-        if pm:
-            if pm.is_transitioning:
+        policy_text = "" # 初始化策略文字
+        pm = state.policy_manager_ref # 獲取策略管理器
+        if pm: # 如果存在
+            if pm.is_transitioning: # 如果正在切換
                 source = pm.source_policy_name
                 target = pm.target_policy_name
                 alpha_percent = pm.transition_alpha * 100
-                policy_text = f"Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)"
-            else:
-                policy_text = f"Policy: {pm.primary_policy_name}"
+                policy_text = f"Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)" # 顯示切換進度
+            else: # 否則
+                policy_text = f"Policy: {pm.primary_policy_name}" # 顯示當前策略
 
-        p = state.tuning_params
-        prefixes = ["   "] * 4
-        prefixes[state.tuning_param_index] = ">> "
+        p = state.tuning_params # 獲取調校參數
+        prefixes = ["   "] * 4 # 初始化參數選擇前綴
+        prefixes[state.tuning_param_index] = ">> " # 為當前選中的參數加上前綴
 
+        # 組合左上角的資訊文字
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
             f"{policy_text}\n"
@@ -273,38 +286,40 @@ class DebugOverlay:
             f"--- Command ---\n"
             f"{format_vec('User Cmd:', state.command)}\n"
         )
-        if state.control_mode == "FLOATING":
-            current_height = sim.data.qpos[2]
-            target_world_z = state.floating_controller_ref.data.mocap_pos[state.floating_controller_ref.mocap_index][2]
+        if state.control_mode == "FLOATING": # 如果是懸浮模式
+            current_height = sim.data.qpos[2] # 獲取當前高度
+            target_world_z = state.floating_controller_ref.data.mocap_pos[state.floating_controller_ref.mocap_index][2] # 獲取目標世界Z座標
+            # 增加懸浮模式的資訊
             top_left_text += (
                 f"\n--- Floating Info ---\n"
                 f"{format_vec('Target World Z:', np.array([target_world_z]), 3)}\n"
                 f"{format_vec('Current Z:', np.array([current_height]), 3)}\n"
             )
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, top_left_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, top_left_text, None, context) # 繪製左上角文字
         
-        bottom_left_text = f"--- ONNX INPUTS (Page {state.display_page + 1}/{state.num_display_pages}) ---\n"
-        onnx_input_vec = state.latest_onnx_input
-        if onnx_input_vec.size > 0 and self.recipe and state.display_page < len(self.display_pages_content):
-            current_page_components = self.display_pages_content[state.display_page]
-            base_obs_dim = sum(self.component_dims.values()) if self.component_dims else 0
-            if base_obs_dim > 0:
-                history_len = len(onnx_input_vec) // base_obs_dim
-                current_frame_obs = onnx_input_vec[-base_obs_dim:]
+        bottom_left_text = f"--- ONNX INPUTS (Page {state.display_page + 1}/{state.num_display_pages}) ---\n" # ONNX 輸入標題
+        onnx_input_vec = state.latest_onnx_input # 獲取最新的 ONNX 輸入
+        if onnx_input_vec.size > 0 and self.recipe and state.display_page < len(self.display_pages_content): # 檢查是否有數據可顯示
+            current_page_components = self.display_pages_content[state.display_page] # 獲取當前頁面應顯示的元件
+            base_obs_dim = sum(self.component_dims.values()) if self.component_dims else 0 # 計算單幀觀察的總維度
+            if base_obs_dim > 0: # 如果維度大於0
+                history_len = len(onnx_input_vec) // base_obs_dim # 計算歷史幀數
+                current_frame_obs = onnx_input_vec[-base_obs_dim:] # 取出最新一幀的觀察數據
                 
-                current_full_obs_idx = 0
-                for comp_name_in_recipe in self.recipe:
-                    dim = self.component_dims.get(comp_name_in_recipe, 0)
-                    if dim > 0:
-                        if comp_name_in_recipe in current_page_components:
-                            start_idx, end_idx = current_full_obs_idx, current_full_obs_idx + dim
-                            value_slice = current_frame_obs[start_idx:end_idx]
-                            bottom_left_text += format_vec(f"{comp_name_in_recipe} [{dim}d]:", value_slice, 2) + "\n"
-                        current_full_obs_idx += dim
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, bottom_left_text, None, context)
+                current_full_obs_idx = 0 # 初始化索引
+                for comp_name_in_recipe in self.recipe: # 遍歷配方中的所有元件
+                    dim = self.component_dims.get(comp_name_in_recipe, 0) # 獲取元件維度
+                    if dim > 0: # 如果維度大於0
+                        if comp_name_in_recipe in current_page_components: # 如果該元件應在當前頁面顯示
+                            start_idx, end_idx = current_full_obs_idx, current_full_obs_idx + dim # 計算數據切片索引
+                            value_slice = current_frame_obs[start_idx:end_idx] # 切片
+                            bottom_left_text += format_vec(f"{comp_name_in_recipe} [{dim}d]:", value_slice, 2) + "\n" # 格式化並加入顯示字串
+                        current_full_obs_idx += dim # 更新索引
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, bottom_left_text, None, context) # 繪製左下角文字
         
-        torso_lin_vel = sim.data.cvel[sim.torso_id, 3:]
-        torso_ang_vel_local = self._get_local_ang_vel(sim.data, sim.torso_id)
+        torso_lin_vel = sim.data.cvel[sim.torso_id, 3:] # 獲取軀幹世界座標系下的線速度
+        torso_ang_vel_local = self._get_local_ang_vel(sim.data, sim.torso_id) # 獲取軀幹局部座標系下的角速度
+        # 組合右下角的資訊文字
         bottom_right_text = (
             f"--- ONNX OUTPUTS & STATE ---\n"
             f"{format_vec('Final Action:', state.latest_action_raw)}\n"
@@ -314,15 +329,16 @@ class DebugOverlay:
             f"{format_vec('Lin Vel (World):', torso_lin_vel)}\n"
             f"{format_vec('Ang Vel (Local):', torso_ang_vel_local)}"
         )
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT, viewport, bottom_right_text, None, context)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT, viewport, bottom_right_text, None, context) # 繪製右下角文字
     
     def _get_local_ang_vel(self, data, torso_id):
         """輔助函式，計算局部角速度用於顯示。"""
-        torso_quat = data.xquat[torso_id]
-        norm = np.sum(np.square(torso_quat))
-        if norm < 1e-8: return np.zeros(3)
-        torso_quat /= np.sqrt(norm)
-        q_inv = np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / norm
-        u, s = q_inv[1:], q_inv[0]
-        world_ang_vel = data.cvel[torso_id, :3]
+        torso_quat = data.xquat[torso_id] # 獲取軀幹的四元數
+        norm = np.sum(np.square(torso_quat)) # 計算四元數的模長平方
+        if norm < 1e-8: return np.zeros(3) # 如果模長過小，返回零向量
+        torso_quat /= np.sqrt(norm) # 標準化四元數
+        q_inv = np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / norm # 計算共軛四元數（即逆）
+        u, s = q_inv[1:], q_inv[0] # 分解為向量部分和純量部分
+        world_ang_vel = data.cvel[torso_id, :3] # 獲取世界座標系下的角速度
+        # 使用四元數旋轉公式將世界角速度轉換為局部角速度
         return 2 * np.dot(u, world_ang_vel) * u + (s*s - np.dot(u, u)) * world_ang_vel + 2*s*np.cross(u, world_ang_vel)
