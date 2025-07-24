@@ -22,6 +22,7 @@ from serial_utils import TEENSY_VID, TEENSY_PID  # 用於辨識 Teensy 的 VID/P
 
 def test_teensy_connection():
     """確認是否能順利開啟 Teensy 的序列埠。"""
+
     print("\n[資訊] 正在尋找 Teensy 裝置...")
     ports = [p.device for p in serial.tools.list_ports.comports()
              if p.vid == TEENSY_VID and p.pid == TEENSY_PID]
@@ -36,10 +37,13 @@ def test_teensy_connection():
         pytest.fail(f"無法開啟 {port}: {exc}")
     else:
         print(f"[成功] 已開啟 {port}")
+
         ser.close()
 
 
 if __name__ == "__main__":
     # 允許此檔案被單獨執行以進行測試
+
     print("執行 Teensy 連線測試...")
     raise SystemExit(pytest.main([__file__, "-s"]))
+
