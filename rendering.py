@@ -74,7 +74,7 @@ class DebugOverlay:
         # --- 定義主狀態面板 (左上角) ---
         padding = 10 # 定義面板與視窗邊緣的間距
         panel_width = int(viewport.width * 0.45) # 面板寬度為視窗的 45%
-        panel_height = int(viewport.height * 0.5) # 面板高度為視窗的 50%
+        panel_height = int(viewport.height * 0.6) # 面板高度為視窗的 60%
         top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height) # 建立左上角矩形區域
 
         # --- 繪製主狀態面板背景 ---
@@ -105,7 +105,7 @@ class DebugOverlay:
                 imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True) # 格式化 IMU 加速度數據
                 joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80) # 格式化關節角度數據
                 sensor_text = (
-                    f"\n--- Sensor Readings (from Robot) ---\n"
+                    f"\n\n--- Sensor Readings (from Robot) ---\n"
                     f"IMU Acc (g): {imu_acc_str}\n"
                     f"Joint Pos (rad):\n{joint_pos_str}"
                 )
@@ -139,7 +139,8 @@ class DebugOverlay:
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
         
         log_text = "\n".join(state.serial_latest_messages) # 將訊息日誌列表轉換為單一字串
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, "\n\n" + log_text, " ", context)
+        log_rect = mujoco.MjrRect(console_rect.left + 10, console_rect.bottom, console_rect.width - 20, console_rect.height - 50)
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, log_rect, "\n\n" + log_text, " ", context)
 
         cursor = "_" if int(time.time() * 2) % 2 == 0 else " " # 產生閃爍的游標效果
         buffer_text = f"> {state.serial_command_buffer}{cursor}" # 組合輸入緩衝區文字
