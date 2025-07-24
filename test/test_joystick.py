@@ -1,6 +1,14 @@
-# test_joystick.py
-import pygame
+"""Simple joystick demo used for manual testing."""
+
+import importlib.util
 import time
+
+import pytest
+
+if importlib.util.find_spec("pygame") is None:
+    pytest.skip("pygame not installed", allow_module_level=True)
+
+import pygame
 
 pygame.init()
 pygame.joystick.init()

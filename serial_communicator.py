@@ -4,6 +4,7 @@ import time
 import sys
 import threading
 import serial.tools.list_ports
+from serial_utils import select_serial_port
 from collections import deque
 
 class SerialCommunicator:
@@ -42,33 +43,7 @@ class SerialCommunicator:
 
     def _select_serial_port(self):
         """掃描並在終端機列出所有可用的序列埠供使用者選擇。"""
-        print("\n" + "="*20 + " 正在掃描序列埠 " + "="*20)
-        ports = serial.tools.list_ports.comports()
-        if not ports:
-            print("--- 未找到任何序列埠 ---")
-            return None
-
-        teensy_ports = [p for p in ports if p.vid == 0x16C0 and p.pid == 0x0483]
-        if len(teensy_ports) == 1:
-            print(f"自動檢測到 Teensy: {teensy_ports[0].device}")
-            return teensy_ports[0].device
-        
-        print("\n請從以下列表中選擇您的設備:")
-        for i, port in enumerate(ports):
-            print(f"  [{i}] {port.device} - {port.description}")
-        while True:
-            try:
-                choice_str = input(f"請輸入選擇的編號 (0-{len(ports)-1}) 或直接按 Enter 跳過: ")
-                if not choice_str:
-                    print("已跳過序列埠選擇。")
-                    return None
-                choice = int(choice_str)
-                if 0 <= choice < len(ports):
-                    return ports[choice].device
-                else:
-                    print("輸入無效，請重新輸入。")
-            except (ValueError, IndexError):
-                print("輸入無效，請輸入列表中的數字。")
+        return select_serial_port()
 
     def connect(self, baud_rate=115200) -> bool:
         """連接到指定的序列埠並啟動讀取執行緒。"""
