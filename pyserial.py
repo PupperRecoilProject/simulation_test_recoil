@@ -2,7 +2,7 @@ import serial
 import time
 import sys
 import threading
-import serial.tools.list_ports
+from serial_utils import select_serial_port
 
 exit_signal = threading.Event()
 
@@ -23,33 +23,6 @@ def read_from_port(ser):
             break
         time.sleep(0.01)
 
-def select_serial_port():
-    print("正在掃描可用的序列埠...")
-    ports = serial.tools.list_ports.comports()
-    if not ports:
-        print("--- 錯誤: 未找到任何序列埠。請檢查您的設備連接。 ---")
-        return None
-    teensy_ports = []
-    TEENSY_VID = 0x16C0
-    TEENSY_PID = 0x0483
-    for port in ports:
-        if port.vid == TEENSY_VID and port.pid == TEENSY_PID:
-            teensy_ports.append(port)
-    if len(teensy_ports) == 1:
-        print(f"自動檢測到 Teensy: {teensy_ports[0].device}")
-        return teensy_ports[0].device
-    print("\n請從以下列表中選擇您的 Teensy 設備:")
-    for i, port in enumerate(ports):
-        print(f"  [{i}] {port.device} - {port.description} (VID:PID={port.vid:04X}:{port.pid:04X})")
-    while True:
-        try:
-            choice = int(input(f"請輸入選擇的編號 (0-{len(ports)-1}): "))
-            if 0 <= choice < len(ports):
-                return ports[choice].device
-            else:
-                print("輸入無效，請重新輸入。")
-        except (ValueError, IndexError):
-            print("輸入無效，請輸入列表中的數字。")
 
 def main():
     SERIAL_PORT = select_serial_port()
