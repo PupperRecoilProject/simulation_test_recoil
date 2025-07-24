@@ -36,7 +36,7 @@ class SimulationState:
     
     sim_mode_text: str = "Initializing"
     input_mode: str = "KEYBOARD"
-    control_mode: str = "WALKING"
+    control_mode: str = "WALKING" # 當前的總控制模式
 
     terrain_mode: str = "INFINITE"
     single_terrain_index: int = 0
@@ -49,9 +49,10 @@ class SimulationState:
     display_page: int = 0
     num_display_pages: int = 2
 
-    serial_command_buffer: str = ""
-    serial_command_to_send: str = ""
-    serial_latest_messages: list = field(default_factory=list)
+    # --- 【序列埠控制台模式相關狀態】 ---
+    serial_command_buffer: str = "" # 用於儲存使用者在序列埠模式下正在輸入的文字
+    serial_command_to_send: str = "" # 當使用者按下Enter後，指令會被移到這裡，等待main.py發送
+    serial_latest_messages: list = field(default_factory=list) # 儲存從硬體收到的訊息日誌，用於顯示
 
     joint_test_index: int = 0
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
@@ -139,10 +140,10 @@ class SimulationState:
                  print(f"控制模式已自動切換至: {self.control_mode}")
 
         is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
-        is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL"]
+        is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"] # 【修正】將 SERIAL_MODE 也視為手動模式
         
         if is_entering_ai_mode and is_leaving_manual_mode:
-            print("從手動模式返回，正在重置 AI 狀態以確保平滑過渡...")
+            print("從手動/序列埠模式返回，正在重置 AI 狀態以確保平滑過渡...")
             if self.policy_manager_ref:
                 self.policy_manager_ref.reset()
             self.clear_command()
