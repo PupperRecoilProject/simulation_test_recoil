@@ -12,19 +12,19 @@ class SerialCommunicator:
     【修改版】一個類別，統一管理序列埠的連接與通訊。
     它作為唯一的連接建立者，可以將已建立的連接「出借」給其他模組（如HardwareController）使用。
     """
-    def __init__(self, max_log_lines=15):
+    def __init__(self, max_log_lines=50): # 【容量加大】將日誌行數從 15 增加到 50
         """初始化通訊器。"""
         self.ser = None # serial.Serial 物件，在連接成功後被賦值
         self.read_thread = None # 用於讀取序列埠數據的背景執行緒
         self.exit_signal = threading.Event() # 一個安全地停止背景執行緒的信號
         self.is_connected = False # 標記當前是否已連接
         self.port_name = None # 儲存已連接的序列埠名稱
-        self.message_log = deque(maxlen=max_log_lines) # 儲存最新的訊息日誌
-        self.is_managed_by_hardware_controller = False # 【新增】旗標，當為True時，表示連接由HardwareController管理，本類別暫停活動
+        self.message_log = deque(maxlen=max_log_lines) # 使用新的容量上限，建立一個固定長度的訊息佇列
+        self.is_managed_by_hardware_controller = False # 旗標，當為True時，表示連接由HardwareController管理，本類別暫停活動
         print("✅ 序列埠通訊器已初始化 (等待連接指令)。")
 
     def get_serial_connection(self) -> serial.Serial | None:
-        """【新增】返回已建立的 serial.Serial 物件，供 HardwareController 使用。"""
+        """返回已建立的 serial.Serial 物件，供 HardwareController 使用。"""
         if self.is_connected: # 如果已連接
             return self.ser # 返回序列埠物件
         return None # 否則返回 None
@@ -69,9 +69,8 @@ class SerialCommunicator:
     def _read_from_port(self):
         """[背景執行緒函式] 持續地從序列埠讀取數據並存入日誌。"""
         while not self.exit_signal.is_set(): # 當未收到退出信號時
-            # 【修改】如果控制權已交給硬體控制器，則此執行緒進入休眠，避免資源衝突
-            if self.is_managed_by_hardware_controller:
-                time.sleep(0.1) # 短暫休眠
+            if self.is_managed_by_hardware_controller: # 如果控制權已交給硬體控制器
+                time.sleep(0.1) # 短暫休眠，避免資源競爭
                 continue # 繼續下一輪迴圈
                 
             try:
@@ -80,8 +79,7 @@ class SerialCommunicator:
                     if response: # 如果讀到內容
                         self.message_log.append(response) # 加入日誌
             except serial.SerialException: # 捕捉序列埠錯誤
-                # 【中文化修正】將添加到日誌中的錯誤訊息改為英文
-                self.message_log.append("[ERROR] Serial port disconnected.")
+                self.message_log.append("[ERROR] Serial port disconnected.") # 在日誌中記錄錯誤
                 self.is_connected = False # 更新連接狀態
                 break # 退出迴圈
             time.sleep(0.01) # 短暫休眠
@@ -94,8 +92,7 @@ class SerialCommunicator:
                 self.ser.write(command_to_send.encode('utf-8')) # 發送指令
                 self.message_log.append(f"> {command}") # 將發送的指令也加入日誌
             except serial.SerialException as e: # 捕捉發送錯誤
-                 # 【中文化修正】將添加到日誌中的錯誤訊息改為英文
-                 self.message_log.append(f"[ERROR] Send failed: {e}")
+                 self.message_log.append(f"[ERROR] Send failed: {e}") # 在日誌中記錄錯誤
                  self.is_connected = False # 更新連接狀態
 
     def get_latest_messages(self) -> list:
@@ -104,8 +101,7 @@ class SerialCommunicator:
 
     def close(self):
         """安全地關閉序列埠和讀取執行緒。"""
-        # 如果硬體控制器正在管理連接，則本類別不應關閉它
-        if self.is_managed_by_hardware_controller: return
+        if self.is_managed_by_hardware_controller: return # 如果硬體控制器正在管理連接，則本類別不應關閉它
 
         if self.read_thread and self.read_thread.is_alive(): # 如果讀取執行緒在運行
             self.exit_signal.set() # 發送退出信號
