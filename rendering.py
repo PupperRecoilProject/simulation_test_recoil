@@ -13,25 +13,28 @@ class DebugOverlay:
     負責在 MuJoCo 視窗上渲染所有文字除錯資訊。
     """
     def __init__(self):
-        self.recipe: List[str] = []
-        self.component_dims: Dict[str, int] = {}
+        self.recipe: List[str] = [] # 儲存當前模型使用的觀察配方
+        self.component_dims: Dict[str, int] = {} # 儲存配方中各元件的維度
         
+        # 定義不同顯示頁面對應的觀察元件
         self.display_pages_content = [
             ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'],
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
-        state_class_ref = SimulationState
-        state_class_ref.num_display_pages = len(self.display_pages_content)
+        state_class_ref = SimulationState # 獲取 SimulationState 類別的參考
+        state_class_ref.num_display_pages = len(self.display_pages_content) # 將總頁數設定到 State 類別中
 
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要顯示的觀察配方。"""
-        self.recipe = recipe
+        self.recipe = recipe # 更新當前配方
+        # 所有可能的觀察元件及其維度
         ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 
                         'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 
                         'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 
                         'phase_signal':1, 'accelerometer': 3}
+        # 根據傳入的配方，建立一個僅包含當前所需元件維度的字典
         self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
-        print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
+        print(f"  -> DebugOverlay 切換配方至: {self.recipe}") # 在控制台輸出提示
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """
@@ -40,84 +43,112 @@ class DebugOverlay:
         """
         # --- 步驟 1: 始終更新和渲染 3D 場景 ---
         # 確保攝影機追蹤機器人 (除非使用者正在手動操作視角)
-        if not (sim.mouse_button_left or sim.mouse_button_right):
-             sim.cam.lookat = sim.data.body('torso').xpos
+        if not (sim.mouse_button_left or sim.mouse_button_right): # 檢查滑鼠左右鍵是否被按下
+             sim.cam.lookat = sim.data.body('torso').xpos # 將攝影機焦點設定為軀幹位置
 
         # 如果地形被更新，則將新數據上傳到GPU
-        terrain_manager = getattr(state, 'terrain_manager_ref', None)
-        if terrain_manager and terrain_manager.needs_scene_update:
-            mujoco.mjr_uploadHField(sim.model, sim.context, terrain_manager.hfield_id)
-            terrain_manager.needs_scene_update = False
+        terrain_manager = getattr(state, 'terrain_manager_ref', None) # 從 state 安全地獲取地形管理器參考
+        if terrain_manager and terrain_manager.needs_scene_update: # 檢查地形管理器是否存在且需要更新
+            mujoco.mjr_uploadHField(sim.model, sim.context, terrain_manager.hfield_id) # 上傳高度場數據到渲染上下文
+            terrain_manager.needs_scene_update = False # 重置更新旗標
             print("🔄 地形幾何已上傳至 GPU 進行渲染。")
         
         # 更新場景物件並進行渲染
-        mujoco.mjv_updateScene(sim.model, sim.data, sim.opt, None, sim.cam, mujoco.mjtCatBit.mjCAT_ALL, sim.scene)
-        mujoco.mjr_render(viewport, sim.scene, sim.context)
+        mujoco.mjv_updateScene(sim.model, sim.data, sim.opt, None, sim.cam, mujoco.mjtCatBit.mjCAT_ALL, sim.scene) # 更新 MuJoCo 渲染場景
+        mujoco.mjr_render(viewport, sim.scene, sim.context) # 執行渲染
         
         # --- 步驟 2: 根據當前模式，選擇並疊加對應的文字資訊 ---
-        if state.control_mode == "HARDWARE_MODE":
-            self.render_hardware_overlay(viewport, context, state)
-        elif state.control_mode == "SERIAL_MODE":
-            self.render_serial_console(viewport, context, state)
-        elif state.control_mode == "JOINT_TEST":
-            self.render_joint_test_overlay(viewport, context, state, sim)
-        elif state.control_mode == "MANUAL_CTRL":
-            self.render_manual_ctrl_overlay(viewport, context, state, sim)
-        else:
-            self.render_simulation_overlay(viewport, context, state, sim)
+        if state.control_mode == "HARDWARE_MODE": # 如果是硬體模式
+            self.render_hardware_overlay(viewport, context, state) # 呼叫硬體模式的渲染函式
+        elif state.control_mode == "SERIAL_MODE": # 如果是序列埠模式
+            self.render_serial_console(viewport, context, state) # 呼叫序列埠模式的渲染函式
+        elif state.control_mode == "JOINT_TEST": # 如果是關節測試模式
+            self.render_joint_test_overlay(viewport, context, state, sim) # 呼叫關節測試模式的渲染函式
+        elif state.control_mode == "MANUAL_CTRL": # 如果是手動控制模式
+            self.render_manual_ctrl_overlay(viewport, context, state, sim) # 呼叫手動控制模式的渲染函式
+        else: # 其他所有模式（如 WALKING, FLOATING）
+            self.render_simulation_overlay(viewport, context, state, sim) # 呼叫預設的模擬資訊渲染函式
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
-        """渲染硬體控制模式的專用介面。"""
-        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.95) # 加上半透明背景以突顯文字
-        ai_status = "啟用" if state.hardware_ai_is_active else "禁用"
-        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
-        help_text = "Press 'H' to exit | 'K': Toggle AI | 'G': Joint Test | 1-4: Select Policy"
+        """【介面修正】渲染硬體控制模式的專用介面，使用 MjrRect 進行精確排版。"""
+        # --- 定義主狀態面板 (左上角) ---
+        padding = 10 # 定義面板與視窗邊緣的間距
+        panel_width = int(viewport.width * 0.45) # 面板寬度為視窗的 45%
+        panel_height = int(viewport.height * 0.5) # 面板高度為視窗的 50%
+        top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height) # 建立左上角矩形區域
 
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + help_text, " ", context)
-        
-        policy_text = ""
-        pm = state.policy_manager_ref
-        if pm:
-            if pm.is_transitioning:
-                source = pm.source_policy_name
-                target = pm.target_policy_name
-                alpha_percent = pm.transition_alpha * 100
-                policy_text = f"Active Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)"
-            else:
-                policy_text = f"Active Policy: {pm.primary_policy_name}"
+        # --- 繪製主狀態面板背景 ---
+        mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8) # 在定義的矩形區域內繪製半透明黑色背景
 
-        status_text = f"\n\n\n\n--- Real-time Hardware Status ---\n{policy_text}\n{state.hardware_status_text}"
-        
-        hw_ctrl = state.hardware_controller_ref
-        if hw_ctrl and hw_ctrl.is_running:
-            with hw_ctrl.lock:
-                imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True)
-                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
-                
-                status_text += f"\n\n--- Sensor Readings (from Robot) ---\n"
-                status_text += f"IMU Acc (g): {imu_acc_str}\n"
-                status_text += f"Joint Pos (rad):\n{joint_pos_str}"
+        # --- 準備並繪製主狀態面板文字 ---
+        ai_status = "啟用" if state.hardware_ai_is_active else "禁用" # 根據狀態決定 AI 狀態文字
+        title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---" # 組合標題文字
+        help_text = "Press 'H' to exit | 'K': Toggle AI | 'G': Joint Test | 1..: Select Policy" # 幫助文字
 
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, status_text, None, context)
+        policy_text = "" # 初始化策略文字
+        pm = state.policy_manager_ref # 獲取策略管理器
+        if pm: # 如果策略管理器存在
+            if pm.is_transitioning: # 如果正在切換策略
+                source = pm.source_policy_name # 來源策略名稱
+                target = pm.target_policy_name # 目標策略名稱
+                alpha_percent = pm.transition_alpha * 100 # 計算切換進度百分比
+                policy_text = f"Active Policy: Blending {source} -> {target} ({alpha_percent:.0f}%)" # 組合策略切換狀態文字
+            else: # 如果不在切換中
+                policy_text = f"Active Policy: {pm.primary_policy_name}" # 顯示當前主要策略
+
+        status_text = f"--- Real-time Hardware Status ---\n{state.hardware_status_text}" # 組合硬體狀態文字
+
+        sensor_text = "" # 初始化感測器文字
+        hw_ctrl = state.hardware_controller_ref # 獲取硬體控制器
+        if hw_ctrl and hw_ctrl.is_running: # 如果硬體控制器存在且在運行中
+            with hw_ctrl.lock: # 使用執行緒鎖確保資料安全
+                imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True) # 格式化 IMU 加速度數據
+                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80) # 格式化關節角度數據
+                sensor_text = (
+                    f"\n--- Sensor Readings (from Robot) ---\n"
+                    f"IMU Acc (g): {imu_acc_str}\n"
+                    f"Joint Pos (rad):\n{joint_pos_str}"
+                )
         
-        user_cmd_text = f"\n--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, user_cmd_text, None, context)
+        # 將所有文字組合在一起，用換行符分隔
+        full_text = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{status_text}{sensor_text}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_left_rect, full_text, " ", context)
+
+        # --- 定義並繪製使用者命令面板 (左下角) ---
+        cmd_panel_height = int(viewport.height * 0.1) # 命令面板高度為視窗的 10%
+        bottom_left_rect = mujoco.MjrRect(padding, padding, panel_width, cmd_panel_height) # 建立左下角矩形區域
+        mujoco.mjr_rectangle(bottom_left_rect, 0.1, 0.1, 0.1, 0.8) # 繪製背景
+
+        user_cmd_text = f"--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}" # 組合使用者命令文字
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, bottom_left_rect, user_cmd_text, " ", context)
+
 
     def render_serial_console(self, viewport, context, state: SimulationState):
-        """渲染序列埠控制台介面。"""
-        mujoco.mjr_rectangle(viewport, 0.2, 0.2, 0.2, 0.9) # 加上半透明背景
-        title = "--- SERIAL CONSOLE MODE (Press T to exit) ---"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, title, None, context)
-        log_text = "\n".join(state.serial_latest_messages)
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, viewport, "\n\n" + log_text, " ", context)
-        cursor = "_" if int(time.time() * 2) % 2 == 0 else " "
-        buffer_text = f"> {state.serial_command_buffer}{cursor}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, buffer_text, None, context)
+        """【介面修正】渲染序列埠控制台介面，使其置中且大小適中。"""
+        # --- 定義控制台面板 ---
+        panel_width = int(viewport.width * 0.8) # 面板寬度為視窗的 80%
+        panel_height = int(viewport.height * 0.9) # 面板高度為視窗的 90%
+        left = (viewport.width - panel_width) // 2 # 計算左邊界以使其水平置中
+        bottom = (viewport.height - panel_height) // 2 # 計算下邊界以使其垂直置中
+        console_rect = mujoco.MjrRect(left, bottom, panel_width, panel_height) # 建立置中的矩形區域
+
+        # --- 繪製背景和文字 ---
+        mujoco.mjr_rectangle(console_rect, 0.2, 0.2, 0.2, 0.9) # 繪製半透明背景
+
+        title = "--- SERIAL CONSOLE MODE (Press T to exit) ---" # 標題文字
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
+        
+        log_text = "\n".join(state.serial_latest_messages) # 將訊息日誌列表轉換為單一字串
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, "\n\n" + log_text, " ", context)
+
+        cursor = "_" if int(time.time() * 2) % 2 == 0 else " " # 產生閃爍的游標效果
+        buffer_text = f"> {state.serial_command_buffer}{cursor}" # 組合輸入緩衝區文字
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, console_rect, buffer_text, " ", context)
+
     
     def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染關節手動測試模式的專用介面。"""
-        mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
+        mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9) # 繪製背景
         help_text = (
             "--- JOINT TEST MODE ---\n\n"
             "Press '[ / ]' to Select Joint\n"
