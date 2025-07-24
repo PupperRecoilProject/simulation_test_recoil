@@ -16,35 +16,28 @@ class KeyboardInputHandler:
 
     def register_callbacks(self, window):
         """向 GLFW 註冊鍵盤事件的回呼函式。"""
-        glfw.set_key_callback(window, self.key_callback) # 註冊按鍵事件
-        glfw.set_char_callback(window, self.char_callback) # 註冊字元輸入事件
+        glfw.set_key_callback(window, self.key_callback)
+        glfw.set_char_callback(window, self.char_callback)
 
     def char_callback(self, window, codepoint):
         """處理可列印字元的輸入，專門用於序列埠模式。"""
-        # 只有在序列埠模式下，才將輸入的字元附加到指令緩衝區
         if self.state.control_mode == "SERIAL_MODE":
             self.state.serial_command_buffer += chr(codepoint)
 
     def key_callback(self, window, key, scancode, action, mods):
         """【最終重構】處理所有按鍵事件，為所有專用模式建立壁壘。"""
-        
-        # --- 【核心修正】模式壁壘邏輯 ---
-        # 根據當前模式，決定要執行的鍵盤處理邏輯塊
-
-        # 1. 序列埠模式壁壘
+        # --- 模式壁壘邏輯 ---
         if self.state.control_mode == "SERIAL_MODE":
             self.handle_serial_mode_keys(key, action)
-            return # 處理完畢，阻止後續任何操作
+            return
 
-        # 2. 關節測試模式壁壘
         if self.state.control_mode == "JOINT_TEST":
             self.handle_joint_test_mode_keys(key, action)
-            return # 處理完畢，阻止後續任何操作
+            return
 
-        # 3. 手動控制模式壁壘
         if self.state.control_mode == "MANUAL_CTRL":
             self.handle_manual_ctrl_mode_keys(key, action)
-            return # 處理完畢，阻止後續任何操作
+            return
         
         # --- 如果不在任何專用模式中，則執行通用和預設模式的按鍵處理 ---
         self.handle_global_and_default_keys(window, key, action)
@@ -59,12 +52,16 @@ class KeyboardInputHandler:
                 self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
         
         if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS:
-            self.state.set_control_mode("WALKING") # 使用 `~` 鍵退出
+            self.state.set_control_mode("WALKING")
 
     def handle_joint_test_mode_keys(self, key, action):
-        """專門處理關節測試模式下的按鍵。"""
+        """【核心修正】專門處理關節測試模式下的按鍵，只更新狀態，不發送指令。"""
         if action == glfw.PRESS and key == glfw.KEY_G:
-            self.state.set_control_mode("WALKING") # 使用 'G' 鍵退出
+            # 【模式切換修正】如果當前硬體控制器正在運行，則返回 HARDWARE_MODE，否則返回 WALKING
+            if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
+                self.state.set_control_mode("HARDWARE_MODE")
+            else:
+                self.state.set_control_mode("WALKING")
             return
             
         if action in [glfw.PRESS, glfw.REPEAT]:
@@ -74,19 +71,13 @@ class KeyboardInputHandler:
             elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
             elif key == glfw.KEY_C and action == glfw.PRESS: self.state.joint_test_offsets.fill(0.0)
             
-            if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
-                final_command = self.state.sim.default_pose + self.state.joint_test_offsets
-                action_str = ' '.join(f"{a:.4f}" for a in final_command)
-                command_to_send = f"move all {action_str}\n"
-                hw_ser = self.state.hardware_controller_ref.ser
-                if hw_ser and hw_ser.is_open:
-                    try: hw_ser.write(command_to_send.encode('utf-8'))
-                    except Exception as e: print(f"❌ 關節測試模式發送指令失敗: {e}")
+            # 【核心修正】移除此處的指令發送邏輯。
+            # 指令現在由 hardware_controller 的背景執行緒統一發送。
 
     def handle_manual_ctrl_mode_keys(self, key, action):
         """專門處理手動控制模式下的按鍵。"""
         if action == glfw.PRESS and key == glfw.KEY_G:
-            self.state.set_control_mode("WALKING") # 使用 'G' 鍵退出
+            self.state.set_control_mode("WALKING")
             return
             
         if action in [glfw.PRESS, glfw.REPEAT]:
@@ -122,13 +113,22 @@ class KeyboardInputHandler:
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm_ref.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
+            if key == glfw.KEY_GRAVE_ACCENT: self.state.set_control_mode("SERIAL_MODE"); return
             
             # --- 模式切換快捷鍵 ---
             if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
-            if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
-            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
+            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL" if self.state.control_mode != "MANUAL_CTRL" else "WALKING"); return
             if key == glfw.KEY_H: self.state.set_control_mode("HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"); return
-            if key == glfw.KEY_GRAVE_ACCENT: self.state.set_control_mode("SERIAL_MODE"); return
+            
+            # 【模式切換修正】'G' 鍵現在的行為取決於是否處於硬體模式
+            if key == glfw.KEY_G:
+                if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
+                    # 如果硬體控制器在運行，'G' 切換到關節測試模式 (由 hw_controller 控制)
+                    self.state.set_control_mode("JOINT_TEST")
+                else:
+                    # 否則，切換到模擬的關節測試模式
+                    self.state.set_control_mode("JOINT_TEST" if self.state.control_mode != "JOINT_TEST" else "WALKING")
+                return
             
             # --- 硬體模式專用快捷鍵 ---
             if key == glfw.KEY_K:
