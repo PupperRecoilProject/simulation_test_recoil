@@ -57,9 +57,9 @@ def main():
 
     # KeyboardInputHandler 不再需要直接傳入 serial_comm
     keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
-    keyboard_handler.register_callbacks(sim.window)
+    keyboard_handler.register_callbacks(platform.window)
 
-    gui = GuiManager(sim.window)
+    gui = GuiManager(platform.window)
 
     # --- 4. 定義重置函式 ---
     def hard_reset():
@@ -116,7 +116,7 @@ def main():
     state.execute_one_step = False
 
     # --- 6. 主模擬迴圈 ---
-    while not sim.should_close():
+    while not platform.should_close():
         gui.start_frame()
         if state.single_step_mode and not state.execute_one_step:
             sim.render(state, overlay)
@@ -129,8 +129,11 @@ def main():
         if state.hard_reset_requested: hard_reset()
         if state.soft_reset_requested: soft_reset()
 
-        state.latest_pos = sim.data.body('torso').xpos.copy()
-        state.latest_quat = sim.data.body('torso').xquat.copy()
+        robot_state = platform.get_robot_state()
+        if 'pos' in robot_state:
+            state.latest_pos = robot_state['pos']
+        if 'quat' in robot_state:
+            state.latest_quat = robot_state['quat']
         
         if terrain_manager.is_functional:
             terrain_manager.update(state.latest_pos, state.terrain_mode)
@@ -167,16 +170,14 @@ def main():
                 final_ctrl = sim.default_pose + state.joint_test_offsets
                 sim.apply_position_control(final_ctrl, state.tuning_params)
             else:
-                final_ctrl = sim.default_pose + action_final * state.tuning_params.action_scale
-                sim.apply_position_control(final_ctrl, state.tuning_params)
+                final_ctrl = action_final
+                platform.apply_action(final_ctrl, state.tuning_params)
             
             state.latest_final_ctrl = final_ctrl
             
-            target_time = sim.data.time + config.control_dt
-            while sim.data.time < target_time:
-                mujoco.mj_step(sim.model, sim.data)
+            platform.step(state)
 
-        sim.render(state, overlay)
+        platform.render(state, overlay)
         gui.render_gui(state)
         gui.render_frame()
 

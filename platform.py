@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, TYPE_CHECKING
 import numpy as np
+import time
 
 from config import AppConfig
 from state import SimulationState, TuningParams
 from simulation import Simulation
+from hardware_controller import HardwareController
+
+if TYPE_CHECKING:
+    from rendering import DebugOverlay
 
 
 class RobotPlatform(ABC):
@@ -29,11 +34,24 @@ class RobotPlatform(ABC):
         pass
 
     @abstractmethod
+    def render(self, state: SimulationState, overlay: "DebugOverlay") -> None:
+        pass
+
+    @abstractmethod
+    def should_close(self) -> bool:
+        pass
+
+    @abstractmethod
     def reset(self) -> None:
         pass
 
     @abstractmethod
     def close(self) -> None:
+        pass
+
+    @property
+    @abstractmethod
+    def window(self):
         pass
 
     @property
@@ -64,6 +82,12 @@ class SimulationPlatform(RobotPlatform):
     def step(self, state: SimulationState) -> None:
         self.sim.step(state)
 
+    def render(self, state: SimulationState, overlay: "DebugOverlay") -> None:
+        self.sim.render(state, overlay)
+
+    def should_close(self) -> bool:
+        return self.sim.should_close()
+
     def reset(self) -> None:
         self.sim.reset()
 
@@ -71,5 +95,55 @@ class SimulationPlatform(RobotPlatform):
         self.sim.close()
 
     @property
+    def window(self):
+        return self.sim.window
+
+    @property
     def default_pose(self) -> np.ndarray:
         return self.sim.default_pose
+
+
+class HardwarePlatform(RobotPlatform):
+    """Minimal hardware-backed platform using HardwareController."""
+
+    def __init__(self, config: AppConfig, hw_controller: HardwareController):
+        self.config = config
+        self.hw_controller = hw_controller
+        self._default_pose = np.zeros(config.num_motors)
+
+    def setup(self) -> None:
+        self.hw_controller.connect_and_start()
+
+    def get_robot_state(self) -> Dict[str, np.ndarray]:
+        with self.hw_controller.lock:
+            rpy = self.hw_controller.hw_state.rpy_rad.copy()
+        return {"rpy_rad": rpy}
+
+    def apply_action(self, action: np.ndarray, params: TuningParams) -> None:
+        # HardwareController internally applies actions; store as command
+        with self.hw_controller.lock:
+            self.hw_controller.hw_state.command = action.copy()
+
+    def step(self, state: SimulationState) -> None:
+        time.sleep(self.config.control_dt)
+
+    def render(self, state: SimulationState, overlay: "DebugOverlay") -> None:
+        pass
+
+    def should_close(self) -> bool:
+        return False
+
+    def reset(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self.hw_controller.stop()
+
+    @property
+    def default_pose(self) -> np.ndarray:
+        return self._default_pose
+
+    @property
+    def window(self):
+        return None
+
