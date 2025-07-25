@@ -121,7 +121,8 @@ class UIController:
     def _create_log_panel(self) -> None:
         with ui.card().classes('w-full'):
             ui.label('日誌輸出 (Log Output)').classes('text-lg')
-            self.log_area = ui.textarea(label='Log').props('readonly outlined').style('width: 100%;').lines(10)
+            # "rows=10" 用於設定顯示高度，取代錯誤的 .lines()
+            self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
 
     # ------------------------------------------------------------------
     def update_ui_elements(self) -> None:
