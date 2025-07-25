@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from serial_communicator import SerialCommunicator
 
 class RobotStateHardware:
+    """儲存從實體機器人收到的所有狀態數據。"""
     def __init__(self):
         self.imu_gyro_radps = np.zeros(3, dtype=np.float32)
         self.imu_acc_g = np.zeros(3, dtype=np.float32)
@@ -42,7 +43,7 @@ class HardwareController:
         self.config = config
         self.policy = policy
         self.global_state = global_state
-        self.serial_comm = serial_comm # 【新增】儲存參考
+        self.serial_comm = serial_comm 
         
         self.ser = None 
         self.is_running = False 
@@ -79,6 +80,10 @@ class HardwareController:
         print(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
         self.serial_comm.is_managed_by_hardware_controller = True
         
+        # 【核心修正】在啟動時，明確地將 AI 事件清除，確保 AI 預設是關閉的。
+        self.ai_control_enabled.clear()
+        self.global_state.hardware_ai_is_active = False
+
         self.is_running = True
         self.read_thread = threading.Thread(target=self._read_from_port, daemon=True)
         self.read_thread.start()
@@ -94,8 +99,8 @@ class HardwareController:
         
         print("正在停止硬體控制器...")
         self.is_running = False
-        self.disable_ai()
-        self.ai_control_enabled.set()
+        self.disable_ai() # 這裡會呼叫 .clear()
+        self.ai_control_enabled.set() # 確保在任何情況下都能喚醒 wait()
         
         if self.control_thread and self.control_thread.is_alive(): self.control_thread.join(timeout=1)
         if self.read_thread and self.read_thread.is_alive(): self.read_thread.join(timeout=1)
@@ -120,14 +125,18 @@ class HardwareController:
         print("⏸️ AI 控制已暫停。")
         self.ai_control_enabled.clear()
         self.global_state.hardware_ai_is_active = False
-        if self.ser and self.ser.is_open:
+        if self.is_running and self.ser and self.ser.is_open: # 增加 is_running 判斷
             try: self.ser.write(b"stop\n")
             except serial.SerialException as e: print(f"發送停止指令失敗: {e}")
 
     def parse_teensy_data(self, line: str):
+        """【核心修正】重構此函式，使其更具彈性，並能提供有用的除錯資訊。"""
         try:
             parts = line.split(',')
-            if len(parts) != 57: return
+            if len(parts) != 57:
+                # print(f"[硬體數據除錯] 忽略格式不符的行 (欄位數: {len(parts)}): {line}")
+                return
+
             with self.lock:
                 current_time = time.time()
                 self.hw_state.timestamp_ms = int(parts[0])
@@ -212,24 +221,41 @@ class HardwareController:
             except Exception as e: print(f"❌ _read_from_port 發生未知錯誤: {e}")
                 
     def _control_loop(self):
-        print("\n--- 硬體控制線程已就緒，等待 AI 啟用 ---")
+        """【核心重構】此迴圈現在是硬體指令的唯一來源，並能感知 JOINT_TEST 模式。"""
+        print("\n--- 硬體控制執行緒已就緒 ---")
         default_pose_hardware = self.global_state.sim.default_pose
         while self.is_running:
-            self.ai_control_enabled.wait()
-            if not self.is_running: break
             loop_start_time = time.perf_counter()
-            observation = self.construct_observation()
-            if observation.size == 0:
-                time.sleep(0.02); continue
-            _, action_raw = self.policy.get_action_for_hardware(observation)
-            with self.lock:
-                self.hw_state.last_action[:] = action_raw
-            final_command = default_pose_hardware + action_raw * self.global_state.tuning_params.action_scale
-            action_str = ' '.join(f"{a:.4f}" for a in final_command)
-            command_to_send = f"move all {action_str}\n"
-            if self.ser and self.ser.is_open:
-                try: self.ser.write(command_to_send.encode('utf-8'))
-                except serial.SerialException: self.stop()
+            command_to_send = None
+
+            if self.global_state.control_mode == "JOINT_TEST":
+                final_command = default_pose_hardware + self.global_state.joint_test_offsets
+                action_str = ' '.join(f"{a:.4f}" for a in final_command)
+                command_to_send = f"move all {action_str}\n"
+
+            elif self.global_state.control_mode == "HARDWARE_MODE":
+                self.ai_control_enabled.wait()
+                if not self.is_running: break
+
+                observation = self.construct_observation()
+                if observation.size == 0:
+                    time.sleep(0.02); continue
+                
+                _, action_raw = self.policy.get_action_for_hardware(observation)
+                with self.lock:
+                    self.hw_state.last_action[:] = action_raw
+                
+                final_command = default_pose_hardware + action_raw * self.global_state.tuning_params.action_scale
+                action_str = ' '.join(f"{a:.4f}" for a in final_command)
+                command_to_send = f"move all {action_str}\n"
+
+            if command_to_send and self.ser and self.ser.is_open:
+                try:
+                    self.ser.write(command_to_send.encode('utf-8'))
+                except serial.SerialException:
+                    self.stop()
+            
             loop_duration = time.perf_counter() - loop_start_time
             sleep_time = (1.0 / self.config.control_freq) - loop_duration
-            if sleep_time > 0: time.sleep(sleep_time)
+            if sleep_time > 0:
+                time.sleep(sleep_time)

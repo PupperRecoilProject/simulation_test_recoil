@@ -5,25 +5,105 @@ from state import SimulationState
 class KeyboardInputHandler:
     """處理所有鍵盤輸入事件，並根據當前模式進行分派。"""
     def __init__(self, state: SimulationState, xbox_handler, terrain_manager):
-        """【修改】初始化時不再直接接收 serial_comm。"""
-        self.state = state
-        self.config = state.config
-        self.serial_comm_ref = state.serial_communicator_ref # 【修改】從 state 獲取參考
-        self.xbox_handler = xbox_handler
-        self.terrain_manager = terrain_manager
-        self.param_keys = ['kp', 'kd', 'action_scale', 'bias']
-        self.num_params = len(self.param_keys)
+        """初始化函式，儲存必要的物件參考。"""
+        self.state = state # 全域狀態的參考
+        self.config = state.config # 設定檔的參考
+        self.serial_comm_ref = state.serial_communicator_ref # 序列埠通訊器的參考
+        self.xbox_handler = xbox_handler # Xbox 搖桿處理器的參考
+        self.terrain_manager = terrain_manager # 地形管理器的參考
+        self.param_keys = ['kp', 'kd', 'action_scale', 'bias'] # 可調參數的鍵名列表
+        self.num_params = len(self.param_keys) # 可調參數的數量
 
     def register_callbacks(self, window):
-        glfw.set_key_callback(window, self.key_callback)
-        glfw.set_char_callback(window, self.char_callback)
+        """向 GLFW 註冊鍵盤事件的回呼函式。"""
+        glfw.set_key_callback(window, self.key_callback) # 註冊按鍵事件
+        glfw.set_char_callback(window, self.char_callback) # 註冊字元輸入事件
 
     def char_callback(self, window, codepoint):
-        if self.state.control_mode == "SERIAL_MODE":
-            self.state.serial_command_buffer += chr(codepoint)
+        """處理可列印字元的輸入，專門用於序列埠模式。"""
+        if self.state.control_mode == "SERIAL_MODE": # 檢查是否處於序列埠模式
+            self.state.serial_command_buffer += chr(codepoint) # 將輸入的字元附加到指令緩衝區
 
     def key_callback(self, window, key, scancode, action, mods):
+        """【最終重構】處理所有按鍵事件，為所有專用模式建立壁壘。"""
+        # --- 模式壁壘邏輯：根據當前模式，分派給不同的處理函式 ---
+        if self.state.control_mode == "SERIAL_MODE": # 如果是序列埠模式
+            self.handle_serial_mode_keys(key, action) # 交給序列埠模式處理器
+            return # 處理完畢，立即返回
+
+        if self.state.control_mode == "JOINT_TEST": # 如果是關節測試模式
+            self.handle_joint_test_mode_keys(key, action) # 交給關節測試模式處理器
+            return # 處理完畢，立即返回
+
+        if self.state.control_mode == "MANUAL_CTRL": # 如果是手動控制模式
+            self.handle_manual_ctrl_mode_keys(key, action) # 交給手動模式處理器
+            return # 處理完畢，立即返回
+        
+        # --- 如果不在任何專用模式中，則執行通用和預設模式的按鍵處理 ---
+        self.handle_global_and_default_keys(window, key, action)
+
+    def handle_serial_mode_keys(self, key, action):
+        """專門處理序列埠模式下的按鍵。"""
+        if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS: # 如果按下 `~` 鍵
+            # 【智慧退出】退出時，返回到進入此模式前的上一個模式
+            self.state.set_control_mode(self.state.previous_control_mode)
+            return
+            
+        if action in [glfw.PRESS, glfw.REPEAT]: # 處理按下或長按
+            if key == glfw.KEY_ENTER: # 如果是 Enter 鍵
+                self.state.serial_command_to_send = self.state.serial_command_buffer # 將緩衝區內容設為待發送
+                self.state.serial_command_buffer = "" # 清空緩衝區
+            elif key == glfw.KEY_BACKSPACE: # 如果是 Backspace 鍵
+                self.state.serial_command_buffer = self.state.serial_command_buffer[:-1] # 刪除最後一個字元
+
+    def handle_joint_test_mode_keys(self, key, action):
+        """專門處理關節測試模式下的按鍵，只更新狀態，不發送指令。"""
+        if action == glfw.PRESS and key == glfw.KEY_G: # 如果按下 'G' 鍵
+            # 【模式切換修正】如果硬體控制器正在運行，則返回 HARDWARE_MODE，否則返回 WALKING
+            if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
+                self.state.set_control_mode("HARDWARE_MODE")
+            else:
+                self.state.set_control_mode("WALKING")
+            return
+            
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            if key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
+            elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
+            elif key == glfw.KEY_UP: self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
+            elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
+            elif key == glfw.KEY_C and action == glfw.PRESS: self.state.joint_test_offsets.fill(0.0)
+            
+            # 【核心修正】此處不再需要發送指令的邏輯，已統一由 HardwareController 處理
+
+    def handle_manual_ctrl_mode_keys(self, key, action):
+        """專門處理手動控制模式下的按鍵。"""
+        if action == glfw.PRESS and key == glfw.KEY_G: # 如果按下 'G' 鍵
+            self.state.set_control_mode("WALKING") # 退出到走路模式
+            return
+            
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            if key == glfw.KEY_F and action == glfw.PRESS:
+                self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
+                is_floating = self.state.manual_mode_is_floating
+                if is_floating:
+                    if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
+                else:
+                    if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
+            elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
+            elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
+            elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
+            elif key == glfw.KEY_DOWN: self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
+            elif key == glfw.KEY_C and action == glfw.PRESS: self.state.manual_final_ctrl.fill(0.0)
+            
+    def handle_global_and_default_keys(self, window, key, action):
+        """處理所有非專用模式下的全域快捷鍵和預設控制。"""
         if action == glfw.PRESS:
+            # 【智慧進入】按下 `~` 鍵進入序列埠模式。進入前的模式會被 state.set_control_mode 自動記錄
+            if key == glfw.KEY_GRAVE_ACCENT:
+                self.state.set_control_mode("SERIAL_MODE")
+                return
+
+            # --- 全域快捷鍵 ---
             if key == glfw.KEY_SPACE: self.state.single_step_mode = not self.state.single_step_mode; print(f"\n--- SIMULATION {'PAUSED' if self.state.single_step_mode else 'PLAYING'} ---"); return
             if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
             if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
@@ -37,24 +117,29 @@ class KeyboardInputHandler:
             if key == glfw.KEY_P: self.terrain_manager.save_hfield_to_png(); return
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
-            
-            # 【修改】透過 self.serial_comm_ref 呼叫
-            if key == glfw.KEY_U: 
-                self.state.serial_is_connected = self.serial_comm_ref.scan_and_connect()
-                return
+            if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm_ref.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
             
-            if key == glfw.KEY_H:
-                new_mode = "HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"
-                self.state.set_control_mode(new_mode)
+            # --- 模式切換快捷鍵 ---
+            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
+            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL" if self.state.control_mode != "MANUAL_CTRL" else "WALKING"); return
+            if key == glfw.KEY_H: self.state.set_control_mode("HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"); return
+            if key == glfw.KEY_G:
+                if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
+                    self.state.set_control_mode("JOINT_TEST")
+                else:
+                    self.state.set_control_mode("JOINT_TEST" if self.state.control_mode != "JOINT_TEST" else "WALKING")
                 return
+            
+            # --- 硬體模式專用快捷鍵 ---
             if key == glfw.KEY_K:
                 if self.state.control_mode == "HARDWARE_MODE" and self.state.hardware_controller_ref:
                     if self.state.hardware_ai_is_active: self.state.hardware_controller_ref.disable_ai()
                     else: self.state.hardware_controller_ref.enable_ai()
-                else: print("請先按 'H' 進入硬體模式。")
+                else: print("Please enter Hardware Mode by pressing 'H' first.")
                 return
 
+            # --- 策略模型選擇快捷鍵 ---
             policy_keys = { glfw.KEY_1: 0, glfw.KEY_2: 1, glfw.KEY_3: 2, glfw.KEY_4: 3, glfw.KEY_5: 4, glfw.KEY_6: 5 }
             if key in policy_keys:
                 target_index = policy_keys[key]
@@ -65,55 +150,11 @@ class KeyboardInputHandler:
                     else: print(f"⚠️ 警告: 策略索引 {target_index+1} 超出範圍。")
                 return
 
+        # --- 長按事件 (重複觸發) ---
         if action in [glfw.PRESS, glfw.REPEAT]:
-            if self.state.control_mode == "SERIAL_MODE":
-                if key == glfw.KEY_ENTER: self.state.serial_command_to_send = self.state.serial_command_buffer; self.state.serial_command_buffer = ""
-                elif key == glfw.KEY_BACKSPACE: self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
-                elif key == glfw.KEY_T and action == glfw.PRESS: self.state.set_control_mode("WALKING")
-                return
-
-            if self.state.control_mode == "JOINT_TEST":
-                if key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index - 1) % 12
-                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.joint_test_index = (self.state.joint_test_index + 1) % 12
-                elif key == glfw.KEY_UP: self.state.joint_test_offsets[self.state.joint_test_index] += 0.1
-                elif key == glfw.KEY_DOWN: self.state.joint_test_offsets[self.state.joint_test_index] -= 0.1
-                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.joint_test_offsets.fill(0.0)
-                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
-                
-                if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
-                    final_command = self.state.sim.default_pose + self.state.joint_test_offsets
-                    action_str = ' '.join(f"{a:.4f}" for a in final_command)
-                    command_to_send = f"move all {action_str}\n"
-                    hw_ser = self.state.hardware_controller_ref.ser
-                    if hw_ser and hw_ser.is_open:
-                        try: hw_ser.write(command_to_send.encode('utf-8'))
-                        except Exception as e: print(f"❌ 關節測試模式發送指令失敗: {e}")
-                return
-
-            if self.state.control_mode == "MANUAL_CTRL":
-                if key == glfw.KEY_F and action == glfw.PRESS:
-                    self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
-                    is_floating = self.state.manual_mode_is_floating
-                    if is_floating:
-                        if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
-                    else:
-                        if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
-                elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
-                elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
-                elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
-                elif key == glfw.KEY_DOWN: self.state.manual_final_ctrl[self.state.manual_ctrl_index] -= 0.1
-                elif key == glfw.KEY_C and action == glfw.PRESS: self.state.manual_final_ctrl.fill(0.0)
-                elif key == glfw.KEY_G and action == glfw.PRESS: self.state.set_control_mode("WALKING")
-                return
-
-        if action == glfw.PRESS:
-            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
-            if key == glfw.KEY_T: self.state.set_control_mode("SERIAL_MODE"); return
-            if key == glfw.KEY_G: self.state.set_control_mode("JOINT_TEST"); return
-            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL"); return
-        
-        if self.state.input_mode != "KEYBOARD": return
-        if action in [glfw.PRESS, glfw.REPEAT]:
+            if self.state.input_mode != "KEYBOARD": return
+            
+            # 參數調整
             if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
             elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
             elif key == glfw.KEY_UP or key == glfw.KEY_DOWN:
@@ -125,6 +166,8 @@ class KeyboardInputHandler:
                 self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
                 self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
                 self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
+            
+            # 移動指令
             step = self.config.keyboard_velocity_adjust_step
             if key == glfw.KEY_C: self.state.clear_command()
             elif key == glfw.KEY_W: self.state.command[1] += step

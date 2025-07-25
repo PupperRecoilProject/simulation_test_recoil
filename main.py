@@ -101,11 +101,13 @@ def main():
         terrain_manager.initial_generate()
     hard_reset()
     
-    print("\n--- 模擬開始 (SPACE: 暫停, N:下一步) ---")
-    print("    (F: 懸浮, G: 關節測試, B: 手動控制, T: 序列埠, H: 硬體模式)")
-    print("    (M: 輸入模式, R: 重置機器人, X: 軟重置)")
-    print("    (Y: 重生地形, P: 儲存地形PNG, 1..: 選策略 | K: 硬體AI開關)")
-    print("    (V: 切換地形模式)")
+    # 【快捷鍵變更】更新啟動時的提示文字
+    print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
+    print("    (F: Float, G: Joint Test, B: Manual Ctrl, H: Hardware Mode)")
+    print("    (M: Input Mode, R: Hard Reset, X: Soft Reset)")
+    print("    (Y: Regen Terrain, P: Save Terrain PNG, 1..: Select Policy)")
+    print("    (V: Cycle Terrain, K: Toggle HW AI)")
+    print("    ( ~ : Toggle Serial Console )") # 新增此行，替換舊的 T 鍵提示
 
     state.execute_one_step = False
 
@@ -130,15 +132,17 @@ def main():
             if hw_controller.is_running:
                 with hw_controller.lock:
                     t_since_update = time.time() - hw_controller.hw_state.last_update_time
-                    conn_status = f"數據延遲: {t_since_update:.2f}s" if t_since_update < 1.0 else "數據超時!"
-                    state.hardware_status_text = f"連接狀態: {conn_status}\n"
+                    conn_status = f"Data Delay: {t_since_update:.2f}s" if t_since_update < 1.0 else "Data Timeout!"
+                    state.hardware_status_text = f"Connection Status: {conn_status}\n"
                     state.hardware_status_text += f"LinVel: {np.array2string(hw_controller.hw_state.lin_vel_local, precision=2)}\n"
                     state.hardware_status_text += f"Gyro: {np.array2string(hw_controller.hw_state.imu_gyro_radps, precision=2)}"
             else:
-                state.hardware_status_text = "硬體控制器未運行。"
+                state.hardware_status_text = "Hardware controller not running."
         
         elif state.control_mode == "SERIAL_MODE":
-            if state.serial_is_connected: state.serial_latest_messages = serial_comm.get_latest_messages()
+            if state.serial_is_connected:
+                state.serial_latest_messages = serial_comm.get_latest_messages()
+            
             if state.serial_command_to_send:
                 serial_comm.send_command(state.serial_command_to_send)
                 state.serial_command_to_send = ""
