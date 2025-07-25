@@ -6,7 +6,7 @@ import time
 
 from config import load_config
 from state import SimulationState
-from platform import SimulationPlatform
+from robot_platform import SimulationPlatform
 from policy import PolicyManager
 from observation import ObservationBuilder
 from rendering import DebugOverlay
