@@ -6,7 +6,7 @@ import time
 
 from config import load_config
 from state import SimulationState
-from simulation import Simulation
+from platform import SimulationPlatform
 from policy import PolicyManager
 from observation import ObservationBuilder
 from rendering import DebugOverlay
@@ -16,6 +16,7 @@ from floating_controller import FloatingController
 from serial_communicator import SerialCommunicator
 from terrain_manager import TerrainManager
 from hardware_controller import HardwareController
+from gui_manager import GuiManager
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
@@ -25,8 +26,9 @@ def main():
     # --- 1. 初始化核心組件 ---
     config = load_config()
     state = SimulationState(config)
-    sim = Simulation(config)
-    
+    platform = SimulationPlatform(config)
+    sim = platform.sim
+
     # --- 2. 【核心修改】將核心物件的參考存入 state，使其成為全域上下文 ---
     state.sim = sim
     
@@ -54,8 +56,10 @@ def main():
     state.hardware_controller_ref = hw_controller
 
     # KeyboardInputHandler 不再需要直接傳入 serial_comm
-    keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager) 
+    keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
     keyboard_handler.register_callbacks(sim.window)
+
+    gui = GuiManager(sim.window)
 
     # --- 4. 定義重置函式 ---
     def hard_reset():
@@ -113,8 +117,11 @@ def main():
 
     # --- 6. 主模擬迴圈 ---
     while not sim.should_close():
+        gui.start_frame()
         if state.single_step_mode and not state.execute_one_step:
             sim.render(state, overlay)
+            gui.render_gui(state)
+            gui.render_frame()
             continue
         if state.execute_one_step: state.execute_one_step = False
 
@@ -170,10 +177,13 @@ def main():
                 mujoco.mj_step(sim.model, sim.data)
 
         sim.render(state, overlay)
+        gui.render_gui(state)
+        gui.render_frame()
 
     # --- 7. 程式結束，清理資源 ---
     hw_controller.stop()
-    sim.close()
+    gui.shutdown()
+    platform.close()
     xbox_handler.close()
     serial_comm.close()
     print("\n程式已安全退出。")
