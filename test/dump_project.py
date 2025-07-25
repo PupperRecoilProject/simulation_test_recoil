@@ -8,7 +8,7 @@ from datetime import datetime
 # 1. 要忽略的資料夾名稱
 EXCLUDE_DIRS = {
     '.git', 'node_modules', '__pycache__', 'venv', '.vscode',
-    'dist', 'build', 'env', '.idea', 'target', '.DS_Store'
+    'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'pdf'
 }
 
 # 2. 定義一個「內容跳過清單」。
