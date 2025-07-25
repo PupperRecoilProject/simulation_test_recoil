@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, TYPE_CHECKING
+from typing import Dict
 import numpy as np
 import time
 
 from config import AppConfig
-from state import SimulationState, TuningParams
+from state import TuningParams
 from simulation import Simulation
 from hardware_controller import HardwareController
-
-if TYPE_CHECKING:
-    from rendering import DebugOverlay
 
 
 class RobotPlatform(ABC):
@@ -30,11 +27,7 @@ class RobotPlatform(ABC):
         pass
 
     @abstractmethod
-    def step(self, state: SimulationState) -> None:
-        pass
-
-    @abstractmethod
-    def render(self, state: SimulationState, overlay: "DebugOverlay") -> None:
+    def step(self) -> None:
         pass
 
     @abstractmethod
@@ -79,11 +72,8 @@ class SimulationPlatform(RobotPlatform):
         final_ctrl = self.sim.default_pose + action * params.action_scale
         self.sim.apply_position_control(final_ctrl, params)
 
-    def step(self, state: SimulationState) -> None:
-        self.sim.step(state)
-
-    def render(self, state: SimulationState, overlay: "DebugOverlay") -> None:
-        self.sim.render(state, overlay)
+    def step(self) -> None:
+        self.sim.step()
 
     def should_close(self) -> bool:
         return self.sim.should_close()
@@ -124,11 +114,8 @@ class HardwarePlatform(RobotPlatform):
         with self.hw_controller.lock:
             self.hw_controller.hw_state.command = action.copy()
 
-    def step(self, state: SimulationState) -> None:
+    def step(self) -> None:
         time.sleep(self.config.control_dt)
-
-    def render(self, state: SimulationState, overlay: "DebugOverlay") -> None:
-        pass
 
     def should_close(self) -> bool:
         return False

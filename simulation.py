@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING
 import os
 
 from config import AppConfig
-from state import SimulationState, TuningParams
+from state import TuningParams
 
 if TYPE_CHECKING:
-    from rendering import DebugOverlay
     from keyboard_input_handler import KeyboardInputHandler
 
 class Simulation:
@@ -126,20 +125,25 @@ class Simulation:
         force_bias = np.full(self.config.num_motors, params.bias)
         self.data.qfrc_applied[6:] = force_bias
 
-    def step(self, state: SimulationState):
-        while self.data.time < state.control_timer:
-            mujoco.mj_step(self.model, self.data)
+    def step(self):
+        """進行單一步進。"""
+        mujoco.mj_step(self.model, self.data)
 
-    def render(self, state: SimulationState, overlay: "DebugOverlay"):
-        """【修改】簡化 render 函式，將所有渲染邏輯集中到 DebugOverlay 中。"""
-        viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
-        
-        # 呼叫 DebugOverlay 的主渲染函式
-        overlay.render(viewport, self.context, state, self)
-        
-        # 交換緩衝區並處理事件
-        glfw.swap_buffers(self.window)
-        glfw.poll_events()
+    def render_scene(self, viewport):
+        """只渲染 3D 場景到當前綁定的 Framebuffer。"""
+        if not (self.mouse_button_left or self.mouse_button_right):
+            self.cam.lookat = self.data.body('torso').xpos
+
+        mujoco.mjv_updateScene(
+            self.model,
+            self.data,
+            self.opt,
+            None,
+            self.cam,
+            mujoco.mjtCatBit.mjCAT_ALL,
+            self.scene,
+        )
+        mujoco.mjr_render(viewport, self.scene, self.context)
         
     def close(self):
         glfw.terminate()
