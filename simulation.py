@@ -8,9 +8,9 @@ import os
 
 from config import AppConfig
 from state import SimulationState, TuningParams
+from rendering import DebugOverlay
 
 if TYPE_CHECKING:
-    from rendering import DebugOverlay
     from keyboard_input_handler import KeyboardInputHandler
 
 class Simulation:
@@ -71,6 +71,7 @@ class Simulation:
         
         self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
         self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_100)
+        self.overlay = DebugOverlay()
         
         glfw.set_cursor_pos_callback(self.window, self._mouse_move_callback)
         glfw.set_mouse_button_callback(self.window, self._mouse_button_callback)
@@ -130,16 +131,25 @@ class Simulation:
         while self.data.time < state.control_timer:
             mujoco.mj_step(self.model, self.data)
 
-    def render(self, state: SimulationState, overlay: "DebugOverlay"):
-        """【修改】簡化 render 函式，將所有渲染邏輯集中到 DebugOverlay 中。"""
+    def render(self, state: SimulationState):
         viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
-        
-        # 呼叫 DebugOverlay 的主渲染函式
-        overlay.render(viewport, self.context, state, self)
-        
-        # 交換緩衝區並處理事件
+        self.overlay.render(viewport, self.context, state, self)
         glfw.swap_buffers(self.window)
         glfw.poll_events()
+
+    def render_from_thread(self, state: SimulationState):
+        if not self.window or self.should_close():
+            return
+        try:
+            glfw.make_context_current(self.window)
+            viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
+            if state.policy_manager_ref and state.policy_manager_ref.obs_builder:
+                self.overlay.set_recipe(state.policy_manager_ref.get_active_recipe())
+            self.overlay.render(viewport, self.context, state, self)
+            glfw.swap_buffers(self.window)
+            glfw.poll_events()
+        except Exception:
+            pass
         
     def close(self):
         glfw.terminate()

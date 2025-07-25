@@ -4,6 +4,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from config import AppConfig
 from typing import TYPE_CHECKING
+import threading
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
@@ -11,8 +12,9 @@ if TYPE_CHECKING:
     from policy import PolicyManager
     from hardware_controller import HardwareController
     from terrain_manager import TerrainManager
-    from serial_communicator import SerialCommunicator # 新增
-    from simulation import Simulation # 新增
+    from serial_communicator import SerialCommunicator
+    from simulation import Simulation
+    from xbox_input_handler import XboxInputHandler
 
 @dataclass
 class TuningParams:
@@ -24,10 +26,11 @@ class TuningParams:
 
 @dataclass
 class SimulationState:
-    """管理所有模擬中動態變化的狀態，取代 global 變數。"""
-    config: AppConfig # 儲存從 config.yaml 載入的所有設定
-    command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32)) # 使用者輸入的命令 [vy, vx, wz]
-    tuning_params: TuningParams = field(init=False) # 可即時調整的控制參數
+    """Central state shared across threads."""
+    config: AppConfig
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    tuning_params: TuningParams = field(init=False)
     
     hard_reset_requested: bool = False # 硬重置請求旗標
     soft_reset_requested: bool = False # 軟重置請求旗標
@@ -74,6 +77,7 @@ class SimulationState:
     policy_manager_ref: 'PolicyManager' = None # 策略管理器物件的參考
     hardware_controller_ref: 'HardwareController' = None # 硬體控制器物件的參考
     serial_communicator_ref: 'SerialCommunicator' = None # 序列埠通訊器物件的參考
+    xbox_handler_ref: 'XboxInputHandler' = None # Xbox 搖桿處理器的參考
     
     available_policies: list = field(default_factory=list) # 所有可用的 ONNX 策略名稱列表
     
@@ -90,7 +94,7 @@ class SimulationState:
         self.latest_action_raw = np.zeros(self.config.num_motors) # 初始化原始動作向量
         self.latest_final_ctrl = np.zeros(self.config.num_motors) # 初始化最終控制向量
         self.manual_final_ctrl = np.zeros(self.config.num_motors) # 初始化手動控制向量
-        print("✅ SimulationState 初始化完成。")
+        print("✅ SimulationState 初始化完成 (含執行緒鎖)。")
 
     def reset_control_state(self, sim_time: float):
         """重置控制迴圈的計時器。"""

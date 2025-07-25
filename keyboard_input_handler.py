@@ -120,35 +120,7 @@ class KeyboardInputHandler:
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm_ref.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
             
-            # --- 模式切換快捷鍵 ---
-            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
-            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL" if self.state.control_mode != "MANUAL_CTRL" else "WALKING"); return
-            if key == glfw.KEY_H: self.state.set_control_mode("HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"); return
-            if key == glfw.KEY_G:
-                if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
-                    self.state.set_control_mode("JOINT_TEST")
-                else:
-                    self.state.set_control_mode("JOINT_TEST" if self.state.control_mode != "JOINT_TEST" else "WALKING")
-                return
-            
-            # --- 硬體模式專用快捷鍵 ---
-            if key == glfw.KEY_K:
-                if self.state.control_mode == "HARDWARE_MODE" and self.state.hardware_controller_ref:
-                    if self.state.hardware_ai_is_active: self.state.hardware_controller_ref.disable_ai()
-                    else: self.state.hardware_controller_ref.enable_ai()
-                else: print("Please enter Hardware Mode by pressing 'H' first.")
-                return
-
-            # --- 策略模型選擇快捷鍵 ---
-            policy_keys = { glfw.KEY_1: 0, glfw.KEY_2: 1, glfw.KEY_3: 2, glfw.KEY_4: 3, glfw.KEY_5: 4, glfw.KEY_6: 5 }
-            if key in policy_keys:
-                target_index = policy_keys[key]
-                if self.state.policy_manager_ref and self.state.available_policies:
-                    if target_index < len(self.state.available_policies):
-                        target_policy_name = self.state.available_policies[target_index]
-                        self.state.policy_manager_ref.select_target_policy(target_policy_name)
-                    else: print(f"⚠️ 警告: 策略索引 {target_index+1} 超出範圍。")
-                return
+            # 模式切換等功能已移至 GUI，保留鍵盤僅做基礎操作
 
         # --- 長按事件 (重複觸發) ---
         if action in [glfw.PRESS, glfw.REPEAT]:
