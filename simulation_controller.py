@@ -156,9 +156,7 @@ class SimulationController:
     # ------------------------------------------------------------------
     def hard_reset(self) -> None:
         print("\n--- 正在執行機器人硬重置 ---")
-        # 【關鍵修正】同步重置地形管理器，避免中心點偏移
-        if self.terrain_manager.is_functional:
-            self.terrain_manager.reset()
+        # 【核心修正】硬重置僅重置機器人狀態，不再重置地形
 
         with self.state.lock:
             if self.state.control_mode == "HARDWARE_MODE":

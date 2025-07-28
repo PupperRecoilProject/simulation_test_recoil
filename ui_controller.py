@@ -304,6 +304,7 @@ class UIController:
 
             if terrain_name == 'INFINITE':
                 self.state.terrain_mode = 'INFINITE'
+                # 切回無限模式時需要重新產生地形
                 terrain_manager.reset()
             else:
                 self.state.terrain_mode = 'SINGLE'
