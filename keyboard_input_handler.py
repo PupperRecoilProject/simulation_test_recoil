@@ -21,8 +21,8 @@ class KeyboardInputHandler:
 
     def char_callback(self, window, codepoint):
         """處理可列印字元的輸入，專門用於序列埠模式。"""
-        if self.state.control_mode == "SERIAL_MODE": # 檢查是否處於序列埠模式
-            self.state.serial_command_buffer += chr(codepoint) # 將輸入的字元附加到指令緩衝區
+        if self.state.control_mode == "SERIAL_MODE":
+            pass
 
     def key_callback(self, window, key, scancode, action, mods):
         """【最終重構】處理所有按鍵事件，為所有專用模式建立壁壘。"""
@@ -44,17 +44,9 @@ class KeyboardInputHandler:
 
     def handle_serial_mode_keys(self, key, action):
         """專門處理序列埠模式下的按鍵。"""
-        if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS: # 如果按下 `~` 鍵
-            # 【智慧退出】退出時，返回到進入此模式前的上一個模式
+        if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS:
             self.state.set_control_mode(self.state.previous_control_mode)
             return
-            
-        if action in [glfw.PRESS, glfw.REPEAT]: # 處理按下或長按
-            if key == glfw.KEY_ENTER: # 如果是 Enter 鍵
-                self.state.serial_command_to_send = self.state.serial_command_buffer # 將緩衝區內容設為待發送
-                self.state.serial_command_buffer = "" # 清空緩衝區
-            elif key == glfw.KEY_BACKSPACE: # 如果是 Backspace 鍵
-                self.state.serial_command_buffer = self.state.serial_command_buffer[:-1] # 刪除最後一個字元
 
     def handle_joint_test_mode_keys(self, key, action):
         """專門處理關節測試模式下的按鍵，只更新狀態，不發送指令。"""

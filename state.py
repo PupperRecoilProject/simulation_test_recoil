@@ -54,9 +54,6 @@ class SimulationState:
     num_display_pages: int = 2 # 除錯資訊的總頁數
 
     # --- 【序列埠控制台模式相關狀態】 ---
-    serial_command_buffer: str = "" # 用於儲存使用者在序列埠模式下正在輸入的文字
-    serial_command_to_send: str = "" # 當使用者按下Enter後，指令會被移到這裡，等待main.py發送
-    serial_latest_messages: list = field(default_factory=list) # 儲存從硬體收到的訊息日誌，用於顯示
 
     joint_test_index: int = 0 # 在關節測試模式下，當前選中的關節索引
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存各關節在測試模式下的偏移量

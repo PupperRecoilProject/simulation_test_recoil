@@ -144,12 +144,7 @@ def main():
                 state.hardware_status_text = "Hardware controller not running."
         
         elif state.control_mode == "SERIAL_MODE":
-            if state.serial_is_connected:
-                state.serial_latest_messages = serial_comm.get_latest_messages()
-            
-            if state.serial_command_to_send:
-                serial_comm.send_command(state.serial_command_to_send)
-                state.serial_command_to_send = ""
+            pass
         else: # 模擬模式 (WALKING, FLOATING, etc.)
             if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 

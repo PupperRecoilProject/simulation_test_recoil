@@ -6,6 +6,7 @@ import threading
 import serial.tools.list_ports
 from serial_utils import select_serial_port
 from collections import deque
+from logger import log
 
 class SerialCommunicator:
     """
@@ -14,14 +15,13 @@ class SerialCommunicator:
     """
     def __init__(self, max_log_lines=50): # 【容量加大】將日誌行數從 15 增加到 50
         """初始化通訊器。"""
-        self.ser = None # serial.Serial 物件，在連接成功後被賦值
-        self.read_thread = None # 用於讀取序列埠數據的背景執行緒
-        self.exit_signal = threading.Event() # 一個安全地停止背景執行緒的信號
-        self.is_connected = False # 標記當前是否已連接
-        self.port_name = None # 儲存已連接的序列埠名稱
-        self.message_log = deque(maxlen=max_log_lines) # 使用新的容量上限，建立一個固定長度的訊息佇列
-        self.is_managed_by_hardware_controller = False # 旗標，當為True時，表示連接由HardwareController管理，本類別暫停活動
-        print("✅ 序列埠通訊器已初始化 (等待連接指令)。")
+        self.ser = None
+        self.read_thread = None
+        self.exit_signal = threading.Event()
+        self.is_connected = False
+        self.port_name = None
+        self.is_managed_by_hardware_controller = False
+        log.info("序列埠通訊器已初始化 (等待連接指令)。")
 
     def get_serial_connection(self) -> serial.Serial | None:
         """返回已建立的 serial.Serial 物件，供 HardwareController 使用。"""
@@ -32,7 +32,7 @@ class SerialCommunicator:
     def scan_and_connect(self) -> bool:
         """掃描、讓使用者選擇並連接序列埠。"""
         if self.is_connected: # 如果已連接
-            print("序列埠已連接，無需重新掃描。")
+            log.info("序列埠已連接，無需重新掃描。")
             return True
             
         selected_port = self._select_serial_port() # 讓使用者選擇序列埠
@@ -49,7 +49,7 @@ class SerialCommunicator:
         """連接到指定的序列埠並啟動讀取執行緒。"""
         if not self.port_name: return False # 如果沒有埠名，返回失敗
         try:
-            print(f"正在連接到 {self.port_name}...")
+            log.info(f"正在連接到 {self.port_name}...")
             self.ser = serial.Serial(self.port_name, baud_rate, timeout=0.1) # 建立序列埠物件
             time.sleep(0.5) # 等待硬體初始化
             self.ser.reset_input_buffer() # 清空輸入緩衝區
@@ -59,10 +59,10 @@ class SerialCommunicator:
             self.read_thread = threading.Thread(target=self._read_from_port, daemon=True) # 建立讀取執行緒
             self.read_thread.start() # 啟動執行緒
             self.is_connected = True # 設定連接旗標
-            print(f"✅ 序列埠 {self.port_name} 連接成功。")
+            log.info(f"✅ 序列埠 {self.port_name} 連接成功。")
             return True
         except serial.SerialException as e: # 捕捉連接錯誤
-            print(f"❌ 序列埠連接失敗: {e}")
+            log.error(f"❌ 序列埠連接失敗: {e}")
             self.is_connected = False
             return False
 
@@ -74,30 +74,26 @@ class SerialCommunicator:
                 continue # 繼續下一輪迴圈
                 
             try:
-                if self.ser and self.ser.is_open and self.ser.in_waiting > 0: # 如果序列埠可用且有數據
-                    response = self.ser.readline().decode('utf-8', 'ignore').strip() # 讀取一行數據
-                    if response: # 如果讀到內容
-                        self.message_log.append(response) # 加入日誌
-            except serial.SerialException: # 捕捉序列埠錯誤
-                self.message_log.append("[ERROR] Serial port disconnected.") # 在日誌中記錄錯誤
-                self.is_connected = False # 更新連接狀態
-                break # 退出迴圈
+                if self.ser and self.ser.is_open and self.ser.in_waiting > 0:
+                    response = self.ser.readline().decode('utf-8', 'ignore').strip()
+                    if response:
+                        log.info(f"[Teensy]: {response}")
+            except serial.SerialException:
+                log.error("[ERROR] Serial port disconnected.")
+                self.is_connected = False
+                break
             time.sleep(0.01) # 短暫休眠
 
     def send_command(self, command: str):
-        """向序列埠發送一個字串指令，僅在 SERIAL_MODE 下有效。"""
-        if self.is_connected and command and not self.is_managed_by_hardware_controller: # 檢查發送條件
+        """向序列埠發送一個字串指令。"""
+        if self.is_connected and command and not self.is_managed_by_hardware_controller:
             try:
-                command_to_send = command + '\n' # 加上換行符
-                self.ser.write(command_to_send.encode('utf-8')) # 發送指令
-                self.message_log.append(f"> {command}") # 將發送的指令也加入日誌
-            except serial.SerialException as e: # 捕捉發送錯誤
-                 self.message_log.append(f"[ERROR] Send failed: {e}") # 在日誌中記錄錯誤
-                 self.is_connected = False # 更新連接狀態
+                command_to_send = command + '\n'
+                self.ser.write(command_to_send.encode('utf-8'))
+            except serial.SerialException as e:
+                log.error(f"[ERROR] Send failed: {e}")
+                self.is_connected = False
 
-    def get_latest_messages(self) -> list:
-        """獲取日誌中的所有訊息，用於UI顯示。"""
-        return list(self.message_log) # 返回日誌列表
 
     def close(self):
         """安全地關閉序列埠和讀取執行緒。"""
@@ -108,5 +104,5 @@ class SerialCommunicator:
             self.read_thread.join(timeout=1) # 等待執行緒結束
         if self.ser and self.ser.is_open: # 如果序列埠已開啟
             self.ser.close() # 關閉序列埠
-            print(f"序列埠 {self.port_name} 已安全關閉。")
+            log.info(f"序列埠 {self.port_name} 已安全關閉。")
         self.is_connected = False # 更新連接狀態
