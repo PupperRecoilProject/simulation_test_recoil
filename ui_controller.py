@@ -1,6 +1,7 @@
 from nicegui import ui
 import numpy as np
-from typing import TYPE_CHECKING
+import threading
+from typing import TYPE_CHECKING, List
 
 from logger import log, log_queue
 
@@ -21,6 +22,12 @@ class UIController:
         self.onnx_input_labels = {}
         self.log_area = None
         self.serial_command_buffer = None
+
+        # 儲存 UI 下拉選單的地形選擇值，避免與後端狀態互相觸發
+        if self.state.terrain_mode == 'SINGLE':
+            self.ui_terrain_selection = self.state.terrain_manager_ref.single_terrain_names[self.state.single_terrain_index]
+        else:
+            self.ui_terrain_selection = 'INFINITE'
 
         self._setup_ui()
 
@@ -86,14 +93,13 @@ class UIController:
             on_change=lambda e: self.policy_manager.select_target_policy(e.value)
         ).classes('w-full')
 
-        # 【新增】地形選擇下拉選單
+        # 【核心修正】地形選擇下拉選單，綁定到本地狀態以避免循環觸發
         terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
-        self.status_labels['terrain_selector'] = ui.select(
+        self.terrain_selector = ui.select(
             options=terrain_options,
             label='Terrain Mode',
-            value='INFINITE',
             on_change=self._on_terrain_change
-        ).classes('w-full')
+        ).bind_value(self, 'ui_terrain_selection').classes('w-full')
 
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
@@ -192,12 +198,12 @@ class UIController:
                 policy_text = f"策略: {pm.primary_policy_name}"
             self.status_labels['policy_status'].set_text(policy_text)
             self.status_labels['policy_selector'].set_value(pm.primary_policy_name)
-            # 根據目前地形模式更新下拉選單
-            if self.state.terrain_mode == 'INFINITE':
-                self.status_labels['terrain_selector'].set_value('INFINITE')
-            else:
-                terrain_name = self.state.terrain_manager_ref.single_terrain_names[self.state.single_terrain_index]
-                self.status_labels['terrain_selector'].set_value(terrain_name)
+
+            # 從後端狀態更新本地地形選擇值，但不直接 set_value
+            current_terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
+            if self.ui_terrain_selection != current_terrain_name:
+                self.ui_terrain_selection = current_terrain_name
+
             self._update_onnx_labels()
         log_content = "\n".join(log_queue)
         self.log_area.set_value(log_content)
@@ -287,10 +293,15 @@ class UIController:
         self.state.toggle_input_mode("KEYBOARD", clear_cmd=False)
 
     def _on_terrain_change(self, event):
-        """當地形下拉選單改變時，更新狀態並生成地形。"""
+        """當地形下拉選單改變時，更新後端狀態並生成新的地形。"""
         terrain_name = event.value
         terrain_manager = self.state.terrain_manager_ref
         with self.state.lock:
+            # 若選擇與目前狀態相同，則不進行任何操作
+            current_real = terrain_manager.get_current_terrain_name_simple(self.state)
+            if terrain_name == current_real:
+                return
+
             if terrain_name == 'INFINITE':
                 self.state.terrain_mode = 'INFINITE'
                 terrain_manager.reset()
@@ -298,6 +309,7 @@ class UIController:
                 self.state.terrain_mode = 'SINGLE'
                 self.state.single_terrain_index = terrain_manager.single_terrain_names.index(terrain_name)
                 terrain_manager.set_single_terrain(terrain_name)
+
             # 請求硬重置以適應新的地形
             self.state.hard_reset_requested = True
 

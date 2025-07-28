@@ -198,6 +198,16 @@ class TerrainManager:
             terrain_name = self.single_terrain_names[state.single_terrain_index]
             return f"SINGLE ({terrain_name})"
 
+    def get_current_terrain_name_simple(self, state: 'SimulationState') -> str:
+        """只回傳地形名稱本身，供 UI 狀態比較用。"""
+        if not self.is_functional:
+            return "N/A"
+        if state.terrain_mode == "INFINITE":
+            return "INFINITE"
+        if 0 <= state.single_terrain_index < len(self.single_terrain_names):
+            return self.single_terrain_names[state.single_terrain_index]
+        return "Unknown"
+
     def shift_grid_center(self, dx: int, dy: int):
         """平移世界的中心，並重新繪製整個 hfield。"""
         self.world_center_x += dx
