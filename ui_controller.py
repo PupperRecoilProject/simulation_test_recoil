@@ -250,8 +250,8 @@ class UIController:
 
     def _update_command_from_joystick(self, event):
         """虛擬搖桿移動時的回呼函式，根據 x、y 更新指令。"""
-        x_val = -event.y / 50.0  # y 值對應機器人前後速度，方向相反
-        y_val = event.x / 50.0   # x 值對應左右橫移速度
+        x_val = -event.y #/ 50.0  # y 值對應機器人前後速度，方向相反
+        y_val = event.x #/ 50.0   # x 值對應左右橫移速度
         # 切換到虛擬搖桿輸入模式，但保留當前指令
         self.state.toggle_input_mode("VJOY", clear_cmd=False)
         with self.state.lock:
