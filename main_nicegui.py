@@ -1,7 +1,7 @@
 """Entry point using NiceGUI for the control interface."""
 
 import sys
-import threading  # 新增：用於啟動模擬執行緒
+import threading  # 新增：用於啟動背景執行緒
 from nicegui import ui, app  # 從 nicegui 匯入 ui 物件與 app 實例
 
 from config import load_config
@@ -60,11 +60,11 @@ def main() -> None:
     simulation_controller = SimulationController(state)
     ui_controller = UIController(state)
 
-    def start_simulation_thread() -> None:
-        """UI 啟動後啟動模擬執行緒。"""
-        print("NiceGUI 已啟動，現在安全地啟動模擬執行緒...")
-        thread = threading.Thread(target=simulation_controller.run, daemon=True)
-        thread.start()
+    def start_background_threads() -> None:
+        """UI 啟動後啟動所有背景執行緒。"""
+        print("NiceGUI 已啟動，現在安全地啟動背景執行緒...")
+        simulation_controller.start()
+        xbox_handler.start()
 
     def cleanup_resources() -> None:
         """UI 關閉時釋放所有背景資源。"""
@@ -76,7 +76,7 @@ def main() -> None:
         sim.close()
         print("✅ 所有資源已成功釋放。")
 
-    app.on_startup(start_simulation_thread)
+    app.on_startup(start_background_threads)
     app.on_shutdown(cleanup_resources)
 
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")

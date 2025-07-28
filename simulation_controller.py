@@ -28,6 +28,7 @@ class SimulationController:
 
         self._running = threading.Event()
         self._running.set()
+        self.thread: threading.Thread | None = None
 
         # 初始化將在執行緒啟動後進行
 
@@ -39,11 +40,17 @@ class SimulationController:
         print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
 
     # ------------------------------------------------------------------
+    def start(self) -> None:
+        """啟動模擬執行緒。"""
+        if self.thread and self.thread.is_alive():
+            return
+        self._running.set()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
     def run(self) -> None:
         # 執行緒啟動後的初始化
         self.sim.initialize_window_and_context()
-        # 在模擬執行緒中初始化 Pygame，確保事件處理在同一執行緒
-        self.xbox_handler.controller.initialize()
         self._initialize_simulation_state()
 
         while self._running.is_set():
@@ -56,7 +63,6 @@ class SimulationController:
             with self.state.lock:
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
-                current_input_mode = self.state.input_mode
                 hard_reset_req = self.state.hard_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
                 current_control_mode = self.state.control_mode
@@ -73,9 +79,6 @@ class SimulationController:
                 self.hard_reset()
             if soft_reset_req:
                 self.soft_reset()
-
-            # 持續更新搖桿事件，避免事件堆積並能即時偵測連線狀態
-            self.xbox_handler.update_state()
 
             if current_control_mode in ["HARDWARE_MODE", "SERIAL_MODE"]:
                 pass
@@ -127,6 +130,8 @@ class SimulationController:
     # ------------------------------------------------------------------
     def stop(self) -> None:
         self._running.clear()
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1)
 
     # ------------------------------------------------------------------
     def hard_reset(self) -> None:
@@ -175,4 +180,5 @@ class SimulationController:
             self.state.manual_mode_is_floating = False
             mujoco.mj_forward(self.sim.model, self.sim.data)
             self.state.soft_reset_requested = False
+
 
