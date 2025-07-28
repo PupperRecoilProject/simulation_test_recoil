@@ -90,10 +90,10 @@ class UIController:
         with ui.card().classes('w-full'):
             ui.label('手動駕駛 (Manual Driving)').classes('text-lg')
             ui.joystick(
-                color='blue',
-                size=100,
-                on_move=lambda e: self._update_command_from_joystick(e),
-                on_end=self._on_joystick_end  # 直接傳遞方法
+                color='blue', 
+                size=100, 
+                on_move=self._update_command_from_joystick,  # 直接傳遞回呼函式
+                on_end=self._on_joystick_end
             ).props('throttle')
             ui.button('清除命令 (Clear Command)', on_click=self.state.clear_command).props('outline')
 
@@ -249,8 +249,9 @@ class UIController:
                     self.state.manual_final_ctrl[idx] += value
 
     def _update_command_from_joystick(self, event):
-        x_val = -event.args.y / 50.0
-        y_val = event.args.x / 50.0
+        """虛擬搖桿移動時的回呼函式，根據 x、y 更新指令。"""
+        x_val = -event.y / 50.0  # y 值對應機器人前後速度，方向相反
+        y_val = event.x / 50.0   # x 值對應左右橫移速度
         # 切換到虛擬搖桿輸入模式，但保留當前指令
         self.state.toggle_input_mode("VJOY", clear_cmd=False)
         with self.state.lock:
