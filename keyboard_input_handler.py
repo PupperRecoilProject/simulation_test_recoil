@@ -1,6 +1,7 @@
 # keyboard_input_handler.py
 import glfw
 from state import SimulationState
+from logger import log
 
 class KeyboardInputHandler:
     """處理所有鍵盤輸入事件，並根據當前模式進行分派。"""
@@ -22,7 +23,8 @@ class KeyboardInputHandler:
     def char_callback(self, window, codepoint):
         """處理可列印字元的輸入，專門用於序列埠模式。"""
         if self.state.control_mode == "SERIAL_MODE":
-            pass
+            # 在序列埠模式下，將輸入的字元加入指令緩衝區
+            self.state.serial_command_buffer += chr(codepoint)
 
     def key_callback(self, window, key, scancode, action, mods):
         """【最終重構】處理所有按鍵事件，為所有專用模式建立壁壘。"""
@@ -47,6 +49,13 @@ class KeyboardInputHandler:
         if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS:
             self.state.set_control_mode(self.state.previous_control_mode)
             return
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            if key == glfw.KEY_ENTER:
+                log.info(f"[UI > Serial]: {self.state.serial_command_buffer}")
+                self.serial_comm_ref.send_command(self.state.serial_command_buffer)
+                self.state.serial_command_buffer = ""
+            elif key == glfw.KEY_BACKSPACE:
+                self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
 
     def handle_joint_test_mode_keys(self, key, action):
         """專門處理關節測試模式下的按鍵，只更新狀態，不發送指令。"""
@@ -116,8 +125,21 @@ class KeyboardInputHandler:
 
         # --- 長按事件 (重複觸發) ---
         if action in [glfw.PRESS, glfw.REPEAT]:
-            if self.state.input_mode != "KEYBOARD": return
-            
+            step = self.config.keyboard_velocity_adjust_step
+            with self.state.lock:
+                if key == glfw.KEY_Q: 
+                    self.state.command[2] += step
+                    return
+                elif key == glfw.KEY_E:
+                    self.state.command[2] -= step
+                    return
+                elif key == glfw.KEY_C:
+                    self.state.clear_command()
+                    return
+
+            if self.state.input_mode != "KEYBOARD":
+                return
+
             # 參數調整
             if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
             elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
@@ -133,10 +155,8 @@ class KeyboardInputHandler:
             
             # 移動指令
             step = self.config.keyboard_velocity_adjust_step
-            if key == glfw.KEY_C: self.state.clear_command()
-            elif key == glfw.KEY_W: self.state.command[1] += step
+            if key == glfw.KEY_W: self.state.command[1] += step
             elif key == glfw.KEY_S: self.state.command[1] -= step
             elif key == glfw.KEY_A: self.state.command[0] += step
             elif key == glfw.KEY_D: self.state.command[0] -= step
-            elif key == glfw.KEY_Q: self.state.command[2] += step
-            elif key == glfw.KEY_E: self.state.command[2] -= step
+            
