@@ -93,8 +93,7 @@ class UIController:
                 color='blue',
                 size=100,
                 on_move=lambda e: self._update_command_from_joystick(e),
-                # 當搖桿釋放時呼叫自定函式，清除指令並恢復輸入模式
-                on_end=lambda e: self._on_joystick_end()
+                on_end=self._on_joystick_end  # 直接傳遞方法
             ).props('throttle')
             ui.button('清除命令 (Clear Command)', on_click=self.state.clear_command).props('outline')
 
@@ -252,22 +251,20 @@ class UIController:
     def _update_command_from_joystick(self, event):
         x_val = -event.args.y / 50.0
         y_val = event.args.x / 50.0
+        # 切換到虛擬搖桿輸入模式，但保留當前指令
+        self.state.toggle_input_mode("VJOY", clear_cmd=False)
         with self.state.lock:
-            # 使用虛擬搖桿時，切換到專屬的 VJOY 模式，避免與實體搖桿衝突
-            if self.state.input_mode != "VJOY":
-                self.state.input_mode = "VJOY"
-                log.info("輸入模式已切換至 VJOY (虛擬搖桿)")
             self.state.command[0] = y_val * self.state.config.gamepad_sensitivity['vy']
             self.state.command[1] = x_val * self.state.config.gamepad_sensitivity['vx']
             self.state.command[2] = 0.0
 
-    def _on_joystick_end(self):
+    def _on_joystick_end(self, event):
         """虛擬搖桿釋放時的回呼函式。"""
         with self.state.lock:
             if self.state.input_mode == "VJOY":
                 self.state.clear_command()
-                self.state.input_mode = "KEYBOARD"
-                log.info("虛擬搖桿已釋放，輸入模式切回 KEYBOARD")
+        # 切回鍵盤輸入模式，但不要再次清除指令
+        self.state.toggle_input_mode("KEYBOARD", clear_cmd=False)
 
     def _send_serial_command(self):
         command_text = self.serial_command_buffer.value

@@ -103,12 +103,13 @@ class SimulationState:
         self.command.fill(0.0) # 將指令向量全部設為 0
         print("運動指令已清除。")
 
-    def toggle_input_mode(self, new_mode: str):
-        """切換輸入模式 (鍵盤/搖桿)。"""
-        with self.lock:  # 【執行緒安全】確保狀態變更原子化
-            if self.input_mode != new_mode:  # 如果新模式與當前模式不同
-                self.input_mode = new_mode  # 更新模式
-                self.clear_command()  # 清除舊的指令，避免殘留
+    def toggle_input_mode(self, new_mode: str, clear_cmd: bool = True):
+        """切換輸入模式，可選擇是否清除現有指令。"""
+        with self.lock:
+            if self.input_mode != new_mode:
+                self.input_mode = new_mode
+                if clear_cmd:
+                    self.clear_command()
                 print(f"輸入模式已切換至: {self.input_mode}")
             
     def set_control_mode(self, new_mode: str):
