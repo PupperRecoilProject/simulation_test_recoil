@@ -31,9 +31,9 @@ class TerrainManager:
         self.hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, 'terrain') # 根據名稱 'terrain' 獲取高度場的 ID
         self.needs_scene_update = False # 標記是否需要更新渲染場景
 
-        if self.hfield_id == -1: # 檢查是否成功找到高度場
-            print("❌ 錯誤: 在 XML 中找不到名為 'terrain' 的 hfield。地形切換功能將被禁用。")
-            self.is_functional = False # 若找不到，則禁用此功能
+        if self.hfield_id == -1:  # 檢查是否成功找到高度場
+            log.error("在 XML 中找不到名為 'terrain' 的 hfield。地形功能將被禁用。")
+            self.is_functional = False  # 若找不到，則禁用此功能
             return
 
         # --- 地塊和網格設定 ---
@@ -50,8 +50,12 @@ class TerrainManager:
         # 驗證XML中的hfield尺寸是否符合Python腳本的預期，這是一個重要的健全性檢查
         expected_hfield_dim = (self.tile_resolution - 1) * self.grid_size + 1
         if self.hfield_nrow != expected_hfield_dim or self.hfield_ncol != expected_hfield_dim:
-            print(f"❌ 錯誤: XML hfield 解析度 ({self.hfield_nrow}x{self.hfield_ncol}) 與 TerrainManager 設定不符。")
-            print(f"     預期解析度應為: {expected_hfield_dim}x{expected_hfield_dim} (基於 {self.grid_size}x{self.grid_size} 網格)")
+            log.error(
+                f"XML hfield 解析度 ({self.hfield_nrow}x{self.hfield_ncol}) 與 TerrainManager 設定不符。"
+            )
+            log.error(
+                f"     預期解析度應為: {expected_hfield_dim}x{expected_hfield_dim} (基於 {self.grid_size}x{self.grid_size} 網格)"
+            )
             self.is_functional = False
             return
             
@@ -77,7 +81,7 @@ class TerrainManager:
         self.is_functional = True # 標記功能為可用
         
         self.initial_generate() # 執行初始地形生成
-        print(f"✅ 雙模式地形管理器初始化完成 (使用 {self.grid_size}x{self.grid_size} 網格)。")
+        log.info(f"✅ 雙模式地形管理器初始化完成 (使用 {self.grid_size}x{self.grid_size} 網格)。")
 
     def reset(self):
         """重置地形管理器的世界中心並重新生成地形。"""
@@ -104,10 +108,11 @@ class TerrainManager:
         dx = robot_grid_x - self.world_center_x
         dy = robot_grid_y - self.world_center_y
         
-        # 定義觸發更新的緩衝區半徑。例如 5x5 網格，半徑是2，緩衝區是1。
-        # 意即機器人必須走到離中心2格遠的地方（即網格的最外圍）才會觸發更新。
-        trigger_radius = (self.grid_size // 2) - 1
-
+        # 定義觸發更新的緩衝區半徑。
+        # 以 5x5 網格為例，半徑為 2，減去 1 代表 1 格的安全緩衝區。
+        # 當機器人走到最外圍一圈地塊時才會真正觸發滑動，避免頻繁更新。
+        trigger_radius = max(0, (self.grid_size // 2) - 1)
+        
         # 【除錯日誌】觀察觸發計算的詳細參數
         log.debug(
             f"TerrainCheck: RobotGrid({robot_grid_x},{robot_grid_y}), "
@@ -117,11 +122,14 @@ class TerrainManager:
 
         # 當機器人與中心的距離大於緩衝區半徑時，觸發更新
         if abs(dx) > trigger_radius or abs(dy) > trigger_radius:
-            # 計算需要滑動的方向（+1, -1 或 0）
+            # 根據差距的正負決定滑動方向（+1、-1 或 0）
             shift_x = np.sign(dx).astype(int) if abs(dx) > trigger_radius else 0
             shift_y = np.sign(dy).astype(int) if abs(dy) > trigger_radius else 0
-            
-            print(f"🔄 機器人接近網格邊緣，向 ({shift_x}, {shift_y}) 方向滑動地形...")
+
+            log.info(
+                f"🔄 機器人觸發地形邊界 (Delta: {dx},{dy})，" 
+                f"向 ({shift_x}, {shift_y}) 方向滑動地形..."
+            )
             self.shift_grid_center(shift_x, shift_y)
 
     def cycle_terrain_mode(self, state: 'SimulationState'):
@@ -135,7 +143,7 @@ class TerrainManager:
             state.terrain_mode = "SINGLE"
             state.single_terrain_index = 0
             terrain_name = self.single_terrain_names[state.single_terrain_index]
-            print(f"🏞️ 切換到單一地形模式: {terrain_name}")
+            log.info(f"🏞️ 切換到單一地形模式: {terrain_name}")
             self.set_single_terrain(terrain_name)
         else: # 當前在 SINGLE 模式
             # 切換到下一個單一地形
@@ -143,19 +151,21 @@ class TerrainManager:
             if state.single_terrain_index < len(self.single_terrain_names):
                 # 如果還有下一個單一地形
                 terrain_name = self.single_terrain_names[state.single_terrain_index]
-                print(f"🏞️ 切換到下一個單一地形: {terrain_name}")
+                log.info(f"🏞️ 切換到下一個單一地形: {terrain_name}")
                 self.set_single_terrain(terrain_name)
             else:
                 # 所有單一地形都循環完畢 -> 返回無限模式
                 state.terrain_mode = "INFINITE"
                 state.single_terrain_index = 0
-                print(f"🏞️ 返回無限地形模式")
+                log.info("🏞️ 返回無限地形模式")
+                # 重置地形中心，清空快取後再重新生成
+                self.reset()
                 self.regenerate_terrain_and_adjust_robot(self.data.qpos)
 
     def set_single_terrain(self, terrain_name: str):
         """用指定的單一地形類型填滿整個網格，創造一個巨大的、均一的固定地形。"""
         if terrain_name not in self.terrain_generators:
-            print(f"⚠️ 警告: 找不到名為 '{terrain_name}' 的地形生成器。")
+            log.warning(f"找不到名為 '{terrain_name}' 的地形生成器。")
             return
             
         generator = self.terrain_generators[terrain_name]
@@ -178,13 +188,13 @@ class TerrainManager:
         # 將更新後的數據上傳到 MuJoCo
         self.model.hfield_data[self.hfield_adr:self.hfield_adr + self.hfield_nrow * self.hfield_ncol] = self.full_hfield_data.flatten()
         self.needs_scene_update = True
-        print(f"✅ 已生成完整的 '{terrain_name}' 地形。")
+        log.info(f"✅ 已生成完整的 '{terrain_name}' 地形。")
 
     def regenerate_terrain_and_adjust_robot(self, robot_qpos, robot_height_offset=0.3):
         """(由Y鍵觸發) 只在無限模式下，清空快取並重新生成地形，然後調整機器人高度。"""
         if not self.is_functional: return
         
-        print("🔄 (Y Key) 正在強制重新生成所有地形...")
+        log.info("🔄 (Y Key) 正在強制重新生成所有地形...")
         self.terrain_cache.clear() # 清空所有已生成的地塊記憶
         # 將世界中心重置為機器人當前所在的地塊，以獲得最佳體驗
         self.world_center_x = int(round(robot_qpos[0] / self.tile_world_size))
@@ -197,7 +207,7 @@ class TerrainManager:
         robot_y = robot_qpos[1]
         new_ground_z = self.get_height_at(robot_x, robot_y)
         self.data.qpos[2] = new_ground_z + robot_height_offset
-        print(f"    機器人高度已調整以適應新地形：Z = {self.data.qpos[2]:.2f}m")
+        log.info(f"    機器人高度已調整以適應新地形：Z = {self.data.qpos[2]:.2f}m")
         mujoco.mj_forward(self.model, self.data) # 確保高度變更生效
 
     def get_current_terrain_name(self, state: 'SimulationState') -> str:
@@ -263,11 +273,11 @@ class TerrainManager:
                 
         self.model.hfield_data[self.hfield_adr:self.hfield_adr + self.hfield_nrow * self.hfield_ncol] = self.full_hfield_data.flatten()
         self.needs_scene_update = True
-        print("✅ 完整高度場已更新。")
+        log.info("✅ 完整高度場已更新。")
 
     def initial_generate(self):
         """首次生成時，只需更新一次 hfield。"""
-        print("🏞️ 正在生成初始地形...")
+        log.info("🏞️ 正在生成初始地形...")
         self.update_hfield()
 
     def get_height_at(self, world_x: float, world_y: float) -> float:
@@ -285,9 +295,9 @@ class TerrainManager:
     def save_hfield_to_png(self):
         """將當前完整的高度場數據儲存為一個灰階PNG檔案。"""
         if not self.is_functional:
-            print("⚠️ 警告: 地形功能未啟用，無法儲存PNG。")
+            log.warning("地形功能未啟用，無法儲存PNG。")
             return
-        print("💾 正在儲存當前地形為PNG檔案...")
+        log.info("💾 正在儲存當前地形為PNG檔案...")
         data = self.full_hfield_data
         h_min, h_max = data.min(), data.max()
         if h_max == h_min:
@@ -299,7 +309,7 @@ class TerrainManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"terrain_snapshot_{timestamp}.png"
         img.save(filename)
-        print(f"✅ 地形快照已成功儲存至: {filename}")
+        log.info(f"✅ 地形快照已成功儲存至: {filename}")
 
     def _create_boundary_fade(self) -> np.ndarray:
         """創建一個邊界為0，中心為1的2D遮罩，用於確保地塊邊界高度為零。"""
