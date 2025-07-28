@@ -66,6 +66,9 @@ class SimulationController:
                 hard_reset_req = self.state.hard_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
                 current_control_mode = self.state.control_mode
+                # 【新增】讀取地形模式與機器人當前位置
+                current_terrain_mode = self.state.terrain_mode
+                latest_pos = self.state.latest_pos.copy()
 
             if single_step and not execute_one:
                 self.sim.render_from_thread(self.state)
@@ -85,12 +88,15 @@ class SimulationController:
             else:
                 self._simulation_step()
 
+            # 【核心修正】在主迴圈持續更新地形
+            if self.terrain_manager.is_functional:
+                # 根據目前地形模式與機器人位置更新地形
+                self.terrain_manager.update(latest_pos, current_terrain_mode)
+
+            # 更新共享狀態中的位置與姿態
             with self.state.lock:
                 self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
                 self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
-
-            if self.terrain_manager.is_functional:
-                self.terrain_manager.update(self.state.latest_pos, self.state.terrain_mode)
 
             self.sim.render_from_thread(self.state)
 
@@ -142,6 +148,7 @@ class SimulationController:
 
             mujoco.mj_resetData(self.sim.model, self.sim.data)
             self.sim.data.qpos[0], self.sim.data.qpos[1] = 0, 0
+            # 依照目前地形取得原點的高度，確保重置後不會埋在地底
             start_ground_z = self.terrain_manager.get_height_at(0, 0)
             robot_height_offset = 0.3
             self.sim.data.qpos[2] = start_ground_z + robot_height_offset

@@ -131,11 +131,15 @@ class UIController:
             self.status_labels['robot_vel'] = ui.label('速度: [0.0, 0.0, 0.0]')
 
     def _create_onnx_display(self):
-        with ui.card().classes('w-full'):
+        """建立 ONNX 觀察向量區域，並設定最小高度避免畫面跳動。"""
+        # 【修正】設定卡片的最小高度，避免文字長度變化造成版面跳動
+        with ui.card().style('min-height: 220px;'):
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
             with ui.grid(columns=2):
-                obs_components = ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands',
-                                  'accelerometer', 'joint_positions', 'joint_velocities', 'last_action']
+                obs_components = [
+                    'linear_velocity', 'angular_velocity', 'gravity_vector', 'commands',
+                    'accelerometer', 'joint_positions', 'joint_velocities', 'last_action'
+                ]
                 for comp in obs_components:
                     self.onnx_input_labels[comp] = ui.label(f'{comp}: N/A')
 
