@@ -3,6 +3,7 @@ import serial
 import serial.tools.list_ports
 import threading
 import time
+from logger import log
 import re
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -60,74 +61,80 @@ class HardwareController:
             [-0.0804,  0.0239, -0.1964],
             [ 0.0806,  0.0239, -0.1964],
         ], dtype=np.float32)
-        print("✅ 硬體控制器已初始化。")
+        log.info("✅ 硬體控制器已初始化。")
 
-    def connect_and_start(self) -> bool:
-        """【核心重構】不再自己建立連接，而是從 SerialCommunicator 獲取已建立的連接。"""
+    def start_controller_threads(self):
+        """【新增】在背景執行緒中啟動硬體控制器。"""
         if self.is_running:
-            print("硬體控制器已在運行中。")
-            return True
-            
+            log.info("硬體控制器已在運行中。")
+            return
+
         if not self.serial_comm.is_connected:
-            print("❌ 硬體模式錯誤：請先按 'U' 鍵連接序列埠。")
-            return False
-        
+            log.error("❌ 硬體模式錯誤：請先連接序列埠。")
+            self.global_state.set_control_mode("WALKING")
+            return
+
         self.ser = self.serial_comm.get_serial_connection()
         if not self.ser:
-            print("❌ 硬體模式錯誤：無法從 SerialCommunicator 獲取有效的序列埠連接。")
-            return False
-            
-        print(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
+            log.error("❌ 硬體模式錯誤：無法取得有效序列埠連接。")
+            self.global_state.set_control_mode("WALKING")
+            return
+
+        log.info(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
         self.serial_comm.is_managed_by_hardware_controller = True
-        
-        # 【核心修正】在啟動時，明確地將 AI 事件清除，確保 AI 預設是關閉的。
+
         self.ai_control_enabled.clear()
-        self.global_state.hardware_ai_is_active = False
+        with self.global_state.lock:
+            self.global_state.hardware_ai_is_active = False
 
         self.is_running = True
         self.read_thread = threading.Thread(target=self._read_from_port, daemon=True)
         self.read_thread.start()
         self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
         self.control_thread.start()
-        
-        print("✅ 硬體控制執行緒已啟動。")
-        return True
 
-    def stop(self):
-        """【修改】停止時，將序列埠的控制權交還，但不關閉連接。"""
+        with self.global_state.lock:
+            self.global_state.hardware_is_connected = True
+        log.info("✅ 硬體控制執行緒已啟動。")
+
+    def stop_controller_threads(self):
+        """【修改】停止硬體控制執行緒並交還序列埠控制權。"""
         if not self.is_running: return
         
-        print("正在停止硬體控制器...")
+        log.info("正在停止硬體控制器...")
         self.is_running = False
         self.disable_ai() # 這裡會呼叫 .clear()
         self.ai_control_enabled.set() # 確保在任何情況下都能喚醒 wait()
         
-        if self.control_thread and self.control_thread.is_alive(): self.control_thread.join(timeout=1)
-        if self.read_thread and self.read_thread.is_alive(): self.read_thread.join(timeout=1)
+        if self.control_thread and self.control_thread.is_alive():
+            self.control_thread.join(timeout=1)
+        if self.read_thread and self.read_thread.is_alive():
+            self.read_thread.join(timeout=1)
         
         if self.serial_comm:
             self.serial_comm.is_managed_by_hardware_controller = False
-            print("序列埠控制權已交還。")
+            log.info("序列埠控制權已交還。")
         
         self.ser = None
-        print("硬體控制器已完全停止。")
+        log.info("硬體控制器已完全停止。")
         
     def enable_ai(self):
         if not self.is_running:
-            print("無法啟用 AI：硬體控制器未運行。")
+            log.info("無法啟用 AI：硬體控制器未運行。")
             return
-        print("🤖 AI 控制已啟用。")
+        log.info("🤖 AI 控制已啟用。")
         self.policy.reset()
         self.ai_control_enabled.set()
         self.global_state.hardware_ai_is_active = True
 
     def disable_ai(self):
-        print("⏸️ AI 控制已暫停。")
+        log.info("⏸️ AI 控制已暫停。")
         self.ai_control_enabled.clear()
         self.global_state.hardware_ai_is_active = False
         if self.is_running and self.ser and self.ser.is_open: # 增加 is_running 判斷
             try: self.ser.write(b"stop\n")
-            except serial.SerialException as e: print(f"發送停止指令失敗: {e}")
+            except serial.SerialException as e:
+                log.error(f"發送停止指令失敗: {e}")
 
     def parse_teensy_data(self, line: str):
         """【核心修正】重構此函式，使其更具彈性，並能提供有用的除錯資訊。"""
@@ -151,7 +158,7 @@ class HardwareController:
                 self.hw_state.actual_current_ma = np.array(parts[45:57], dtype=np.float32)
                 self.hw_state.last_update_time = current_time
         except (ValueError, IndexError) as e:
-            print(f"❌ 解析硬體數據時出錯: {e} | 原始數據: {line}")
+            log.error(f"❌ 解析硬體數據時出錯: {e} | 原始數據: {line}")
 
     def estimate_linear_velocity(self):
         with self.lock:
@@ -203,13 +210,13 @@ class HardwareController:
             }
             recipe = self.policy.get_active_recipe()
             if not recipe:
-                print("⚠️ 警告: 無法從策略管理器獲取有效的觀察配方。")
+                log.warning("⚠️ 警告: 無法從策略管理器獲取有效的觀察配方。")
                 return np.array([])
             final_obs_list = [obs_list[key] for key in recipe if key in obs_list]
             return np.concatenate(final_obs_list).astype(np.float32)
 
     def _read_from_port(self):
-        print("[硬體讀取線程已啟動] 等待來自 Teensy 的數據...")
+        log.info("[硬體讀取線程已啟動] 等待來自 Teensy 的數據...")
         while self.is_running:
             if not self.ser or not self.ser.is_open:
                 self.stop(); break
@@ -217,12 +224,14 @@ class HardwareController:
                 line = self.ser.readline().decode('utf-8', errors='ignore').strip()
                 if line: self.parse_teensy_data(line)
             except (serial.SerialException, OSError):
-                print("❌ 錯誤：序列埠斷開連接或讀取錯誤。"); self.stop(); break
-            except Exception as e: print(f"❌ _read_from_port 發生未知錯誤: {e}")
+                log.error("❌ 錯誤：序列埠斷開連接或讀取錯誤。")
+                self.stop_controller_threads(); break
+            except Exception as e:
+                log.error(f"❌ _read_from_port 發生未知錯誤: {e}")
                 
     def _control_loop(self):
         """【核心重構】此迴圈現在是硬體指令的唯一來源，並能感知 JOINT_TEST 模式。"""
-        print("\n--- 硬體控制執行緒已就緒 ---")
+        log.info("\n--- 硬體控制執行緒已就緒 ---")
         default_pose_hardware = self.global_state.sim.default_pose
         while self.is_running:
             loop_start_time = time.perf_counter()

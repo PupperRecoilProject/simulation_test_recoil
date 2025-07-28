@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass, field
 from config import AppConfig
+from logger import log
 from typing import TYPE_CHECKING
 import threading
 
@@ -93,17 +94,17 @@ class SimulationState:
         self.latest_action_raw = np.zeros(self.config.num_motors) # 初始化原始動作向量
         self.latest_final_ctrl = np.zeros(self.config.num_motors) # 初始化最終控制向量
         self.manual_final_ctrl = np.zeros(self.config.num_motors) # 初始化手動控制向量
-        print("✅ SimulationState 初始化完成 (含執行緒鎖)。")
+        log.info("✅ SimulationState 初始化完成 (含執行緒鎖)。")
 
     def reset_control_state(self, sim_time: float):
         """重置控制迴圈的計時器。"""
         self.control_timer = sim_time # 將計時器設定為當前的模擬時間
-        print("✅ 控制狀態已重置。")
+        log.info("✅ 控制狀態已重置。")
 
     def clear_command(self):
         """清除使用者輸入的運動指令。"""
-        self.command.fill(0.0) # 將指令向量全部設為 0
-        print("運動指令已清除。")
+        self.command.fill(0.0)  # 將指令向量全部設為 0
+        log.info("運動指令已清除。")
 
     def toggle_input_mode(self, new_mode: str, clear_cmd: bool = True):
         """切換輸入模式，可選擇是否清除現有指令。"""
@@ -112,7 +113,7 @@ class SimulationState:
                 self.input_mode = new_mode
                 if clear_cmd:
                     self.clear_command()
-                print(f"輸入模式已切換至: {self.input_mode}")
+                log.info(f"輸入模式已切換至: {self.input_mode}")
             
     def set_control_mode(self, new_mode: str):
         """【智慧模式切換】切換主控制模式，並能記住進入 SERIAL_MODE 前的狀態。"""
@@ -135,15 +136,14 @@ class SimulationState:
                     self.floating_controller_ref.disable()  # 禁用懸浮約束
                 self.manual_mode_is_floating = False  # 重置手動懸浮旗標
             elif old_mode == "HARDWARE_MODE":
-                # 只有當我們要切換到一個非硬體也非序列埠的模式時，才停止硬體控制器
                 if new_mode not in ["SERIAL_MODE", "JOINT_TEST"]:
                     if self.hardware_controller_ref:
-                        self.hardware_controller_ref.stop()  # 停止硬體控制器執行緒
+                        threading.Thread(target=self.hardware_controller_ref.stop_controller_threads).start()
                     self.hardware_is_connected = False
                     self.hardware_ai_is_active = False
 
             self.control_mode = new_mode  # 正式更新到新模式
-            print(f"控制模式已切換至: {self.control_mode}")
+            log.info(f"控制模式已切換至: {self.control_mode}")
 
             # --- 處理進入新模式時的初始化工作 ---
             if new_mode == "FLOATING":
@@ -155,19 +155,14 @@ class SimulationState:
                 self.manual_final_ctrl[:] = self.latest_final_ctrl
             elif new_mode == "HARDWARE_MODE":
                 if self.hardware_controller_ref and not self.hardware_controller_ref.is_running:
-                    if self.hardware_controller_ref.connect_and_start():
-                        self.hardware_is_connected = True
-                    else:
-                        print("❌ 硬體連接失敗，自動返回 WALKING 模式。")
-                        self.control_mode = "WALKING"
-                        print(f"控制模式已自動切換至: {self.control_mode}")
+                    threading.Thread(target=self.hardware_controller_ref.start_controller_threads).start()
 
             # --- 處理從手動模式切換回 AI 模式時的重置邏輯 ---
             is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
             is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
 
             if is_entering_ai_mode and is_leaving_manual_mode:
-                print("從手動/序列埠模式返回，正在重置 AI 狀態以確保平滑過渡...")
+                log.info("從手動/序列埠模式返回，正在重置 AI 狀態以確保平滑過渡...")
                 if self.policy_manager_ref:
                     self.policy_manager_ref.reset()
                 self.clear_command()
