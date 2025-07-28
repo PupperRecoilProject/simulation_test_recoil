@@ -165,7 +165,8 @@ class UIController:
         recipe = self.policy_manager.get_active_recipe()
         obs_vec = self.state.latest_onnx_input
         current_idx = 0
-        component_dims = self.state.policy_manager.obs_builder.component_dims
+        # 從已註冊的 policy_manager 取得各觀察元件的維度
+        component_dims = self.policy_manager.obs_builder.component_dims
         for comp_name in recipe:
             dim = component_dims.get(comp_name, 0)
             if dim > 0 and comp_name in self.onnx_input_labels:
