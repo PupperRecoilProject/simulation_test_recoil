@@ -42,8 +42,9 @@ class UIController:
             with ui.column().classes('w-1/3'):
                 self._create_control_panel()
                 self._create_tuning_panel()
-                self._create_joystick_panel()
+                # 先建立關節控制面板，再建立搖桿面板
                 self._create_joint_control_panel()  # 新增關節微調面板
+                self._create_joystick_panel()
             with ui.column().classes('w-2/3'):
                 self._create_status_display()
                 self._create_onnx_display()
