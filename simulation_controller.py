@@ -29,10 +29,10 @@ class SimulationController:
         self._running = threading.Event()
         self._running.set()
 
-        self._initialize_simulation()
+        # 初始化將在執行緒啟動後進行
 
     # ------------------------------------------------------------------
-    def _initialize_simulation(self) -> None:
+    def _initialize_simulation_state(self) -> None:
         if self.terrain_manager.is_functional:
             self.terrain_manager.initial_generate()
         self.hard_reset()
@@ -40,7 +40,17 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def run(self) -> None:
+        # 執行緒啟動後的初始化
+        self.sim.initialize_window_and_context()
+        self._initialize_simulation_state()
+
         while self._running.is_set():
+            if self.sim.should_close():
+                self._running.clear()
+                from nicegui import app
+                app.shutdown()
+                continue
+
             with self.state.lock:
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step

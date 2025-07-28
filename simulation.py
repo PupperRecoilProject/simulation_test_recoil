@@ -3,8 +3,7 @@ import mujoco
 import glfw
 import sys
 import numpy as np
-from typing import TYPE_CHECKING
-import os
+from typing import TYPE_CHECKING, Optional
 
 from config import AppConfig
 from state import SimulationState, TuningParams
@@ -16,10 +15,13 @@ if TYPE_CHECKING:
 class Simulation:
     """
     封裝 MuJoCo 模擬、GLFW 視窗和渲染邏輯。
+    【核心變更】將 GLFW 初始化延遲至模擬執行緒。
     """
     def __init__(self, config: AppConfig):
-        """初始化 MuJoCo 模型、資料、GLFW 視窗以及滑鼠控制相關狀態。"""
+        """僅初始化 MuJoCo 模型與資料，不建立視窗。"""
         self.config = config
+        self.window: Optional[glfw._GLFWwindow] = None
+        self.keyboard_handler: Optional[KeyboardInputHandler] = None
         
         try:
             with open(config.mujoco_model_file, 'r', encoding='utf-8') as f:
@@ -50,8 +52,13 @@ class Simulation:
             self.default_pose = np.zeros(config.num_motors)
             print("⚠️ 警告: 在 XML 中未找到名為 'home' 的 keyframe，將使用零作為預設姿態。")
 
-        if not glfw.init(): sys.exit("❌ 錯誤: GLFW 初始化失敗。")
-        self.window = glfw.create_window(1200, 900, "MuJoCo 模擬器 (含滑鼠控制)", None, None)
+        # 視窗與渲染上下文將在模擬執行緒中初始化
+
+    def initialize_window_and_context(self):
+        """在當前執行緒中初始化 GLFW 與渲染上下文。"""
+        if not glfw.init():
+            sys.exit("❌ 錯誤: GLFW 初始化失敗。")
+        self.window = glfw.create_window(1200, 900, "MuJoCo 3D 渲染視窗", None, None)
         if not self.window:
             glfw.terminate()
             sys.exit("❌ 錯誤: GLFW 視窗建立失敗。")
@@ -65,19 +72,22 @@ class Simulation:
 
         self.cam = mujoco.MjvCamera()
         self.opt = mujoco.MjvOption()
+        self.overlay = DebugOverlay()
         mujoco.mjv_defaultCamera(self.cam)
         mujoco.mjv_defaultOption(self.opt)
         self.cam.distance, self.cam.elevation, self.cam.azimuth = 2.5, -20, 90
-        
+
         self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
         self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_100)
-        self.overlay = DebugOverlay()
-        
+
         glfw.set_cursor_pos_callback(self.window, self._mouse_move_callback)
         glfw.set_mouse_button_callback(self.window, self._mouse_button_callback)
         glfw.set_scroll_callback(self.window, self._scroll_callback)
 
-        print("✅ MuJoCo 模擬環境與視窗初始化完成 (含滑鼠控制)。")
+        if self.keyboard_handler:
+            self.keyboard_handler.register_callbacks(self.window)
+
+        print("✅ GLFW 視窗與渲染上下文在模擬執行緒中初始化完成。")
 
     def _mouse_button_callback(self, window, button, action, mods):
         if button == glfw.MOUSE_BUTTON_LEFT:
@@ -109,7 +119,8 @@ class Simulation:
         mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0, -0.05 * yoffset, self.scene, self.cam)
 
     def register_callbacks(self, keyboard_handler: "KeyboardInputHandler"):
-        keyboard_handler.register_callbacks(self.window)
+        """在窗口初始化後再註冊鍵盤事件。"""
+        self.keyboard_handler = keyboard_handler
 
     def reset(self):
         mujoco.mj_resetData(self.model, self.data)
@@ -117,6 +128,8 @@ class Simulation:
         print("✅ MuJoCo 模擬已重置。")
 
     def should_close(self) -> bool:
+        if not self.window:
+            return True
         return glfw.window_should_close(self.window)
         
     def apply_position_control(self, target_pos: np.ndarray, params: TuningParams):
@@ -132,6 +145,8 @@ class Simulation:
             mujoco.mj_step(self.model, self.data)
 
     def render(self, state: SimulationState):
+        if not self.window:
+            return
         viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
         self.overlay.render(viewport, self.context, state, self)
         glfw.swap_buffers(self.window)
@@ -152,4 +167,6 @@ class Simulation:
             pass
         
     def close(self):
-        glfw.terminate()
+        if self.window:
+            glfw.terminate()
+            self.window = None
