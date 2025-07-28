@@ -1,6 +1,7 @@
 """Entry point using NiceGUI for the control interface."""
 
 import sys
+import threading  # 新增：用於啟動模擬執行緒
 from nicegui import ui, app  # 從 nicegui 匯入 ui 物件與 app 實例
 
 from config import load_config
