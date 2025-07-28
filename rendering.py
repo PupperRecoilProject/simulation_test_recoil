@@ -25,12 +25,21 @@ class DebugOverlay:
 
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要顯示的觀察配方。"""
+        # 若新配方與目前相同，直接返回，避免在每一幀都印出訊息
+        if recipe == self.recipe:
+            return
+
         self.recipe = recipe
-        ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 
-                        'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 
-                        'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 
-                        'phase_signal':1, 'accelerometer': 3}
+        # 各個觀察向量元件的維度資訊
+        ALL_OBS_DIMS = {
+            'z_angular_velocity': 1, 'gravity_vector': 3, 'commands': 3,
+            'joint_positions': 12, 'joint_velocities': 12, 'foot_contact_states': 4,
+            'linear_velocity': 3, 'angular_velocity': 3, 'last_action': 12,
+            'phase_signal': 1, 'accelerometer': 3,
+        }
+        # 只保留在配方中的元件及其維度
         self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
+        # 僅在配方改變時輸出提示文字
         print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
