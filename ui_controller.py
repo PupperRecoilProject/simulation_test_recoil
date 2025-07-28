@@ -29,6 +29,18 @@ class UIController:
 
         self._setup_ui()
 
+    # -----------------------------------------------------------
+    def handle_startup(self) -> None:
+        """在 NiceGUI 啟動後執行，啟動模擬執行緒。"""
+        print("NiceGUI 已啟動，啟動模擬執行緒...")
+        thread = threading.Thread(target=self.simulation_controller.run, daemon=True)
+        thread.start()
+
+    def handle_shutdown(self) -> None:
+        """在 NiceGUI 關閉時執行，停止模擬執行緒。"""
+        print("NiceGUI 即將關閉，停止模擬執行緒...")
+        self.simulation_controller.stop()
+
     def _setup_ui(self) -> None:
         ui.dark_mode().enable()
         with ui.header(elevated=True).style('background-color: #3874c8'):
@@ -44,25 +56,7 @@ class UIController:
                 self._create_log_panel()
 
         ui.timer(0.1, self.update_ui_elements)
-        # 註冊 NiceGUI 的生命週期事件，確保模擬執行緒在 UI 啟動後再啟動
-        self._setup_lifecycle_events()
 
-    def _setup_lifecycle_events(self) -> None:
-        """設定 NiceGUI 的啟動與關閉事件，用來管理背景模擬執行緒。"""
-
-        def start_simulation_thread() -> None:
-            """在 UI 完全啟動後啟動模擬執行緒。"""
-            print("NiceGUI 已啟動，啟動模擬執行緒...")
-            thread = threading.Thread(target=self.simulation_controller.run, daemon=True)
-            thread.start()
-
-        def stop_simulation_thread() -> None:
-            """在 UI 關閉時停止模擬執行緒。"""
-            print("NiceGUI 即將關閉，停止模擬執行緒...")
-            self.simulation_controller.stop()
-
-        ui.on_startup(start_simulation_thread)
-        ui.on_shutdown(stop_simulation_thread)
 
     def _create_control_panel(self) -> None:
         with ui.card():
@@ -229,6 +223,4 @@ class UIController:
             with self.state.lock:
                 self.state.gamepad_is_connected = connected
 
-    def run(self) -> None:
-        ui.run(title="Pupper Robot Console", port=8080)
 

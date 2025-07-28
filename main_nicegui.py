@@ -1,7 +1,7 @@
 """Entry point using NiceGUI for the control interface."""
 
 import sys
-import threading
+import nicegui as ui
 
 from config import load_config
 from state import SimulationState
@@ -59,9 +59,14 @@ def main() -> None:
     simulation_controller = SimulationController(state)
     ui_controller = UIController(state, simulation_controller)
 
-    # 模擬執行緒將在 NiceGUI 完全啟動後由 on_startup 事件啟動
-    print("launching UI (simulation thread will start on startup)...")
-    ui_controller.run()
+    # 模擬執行緒將在 NiceGUI 完全啟動後啟動
+    print("launching UI; simulation thread will start once UI is ready...")
+    ui.run(
+        title="Pupper Robot Console",
+        port=8080,
+        on_startup=ui_controller.handle_startup,
+        on_shutdown=ui_controller.handle_shutdown,
+    )
 
     print("closing application ...")
     simulation_controller.stop()
