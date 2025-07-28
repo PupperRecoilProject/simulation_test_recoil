@@ -35,7 +35,8 @@ class SimulationController:
     # ------------------------------------------------------------------
     def _initialize_simulation_state(self) -> None:
         if self.terrain_manager.is_functional:
-            self.terrain_manager.initial_generate()
+            # 初始啟動時重置地形管理器，以確保中心點與高度場為最新狀態
+            self.terrain_manager.reset()
         self.hard_reset()
         print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
 
@@ -88,15 +89,15 @@ class SimulationController:
             else:
                 self._simulation_step()
 
-            # 【核心修正】在主迴圈持續更新地形
-            if self.terrain_manager.is_functional:
-                # 根據目前地形模式與機器人位置更新地形
-                self.terrain_manager.update(latest_pos, current_terrain_mode)
-
-            # 更新共享狀態中的位置與姿態
+            # 先將最新物理狀態寫回 shared state
             with self.state.lock:
                 self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
                 self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
+                latest_pos_for_terrain = self.state.latest_pos
+
+            # 再以最新位置檢查是否需要更新地形
+            if self.terrain_manager.is_functional:
+                self.terrain_manager.update(latest_pos_for_terrain, current_terrain_mode)
 
             self.sim.render_from_thread(self.state)
 
@@ -142,6 +143,10 @@ class SimulationController:
     # ------------------------------------------------------------------
     def hard_reset(self) -> None:
         print("\n--- 正在執行機器人硬重置 ---")
+        # 【關鍵修正】同步重置地形管理器，避免中心點偏移
+        if self.terrain_manager.is_functional:
+            self.terrain_manager.reset()
+
         with self.state.lock:
             if self.state.control_mode == "HARDWARE_MODE":
                 return

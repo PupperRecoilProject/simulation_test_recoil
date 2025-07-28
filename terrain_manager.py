@@ -5,6 +5,7 @@ import random
 from typing import Dict, Optional, Callable, Tuple
 from datetime import datetime
 from PIL import Image
+from logger import log
 
 # 為了型別提示，避免循環匯入
 from typing import TYPE_CHECKING
@@ -78,6 +79,16 @@ class TerrainManager:
         self.initial_generate() # 執行初始地形生成
         print(f"✅ 雙模式地形管理器初始化完成 (使用 {self.grid_size}x{self.grid_size} 網格)。")
 
+    def reset(self):
+        """重置地形管理器的世界中心並重新生成地形。"""
+        if not self.is_functional:
+            return
+        log.info("正在重置地形管理器狀態...")
+        self.world_center_x = 0
+        self.world_center_y = 0
+        self.terrain_cache.clear()
+        self.initial_generate()
+
     def update(self, robot_pos: np.ndarray, current_mode: str):
         """
         根據地形模式決定是否更新。只在無限模式下執行滑動窗口邏輯。
@@ -96,6 +107,13 @@ class TerrainManager:
         # 定義觸發更新的緩衝區半徑。例如 5x5 網格，半徑是2，緩衝區是1。
         # 意即機器人必須走到離中心2格遠的地方（即網格的最外圍）才會觸發更新。
         trigger_radius = (self.grid_size // 2) - 1
+
+        # 【除錯日誌】觀察觸發計算的詳細參數
+        log.debug(
+            f"TerrainCheck: RobotGrid({robot_grid_x},{robot_grid_y}), "
+            f"Center({self.world_center_x},{self.world_center_y}), "
+            f"Delta({dx},{dy}), Radius({trigger_radius})"
+        )
 
         # 當機器人與中心的距離大於緩衝區半徑時，觸發更新
         if abs(dx) > trigger_radius or abs(dy) > trigger_radius:
