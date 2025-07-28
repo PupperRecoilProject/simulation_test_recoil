@@ -66,36 +66,40 @@ class XboxController:
         """處理 Pygame 事件佇列，更新搖桿狀態。"""
         if not self.is_connected():
             return
-            
+
         try:
             for event in pygame.event.get():
                 if event.type == pygame.JOYAXISMOTION:
-                    if event.axis == 0: self.state['left_analog_x'] = event.value
-                    elif event.axis == 1: self.state['left_analog_y'] = event.value
-                    elif event.axis == 2: self.state['right_analog_x'] = event.value
-                    elif event.axis == 3: self.state['right_analog_y'] = event.value
+                    # 只處理我們認識的軸索引，其餘忽略
+                    if event.axis == 0:
+                        self.state['left_analog_x'] = event.value
+                    elif event.axis == 1:
+                        self.state['left_analog_y'] = event.value
+                    elif event.axis == 2:
+                        self.state['right_analog_x'] = event.value
+                    elif event.axis == 3:
+                        self.state['right_analog_y'] = event.value
                 elif event.type == pygame.JOYBUTTONDOWN:
-                    if event.button == 0: self.state['button_a'] = 1
-                    elif event.button == 1: self.state['button_b'] = 1
-                    elif event.button == 2: self.state['button_x'] = 1
-                    elif event.button == 3: self.state['button_y'] = 1
-                    elif event.button == 4: self.state['button_l1'] = 1
-                    elif event.button == 5: self.state['button_r1'] = 1
-                    elif event.button == 6: self.state['button_select'] = 1
-                    elif event.button == 7: self.state['button_start'] = 1
+                    # 使用映射表處理，避免未知索引導致 KeyError
+                    button_map = {
+                        0: 'button_a', 1: 'button_b', 2: 'button_x', 3: 'button_y',
+                        4: 'button_l1', 5: 'button_r1', 6: 'button_select', 7: 'button_start'
+                    }
+                    if event.button in button_map:
+                        self.state[button_map[event.button]] = 1
                 elif event.type == pygame.JOYBUTTONUP:
-                    if event.button == 0: self.state['button_a'] = 0
-                    elif event.button == 1: self.state['button_b'] = 0
-                    elif event.button == 2: self.state['button_x'] = 0
-                    elif event.button == 3: self.state['button_y'] = 0
-                    elif event.button == 4: self.state['button_l1'] = 0
-                    elif event.button == 5: self.state['button_r1'] = 0
-                    elif event.button == 6: self.state['button_select'] = 0
-                    elif event.button == 7: self.state['button_start'] = 0
+                    button_map = {
+                        0: 'button_a', 1: 'button_b', 2: 'button_x', 3: 'button_y',
+                        4: 'button_l1', 5: 'button_r1', 6: 'button_select', 7: 'button_start'
+                    }
+                    if event.button in button_map:
+                        self.state[button_map[event.button]] = 0
                 elif event.type == pygame.JOYHATMOTION:
-                    self.state['dpad'] = event.value
+                    # 部分控制器可能有多個 hat，這裡僅處理第一個
+                    if hasattr(event, 'hat') and event.hat == 0:
+                        self.state['dpad'] = event.value
         except pygame.error as e:
-            # 當系統焦點改變時，事件處理可能失敗，此處捕獲並警告
+            # 在某些情況下（例如視窗失去焦點），事件處理可能會失敗，我們在此捕獲錯誤以避免程式崩潰
             print(f"⚠️ Pygame 事件處理時發生錯誤: {e}")
 
     def get_input(self) -> dict:
