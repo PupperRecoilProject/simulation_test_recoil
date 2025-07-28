@@ -26,7 +26,7 @@ def main():
     config = load_config()
     state = SimulationState(config)
     sim = Simulation(config)
-    
+
     # --- 2. 【核心修改】將核心物件的參考存入 state，使其成為全域上下文 ---
     state.sim = sim
     
@@ -43,8 +43,9 @@ def main():
     xbox_handler = XboxInputHandler(state)
 
     obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    # 在無 GUI 版本中仍建立 DebugOverlay 以顯示文字資訊
     overlay = DebugOverlay()
-    
+
     policy_manager = PolicyManager(config, obs_builder, overlay)
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
@@ -54,8 +55,11 @@ def main():
     state.hardware_controller_ref = hw_controller
 
     # KeyboardInputHandler 不再需要直接傳入 serial_comm
-    keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager) 
-    keyboard_handler.register_callbacks(sim.window)
+    keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
+    # 先註冊回呼，待初始化視窗後會正式生效
+    sim.register_callbacks(keyboard_handler)
+    # 初始化 GLFW 視窗與渲染上下文
+    sim.initialize_window_and_context()
 
     # --- 4. 定義重置函式 ---
     def hard_reset():
@@ -114,7 +118,7 @@ def main():
     # --- 6. 主模擬迴圈 ---
     while not sim.should_close():
         if state.single_step_mode and not state.execute_one_step:
-            sim.render(state, overlay)
+            sim.render(state)
             continue
         if state.execute_one_step: state.execute_one_step = False
 
@@ -140,12 +144,7 @@ def main():
                 state.hardware_status_text = "Hardware controller not running."
         
         elif state.control_mode == "SERIAL_MODE":
-            if state.serial_is_connected:
-                state.serial_latest_messages = serial_comm.get_latest_messages()
-            
-            if state.serial_command_to_send:
-                serial_comm.send_command(state.serial_command_to_send)
-                state.serial_command_to_send = ""
+            pass
         else: # 模擬模式 (WALKING, FLOATING, etc.)
             if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
@@ -169,7 +168,7 @@ def main():
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
 
-        sim.render(state, overlay)
+        sim.render(state)
 
     # --- 7. 程式結束，清理資源 ---
     hw_controller.stop()

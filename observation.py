@@ -1,14 +1,14 @@
 # observation.py
 import numpy as np
 import mujoco
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
     from config import AppConfig
 
 class ObservationBuilder:
     def __init__(self, data, model, torso_id, default_pose, config: 'AppConfig'):
-        self.recipe = [] # 初始化為空，將由外部設定
+        self.recipe = []  # 初始化為空，將由外部設定
         self.data = data
         self.model = model
         self.torso_id = torso_id
@@ -21,12 +21,24 @@ class ObservationBuilder:
             print("⚠️ 警告: 在XML中找不到名為 'accelerometer' 的感測器。")
             self.accelerometer_id = -1
 
+        # 【核心修正】定義所有可能觀察元件的維度
+        self.ALL_OBS_DIMS: Dict[str, int] = {
+            'z_angular_velocity': 1, 'gravity_vector': 3, 'commands': 3,
+            'joint_positions': 12, 'joint_velocities': 12, 'foot_contact_states': 4,
+            'linear_velocity': 3, 'angular_velocity': 3, 'last_action': 12,
+            'phase_signal': 1, 'accelerometer': 3,
+        }
+        self.component_dims: Dict[str, int] = {}
+
         self._component_generators = self._register_components()
 
     def set_recipe(self, recipe: list):
         """動態設定當前要使用的觀察配方。"""
-        # print(f"  -> ObservationBuilder 切換配方至: {recipe}")
+        if self.recipe == recipe:
+            return
         self.recipe = recipe
+        # 【核心修正】更新 component_dims 字典
+        self.component_dims = {k: self.ALL_OBS_DIMS[k] for k in recipe if k in self.ALL_OBS_DIMS}
         for component in self.recipe:
             if component not in self._component_generators:
                 print(f"⚠️ 警告: 新配方中的元件 '{component}' 不存在，將被忽略。")

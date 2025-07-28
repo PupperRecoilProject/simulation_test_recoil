@@ -1,6 +1,7 @@
 # keyboard_input_handler.py
 import glfw
 from state import SimulationState
+from logger import log
 
 class KeyboardInputHandler:
     """處理所有鍵盤輸入事件，並根據當前模式進行分派。"""
@@ -21,8 +22,9 @@ class KeyboardInputHandler:
 
     def char_callback(self, window, codepoint):
         """處理可列印字元的輸入，專門用於序列埠模式。"""
-        if self.state.control_mode == "SERIAL_MODE": # 檢查是否處於序列埠模式
-            self.state.serial_command_buffer += chr(codepoint) # 將輸入的字元附加到指令緩衝區
+        if self.state.control_mode == "SERIAL_MODE":
+            # 在序列埠模式下，將輸入的字元加入指令緩衝區
+            self.state.serial_command_buffer += chr(codepoint)
 
     def key_callback(self, window, key, scancode, action, mods):
         """【最終重構】處理所有按鍵事件，為所有專用模式建立壁壘。"""
@@ -44,17 +46,16 @@ class KeyboardInputHandler:
 
     def handle_serial_mode_keys(self, key, action):
         """專門處理序列埠模式下的按鍵。"""
-        if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS: # 如果按下 `~` 鍵
-            # 【智慧退出】退出時，返回到進入此模式前的上一個模式
+        if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS:
             self.state.set_control_mode(self.state.previous_control_mode)
             return
-            
-        if action in [glfw.PRESS, glfw.REPEAT]: # 處理按下或長按
-            if key == glfw.KEY_ENTER: # 如果是 Enter 鍵
-                self.state.serial_command_to_send = self.state.serial_command_buffer # 將緩衝區內容設為待發送
-                self.state.serial_command_buffer = "" # 清空緩衝區
-            elif key == glfw.KEY_BACKSPACE: # 如果是 Backspace 鍵
-                self.state.serial_command_buffer = self.state.serial_command_buffer[:-1] # 刪除最後一個字元
+        if action in [glfw.PRESS, glfw.REPEAT]:
+            if key == glfw.KEY_ENTER:
+                log.info(f"[UI > Serial]: {self.state.serial_command_buffer}")
+                self.serial_comm_ref.send_command(self.state.serial_command_buffer)
+                self.state.serial_command_buffer = ""
+            elif key == glfw.KEY_BACKSPACE:
+                self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
 
     def handle_joint_test_mode_keys(self, key, action):
         """專門處理關節測試模式下的按鍵，只更新狀態，不發送指令。"""
@@ -120,40 +121,25 @@ class KeyboardInputHandler:
             if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm_ref.scan_and_connect(); return
             if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
             
-            # --- 模式切換快捷鍵 ---
-            if key == glfw.KEY_F: self.state.set_control_mode("FLOATING" if self.state.control_mode == "WALKING" else "WALKING"); return
-            if key == glfw.KEY_B: self.state.set_control_mode("MANUAL_CTRL" if self.state.control_mode != "MANUAL_CTRL" else "WALKING"); return
-            if key == glfw.KEY_H: self.state.set_control_mode("HARDWARE_MODE" if self.state.control_mode != "HARDWARE_MODE" else "WALKING"); return
-            if key == glfw.KEY_G:
-                if self.state.hardware_controller_ref and self.state.hardware_controller_ref.is_running:
-                    self.state.set_control_mode("JOINT_TEST")
-                else:
-                    self.state.set_control_mode("JOINT_TEST" if self.state.control_mode != "JOINT_TEST" else "WALKING")
-                return
-            
-            # --- 硬體模式專用快捷鍵 ---
-            if key == glfw.KEY_K:
-                if self.state.control_mode == "HARDWARE_MODE" and self.state.hardware_controller_ref:
-                    if self.state.hardware_ai_is_active: self.state.hardware_controller_ref.disable_ai()
-                    else: self.state.hardware_controller_ref.enable_ai()
-                else: print("Please enter Hardware Mode by pressing 'H' first.")
-                return
-
-            # --- 策略模型選擇快捷鍵 ---
-            policy_keys = { glfw.KEY_1: 0, glfw.KEY_2: 1, glfw.KEY_3: 2, glfw.KEY_4: 3, glfw.KEY_5: 4, glfw.KEY_6: 5 }
-            if key in policy_keys:
-                target_index = policy_keys[key]
-                if self.state.policy_manager_ref and self.state.available_policies:
-                    if target_index < len(self.state.available_policies):
-                        target_policy_name = self.state.available_policies[target_index]
-                        self.state.policy_manager_ref.select_target_policy(target_policy_name)
-                    else: print(f"⚠️ 警告: 策略索引 {target_index+1} 超出範圍。")
-                return
+            # 模式切換等功能已移至 GUI，保留鍵盤僅做基礎操作
 
         # --- 長按事件 (重複觸發) ---
         if action in [glfw.PRESS, glfw.REPEAT]:
-            if self.state.input_mode != "KEYBOARD": return
-            
+            step = self.config.keyboard_velocity_adjust_step
+            with self.state.lock:
+                if key == glfw.KEY_Q: 
+                    self.state.command[2] += step
+                    return
+                elif key == glfw.KEY_E:
+                    self.state.command[2] -= step
+                    return
+                elif key == glfw.KEY_C:
+                    self.state.clear_command()
+                    return
+
+            if self.state.input_mode != "KEYBOARD":
+                return
+
             # 參數調整
             if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
             elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
@@ -169,10 +155,8 @@ class KeyboardInputHandler:
             
             # 移動指令
             step = self.config.keyboard_velocity_adjust_step
-            if key == glfw.KEY_C: self.state.clear_command()
-            elif key == glfw.KEY_W: self.state.command[1] += step
+            if key == glfw.KEY_W: self.state.command[1] += step
             elif key == glfw.KEY_S: self.state.command[1] -= step
             elif key == glfw.KEY_A: self.state.command[0] += step
             elif key == glfw.KEY_D: self.state.command[0] -= step
-            elif key == glfw.KEY_Q: self.state.command[2] += step
-            elif key == glfw.KEY_E: self.state.command[2] -= step
+            

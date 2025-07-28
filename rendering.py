@@ -25,12 +25,21 @@ class DebugOverlay:
 
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要顯示的觀察配方。"""
+        # 若新配方與目前相同，直接返回，避免在每一幀都印出訊息
+        if recipe == self.recipe:
+            return
+
         self.recipe = recipe
-        ALL_OBS_DIMS = {'z_angular_velocity':1, 'gravity_vector':3, 'commands':3, 
-                        'joint_positions':12, 'joint_velocities':12, 'foot_contact_states':4, 
-                        'linear_velocity':3, 'angular_velocity':3, 'last_action':12, 
-                        'phase_signal':1, 'accelerometer': 3}
+        # 各個觀察向量元件的維度資訊
+        ALL_OBS_DIMS = {
+            'z_angular_velocity': 1, 'gravity_vector': 3, 'commands': 3,
+            'joint_positions': 12, 'joint_velocities': 12, 'foot_contact_states': 4,
+            'linear_velocity': 3, 'angular_velocity': 3, 'last_action': 12,
+            'phase_signal': 1, 'accelerometer': 3,
+        }
+        # 只保留在配方中的元件及其維度
         self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
+        # 僅在配方改變時輸出提示文字
         print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
@@ -124,13 +133,13 @@ class DebugOverlay:
         title = "--- SERIAL CONSOLE MODE (Press ~ to exit) ---"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
         
-        log_text = "\n".join(state.serial_latest_messages)
+        from logger import log_queue
+        log_text = "\n".join(list(log_queue)[-50:])
         log_rect = mujoco.MjrRect(console_rect.left + 10, console_rect.bottom, console_rect.width - 20, console_rect.height - 50)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, log_rect, "\n\n" + log_text, " ", context)
 
-        cursor = "_" if int(time.time() * 2) % 2 == 0 else " "
-        buffer_text = f"> {state.serial_command_buffer}{cursor}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, console_rect, buffer_text, " ", context)
+        help_buf = "See NiceGUI console for input"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, console_rect, help_buf, " ", context)
     
     def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染關節手動測試模式的專用介面。"""
