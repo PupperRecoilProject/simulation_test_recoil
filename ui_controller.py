@@ -56,12 +56,12 @@ class UIController:
         with ui.card():
             ui.label('模式控制 (Control Mode)').classes('text-lg')
             with ui.row():
-                ui.button('走路 (Walking)', on_click=lambda: self.state.set_control_mode("WALKING"))
-                ui.button('懸浮 (Floating)', on_click=lambda: self.state.set_control_mode("FLOATING"))
-                ui.button('硬體 (Hardware)', on_click=lambda: self.state.set_control_mode("HARDWARE_MODE"))
+                ui.button('走路 (Walking)', on_click=lambda: self._request_mode_change("WALKING"))
+                ui.button('懸浮 (Floating)', on_click=lambda: self._request_mode_change("FLOATING"))
+                ui.button('硬體 (Hardware)', on_click=lambda: self._request_mode_change("HARDWARE_MODE"))
             with ui.row():
-                ui.button('關節測試 (Joint Test)', on_click=lambda: self.state.set_control_mode("JOINT_TEST"))
-                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self.state.set_control_mode("MANUAL_CTRL"))
+                ui.button('關節測試 (Joint Test)', on_click=lambda: self._request_mode_change("JOINT_TEST"))
+                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self._request_mode_change("MANUAL_CTRL"))
 
             ui.separator()
             ui.label('硬體 AI 控制').classes('text-lg')
@@ -224,6 +224,12 @@ class UIController:
                     vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
                     self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
                 current_idx = end_idx
+
+    def _request_mode_change(self, mode: str) -> None:
+        """【新增】僅設定待切換模式，由模擬執行緒在下個循環處理。"""
+        with self.state.lock:
+            self.state.control_mode_pending = mode
+        log.info(f"UI 請求切換模式至 {mode}")
 
     def _toggle_hardware_ai(self):
         if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':

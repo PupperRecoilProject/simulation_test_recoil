@@ -62,6 +62,16 @@ class SimulationController:
                 app.shutdown()
                 continue
 
+            # 【核心修正】檢查是否有待處理的模式切換請求
+            with self.state.lock:
+                pending_mode = self.state.control_mode_pending
+                if pending_mode:
+                    self.state.control_mode_pending = None
+
+            if pending_mode:
+                # 在鎖外呼叫以避免死鎖
+                self.state.set_control_mode(pending_mode)
+
             with self.state.lock:
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step

@@ -40,6 +40,8 @@ class SimulationState:
     sim_mode_text: str = "Initializing" # 舊的模式文字，可能可以移除
     input_mode: str = "KEYBOARD" # 當前的輸入模式 ("KEYBOARD" 或 "GAMEPAD")
     control_mode: str = "WALKING" # 當前的總控制模式 (例如 "WALKING", "HARDWARE_MODE")
+    # 【新增】UI 執行緒若想切換模式，先將欲切換的模式寫入此處，模擬執行緒會在下一迴圈處理
+    control_mode_pending: str | None = None
     previous_control_mode: str = "WALKING" # 【新功能】儲存進入 SERIAL_MODE 前的模式，以便能正確返回
 
     terrain_mode: str = "INFINITE" # 當前的地形模式 ("INFINITE" 或 "SINGLE")
