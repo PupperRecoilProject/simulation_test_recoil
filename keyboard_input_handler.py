@@ -111,10 +111,11 @@ class KeyboardInputHandler:
             if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
             if key == glfw.KEY_Y:
-                if self.state.terrain_mode == "INFINITE": self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
-                else: print("⚠️ 'Y'鍵 (重生地形) 只在無限地形模式下有效。")
+                if self.state.terrain_mode == "INFINITE":
+                    self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
+                else:
+                    print("⚠️ 'Y'鍵 (重生地形) 只在無限地形模式下有效。")
                 return
-            if key == glfw.KEY_V: self.terrain_manager.cycle_terrain_mode(self.state); return
             if key == glfw.KEY_P: self.terrain_manager.save_hfield_to_png(); return
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return

@@ -78,13 +78,22 @@ class UIController:
                     ui.label().bind_text_from(params, key, lambda v: f'{v:.2f}')
 
             ui.separator()
-            ui.label('策略選擇 (Policy)').classes('text-lg')
-            self.status_labels['policy_selector'] = ui.select(
-                options=self.state.available_policies,
-                label='Active Policy',
-                value=self.policy_manager.primary_policy_name,
-                on_change=lambda e: self.policy_manager.select_target_policy(e.value)
-            ).classes('w-full')
+        ui.label('策略選擇 (Policy)').classes('text-lg')
+        self.status_labels['policy_selector'] = ui.select(
+            options=self.state.available_policies,
+            label='Active Policy',
+            value=self.policy_manager.primary_policy_name,
+            on_change=lambda e: self.policy_manager.select_target_policy(e.value)
+        ).classes('w-full')
+
+        # 【新增】地形選擇下拉選單
+        terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
+        self.status_labels['terrain_selector'] = ui.select(
+            options=terrain_options,
+            label='Terrain Mode',
+            value='INFINITE',
+            on_change=self._on_terrain_change
+        ).classes('w-full')
 
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
@@ -183,6 +192,12 @@ class UIController:
                 policy_text = f"策略: {pm.primary_policy_name}"
             self.status_labels['policy_status'].set_text(policy_text)
             self.status_labels['policy_selector'].set_value(pm.primary_policy_name)
+            # 根據目前地形模式更新下拉選單
+            if self.state.terrain_mode == 'INFINITE':
+                self.status_labels['terrain_selector'].set_value('INFINITE')
+            else:
+                terrain_name = self.state.terrain_manager_ref.single_terrain_names[self.state.single_terrain_index]
+                self.status_labels['terrain_selector'].set_value(terrain_name)
             self._update_onnx_labels()
         log_content = "\n".join(log_queue)
         self.log_area.set_value(log_content)
@@ -270,6 +285,21 @@ class UIController:
                 self.state.clear_command()
         # 切回鍵盤輸入模式，但不要再次清除指令
         self.state.toggle_input_mode("KEYBOARD", clear_cmd=False)
+
+    def _on_terrain_change(self, event):
+        """當地形下拉選單改變時，更新狀態並生成地形。"""
+        terrain_name = event.value
+        terrain_manager = self.state.terrain_manager_ref
+        with self.state.lock:
+            if terrain_name == 'INFINITE':
+                self.state.terrain_mode = 'INFINITE'
+                terrain_manager.reset()
+            else:
+                self.state.terrain_mode = 'SINGLE'
+                self.state.single_terrain_index = terrain_manager.single_terrain_names.index(terrain_name)
+                terrain_manager.set_single_terrain(terrain_name)
+            # 請求硬重置以適應新的地形
+            self.state.hard_reset_requested = True
 
     def _send_serial_command(self):
         command_text = self.serial_command_buffer.value

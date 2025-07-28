@@ -133,35 +133,6 @@ class TerrainManager:
             )
             self.shift_grid_center(shift_x, shift_y)
 
-    def cycle_terrain_mode(self, state: 'SimulationState'):
-        """
-        (由V鍵觸發) 在 "無限模式" 和各種 "單一地形模式" 之間循環切換。
-        """
-        if not self.is_functional: return
-        
-        if state.terrain_mode == "INFINITE":
-            # 從無限模式 -> 切換到第一個單一地形
-            state.terrain_mode = "SINGLE"
-            state.single_terrain_index = 0
-            terrain_name = self.single_terrain_names[state.single_terrain_index]
-            log.info(f"🏞️ 切換到單一地形模式: {terrain_name}")
-            self.set_single_terrain(terrain_name)
-        else: # 當前在 SINGLE 模式
-            # 切換到下一個單一地形
-            state.single_terrain_index += 1
-            if state.single_terrain_index < len(self.single_terrain_names):
-                # 如果還有下一個單一地形
-                terrain_name = self.single_terrain_names[state.single_terrain_index]
-                log.info(f"🏞️ 切換到下一個單一地形: {terrain_name}")
-                self.set_single_terrain(terrain_name)
-            else:
-                # 所有單一地形都循環完畢 -> 返回無限模式
-                state.terrain_mode = "INFINITE"
-                state.single_terrain_index = 0
-                log.info("🏞️ 返回無限地形模式")
-                # 重置地形中心，清空快取後再重新生成
-                self.reset()
-                self.regenerate_terrain_and_adjust_robot(self.data.qpos)
 
     def set_single_terrain(self, terrain_name: str):
         """用指定的單一地形類型填滿整個網格，創造一個巨大的、均一的固定地形。"""
