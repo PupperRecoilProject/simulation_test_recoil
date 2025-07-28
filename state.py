@@ -108,59 +108,66 @@ class SimulationState:
 
     def toggle_input_mode(self, new_mode: str):
         """切換輸入模式 (鍵盤/搖桿)。"""
-        if self.input_mode != new_mode: # 如果新模式與當前模式不同
-            self.input_mode = new_mode # 更新模式
-            self.clear_command() # 清除舊的指令，避免殘留
-            print(f"輸入模式已切換至: {self.input_mode}")
+        with self.lock:  # 【執行緒安全】確保狀態變更原子化
+            if self.input_mode != new_mode:  # 如果新模式與當前模式不同
+                self.input_mode = new_mode  # 更新模式
+                self.clear_command()  # 清除舊的指令，避免殘留
+                print(f"輸入模式已切換至: {self.input_mode}")
             
     def set_control_mode(self, new_mode: str):
         """【智慧模式切換】切換主控制模式，並能記住進入 SERIAL_MODE 前的狀態。"""
-        if self.control_mode == new_mode: return # 如果模式未改變，則不執行任何操作
+        with self.lock:  # 【執行緒安全】確保模式切換時沒有競爭條件
+            if self.control_mode == new_mode:
+                return  # 如果模式未改變，則不執行任何操作
 
-        old_mode = self.control_mode # 儲存舊模式以進行清理
-        
-        # 【新邏輯】如果準備進入 SERIAL_MODE，先記下當前的模式，以便之後可以返回
-        if new_mode == "SERIAL_MODE":
-            self.previous_control_mode = old_mode # 記錄切換前的模式
-        
-        # --- 處理離開舊模式時的清理工作 ---
-        if old_mode == "FLOATING":
-            if self.floating_controller_ref: self.floating_controller_ref.disable() # 禁用懸浮約束
-        elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
-             if self.floating_controller_ref: self.floating_controller_ref.disable() # 禁用懸浮約束
-             self.manual_mode_is_floating = False # 重置手動懸浮旗標
-        elif old_mode == "HARDWARE_MODE":
-            # 只有當我們要切換到一個非硬體也非序列埠的模式時，才停止硬體控制器
-            if new_mode not in ["SERIAL_MODE", "JOINT_TEST"]:
-                if self.hardware_controller_ref: self.hardware_controller_ref.stop() # 停止硬體控制器執行緒
-                self.hardware_is_connected = False # 更新連接狀態
-                self.hardware_ai_is_active = False # 更新 AI 狀態
-            
-        self.control_mode = new_mode # 正式更新到新模式
-        print(f"控制模式已切換至: {self.control_mode}")
+            old_mode = self.control_mode  # 儲存舊模式以進行清理
 
-        # --- 處理進入新模式時的初始化工作 ---
-        if new_mode == "FLOATING":
-            if self.floating_controller_ref: self.floating_controller_ref.enable(self.latest_pos) # 啟用懸浮
-        elif new_mode == "JOINT_TEST":
-            self.joint_test_offsets.fill(0.0) # 清空關節偏移量
-        elif new_mode == "MANUAL_CTRL":
-            self.manual_final_ctrl[:] = self.latest_final_ctrl # 將當前控制角度作為手動控制的初始值
-        elif new_mode == "HARDWARE_MODE":
-             if self.hardware_controller_ref and not self.hardware_controller_ref.is_running: # 如果硬體控制器存在且未運行
-                 if self.hardware_controller_ref.connect_and_start(): # 嘗試啟動
-                     self.hardware_is_connected = True
-                 else:
-                     print("❌ 硬體連接失敗，自動返回 WALKING 模式。")
-                     self.control_mode = "WALKING" # 如果啟動失敗，自動退回安全模式
-                     print(f"控制模式已自動切換至: {self.control_mode}")
+            # 【新邏輯】如果準備進入 SERIAL_MODE，先記下當前的模式，以便之後可以返回
+            if new_mode == "SERIAL_MODE":
+                self.previous_control_mode = old_mode  # 記錄切換前的模式
 
-        # --- 處理從手動模式切換回 AI 模式時的重置邏輯 ---
-        is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"] # 判斷是否進入 AI 模式
-        is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"] # 判斷是否離開手動/除錯模式
-        
-        if is_entering_ai_mode and is_leaving_manual_mode:
-            print("從手動/序列埠模式返回，正在重置 AI 狀態以確保平滑過渡...")
-            if self.policy_manager_ref:
-                self.policy_manager_ref.reset() # 重置 AI 策略的歷史狀態
-            self.clear_command() # 清除使用者指令
+            # --- 處理離開舊模式時的清理工作 ---
+            if old_mode == "FLOATING":
+                if self.floating_controller_ref:
+                    self.floating_controller_ref.disable()  # 禁用懸浮約束
+            elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
+                if self.floating_controller_ref:
+                    self.floating_controller_ref.disable()  # 禁用懸浮約束
+                self.manual_mode_is_floating = False  # 重置手動懸浮旗標
+            elif old_mode == "HARDWARE_MODE":
+                # 只有當我們要切換到一個非硬體也非序列埠的模式時，才停止硬體控制器
+                if new_mode not in ["SERIAL_MODE", "JOINT_TEST"]:
+                    if self.hardware_controller_ref:
+                        self.hardware_controller_ref.stop()  # 停止硬體控制器執行緒
+                    self.hardware_is_connected = False
+                    self.hardware_ai_is_active = False
+
+            self.control_mode = new_mode  # 正式更新到新模式
+            print(f"控制模式已切換至: {self.control_mode}")
+
+            # --- 處理進入新模式時的初始化工作 ---
+            if new_mode == "FLOATING":
+                if self.floating_controller_ref:
+                    self.floating_controller_ref.enable(self.latest_pos)  # 啟用懸浮
+            elif new_mode == "JOINT_TEST":
+                self.joint_test_offsets.fill(0.0)
+            elif new_mode == "MANUAL_CTRL":
+                self.manual_final_ctrl[:] = self.latest_final_ctrl
+            elif new_mode == "HARDWARE_MODE":
+                if self.hardware_controller_ref and not self.hardware_controller_ref.is_running:
+                    if self.hardware_controller_ref.connect_and_start():
+                        self.hardware_is_connected = True
+                    else:
+                        print("❌ 硬體連接失敗，自動返回 WALKING 模式。")
+                        self.control_mode = "WALKING"
+                        print(f"控制模式已自動切換至: {self.control_mode}")
+
+            # --- 處理從手動模式切換回 AI 模式時的重置邏輯 ---
+            is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
+            is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
+
+            if is_entering_ai_mode and is_leaving_manual_mode:
+                print("從手動/序列埠模式返回，正在重置 AI 狀態以確保平滑過渡...")
+                if self.policy_manager_ref:
+                    self.policy_manager_ref.reset()
+                self.clear_command()
