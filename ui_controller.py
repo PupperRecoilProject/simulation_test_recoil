@@ -4,19 +4,16 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 import numpy as np
-import threading
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from state import SimulationState
-    from simulation_controller import SimulationController
 
 
 class UIController:
     """Encapsulate all NiceGUI layout and callbacks."""
 
-    def __init__(self, state: 'SimulationState', simulation_controller: 'SimulationController') -> None:
+    def __init__(self, state: 'SimulationState') -> None:
         self.state = state
-        self.simulation_controller = simulation_controller  # 儲存模擬控制器參考
         self.policy_manager = state.policy_manager_ref
         self.hardware_controller = state.hardware_controller_ref
         self.serial_comm = state.serial_communicator_ref
@@ -28,18 +25,6 @@ class UIController:
         self.log_area: ui.textarea | None = None
 
         self._setup_ui()
-
-    # -----------------------------------------------------------
-    def handle_startup(self) -> None:
-        """在 NiceGUI 啟動後執行，啟動模擬執行緒。"""
-        print("NiceGUI 已啟動，啟動模擬執行緒...")
-        thread = threading.Thread(target=self.simulation_controller.run, daemon=True)
-        thread.start()
-
-    def handle_shutdown(self) -> None:
-        """在 NiceGUI 關閉時執行，停止模擬執行緒。"""
-        print("NiceGUI 即將關閉，停止模擬執行緒...")
-        self.simulation_controller.stop()
 
     def _setup_ui(self) -> None:
         ui.dark_mode().enable()

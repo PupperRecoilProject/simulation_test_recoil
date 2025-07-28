@@ -1,7 +1,7 @@
 """Entry point using NiceGUI for the control interface."""
 
 import sys
-from nicegui import ui  # 從 nicegui 模組導入實例化的 ui 物件
+from nicegui import ui, app  # 從 nicegui 匯入 ui 物件與 app 實例
 
 from config import load_config
 from state import SimulationState
@@ -57,23 +57,32 @@ def main() -> None:
     sim.register_callbacks(keyboard_handler)
 
     simulation_controller = SimulationController(state)
-    ui_controller = UIController(state, simulation_controller)
+    ui_controller = UIController(state)
 
-    # 模擬執行緒將在 NiceGUI 完全啟動後啟動
-    print("launching UI; simulation thread will start once UI is ready...")
+    def start_simulation_thread() -> None:
+        """UI 啟動後啟動模擬執行緒。"""
+        print("NiceGUI 已啟動，現在安全地啟動模擬執行緒...")
+        thread = threading.Thread(target=simulation_controller.run, daemon=True)
+        thread.start()
+
+    def cleanup_resources() -> None:
+        """UI 關閉時釋放所有背景資源。"""
+        print("NiceGUI 正在關閉，正在清理資源...")
+        simulation_controller.stop()
+        hw_controller.stop()
+        serial_comm.close()
+        xbox_handler.close()
+        sim.close()
+        print("✅ 所有資源已成功釋放。")
+
+    app.on_startup(start_simulation_thread)
+    app.on_shutdown(cleanup_resources)
+
+    print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
     ui.run(
         title="Pupper Robot Console",
         port=8080,
-        on_startup=ui_controller.handle_startup,
-        on_shutdown=ui_controller.handle_shutdown,
     )
-
-    print("closing application ...")
-    simulation_controller.stop()
-    hw_controller.stop()
-    serial_comm.close()
-    xbox_handler.close()
-    sim.close()
 
 
 if __name__ in {"__main__", "__mp_main__"}:
