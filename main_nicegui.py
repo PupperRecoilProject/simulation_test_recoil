@@ -57,12 +57,10 @@ def main() -> None:
     sim.register_callbacks(keyboard_handler)
 
     simulation_controller = SimulationController(state)
-    ui_controller = UIController(state)
+    ui_controller = UIController(state, simulation_controller)
 
-    simulation_thread = threading.Thread(target=simulation_controller.run, daemon=True)
-    simulation_thread.start()
-
-    print("simulation thread started, launching UI ...")
+    # 模擬執行緒將在 NiceGUI 完全啟動後由 on_startup 事件啟動
+    print("launching UI (simulation thread will start on startup)...")
     ui_controller.run()
 
     print("closing application ...")

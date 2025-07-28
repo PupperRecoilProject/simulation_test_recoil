@@ -4,16 +4,19 @@ from typing import TYPE_CHECKING
 
 from nicegui import ui
 import numpy as np
+import threading
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from state import SimulationState
+    from simulation_controller import SimulationController
 
 
 class UIController:
     """Encapsulate all NiceGUI layout and callbacks."""
 
-    def __init__(self, state: 'SimulationState') -> None:
+    def __init__(self, state: 'SimulationState', simulation_controller: 'SimulationController') -> None:
         self.state = state
+        self.simulation_controller = simulation_controller  # 儲存模擬控制器參考
         self.policy_manager = state.policy_manager_ref
         self.hardware_controller = state.hardware_controller_ref
         self.serial_comm = state.serial_communicator_ref
@@ -41,6 +44,25 @@ class UIController:
                 self._create_log_panel()
 
         ui.timer(0.1, self.update_ui_elements)
+        # 註冊 NiceGUI 的生命週期事件，確保模擬執行緒在 UI 啟動後再啟動
+        self._setup_lifecycle_events()
+
+    def _setup_lifecycle_events(self) -> None:
+        """設定 NiceGUI 的啟動與關閉事件，用來管理背景模擬執行緒。"""
+
+        def start_simulation_thread() -> None:
+            """在 UI 完全啟動後啟動模擬執行緒。"""
+            print("NiceGUI 已啟動，啟動模擬執行緒...")
+            thread = threading.Thread(target=self.simulation_controller.run, daemon=True)
+            thread.start()
+
+        def stop_simulation_thread() -> None:
+            """在 UI 關閉時停止模擬執行緒。"""
+            print("NiceGUI 即將關閉，停止模擬執行緒...")
+            self.simulation_controller.stop()
+
+        ui.on_startup(start_simulation_thread)
+        ui.on_shutdown(stop_simulation_thread)
 
     def _create_control_panel(self) -> None:
         with ui.card():
