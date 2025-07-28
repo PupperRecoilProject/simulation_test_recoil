@@ -141,7 +141,11 @@ class TerrainManager:
             return
             
         generator = self.terrain_generators[terrain_name]
-        single_tile_data = generator() # 生成一個地塊的數據
+        single_tile_data = generator()  # 生成一個地塊的數據
+
+        # 【核心修正】在繪製新的單一地形前，先把整個 hfield 畫布清零，
+        # 以避免殘留上一個地形造成混合或錯亂。
+        self.full_hfield_data.fill(0)
 
         # 將這個地塊的數據平鋪 (tile) 到整個 hfield 畫布上
         tile_res_m1 = self.tile_resolution - 1
