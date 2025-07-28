@@ -88,10 +88,14 @@ class UIController:
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
             ui.label('手動駕駛 (Manual Driving)').classes('text-lg')
-            ui.joystick(color='blue', size=100,
-                        on_move=lambda e: self._update_command_from_joystick(e),
-                        on_end=lambda e: self.state.clear_command()).props('throttle')
-            ui.button('清除命令', on_click=self.state.clear_command).props('outline')
+            ui.joystick(
+                color='blue',
+                size=100,
+                on_move=lambda e: self._update_command_from_joystick(e),
+                # 當搖桿釋放時呼叫自定函式，清除指令並恢復輸入模式
+                on_end=lambda e: self._on_joystick_end()
+            ).props('throttle')
+            ui.button('清除命令 (Clear Command)', on_click=self.state.clear_command).props('outline')
 
     def _create_status_display(self):
         with ui.card():
@@ -199,11 +203,21 @@ class UIController:
         x_val = -event.args.y / 50.0
         y_val = event.args.x / 50.0
         with self.state.lock:
-            if self.state.input_mode != "GAMEPAD":
-                self.state.input_mode = "GAMEPAD"
+            # 使用虛擬搖桿時，切換到專屬的 VJOY 模式，避免與實體搖桿衝突
+            if self.state.input_mode != "VJOY":
+                self.state.input_mode = "VJOY"
+                log.info("輸入模式已切換至 VJOY (虛擬搖桿)")
             self.state.command[0] = y_val * self.state.config.gamepad_sensitivity['vy']
             self.state.command[1] = x_val * self.state.config.gamepad_sensitivity['vx']
             self.state.command[2] = 0.0
+
+    def _on_joystick_end(self):
+        """虛擬搖桿釋放時的回呼函式。"""
+        with self.state.lock:
+            if self.state.input_mode == "VJOY":
+                self.state.clear_command()
+                self.state.input_mode = "KEYBOARD"
+                log.info("虛擬搖桿已釋放，輸入模式切回 KEYBOARD")
 
     def _send_serial_command(self):
         command_text = self.serial_command_buffer.value
