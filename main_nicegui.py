@@ -1,7 +1,7 @@
 """Entry point using NiceGUI for the control interface."""
 
 import sys
-import nicegui as ui
+from nicegui import ui  # 從 nicegui 模組導入實例化的 ui 物件
 
 from config import load_config
 from state import SimulationState
@@ -76,6 +76,6 @@ def main() -> None:
     sim.close()
 
 
-if __name__ == "__main__":
+if __name__ in {"__main__", "__mp_main__"}:
     main()
 
