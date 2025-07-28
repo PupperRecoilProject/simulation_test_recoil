@@ -34,6 +34,7 @@ class UIController:
                 self._create_control_panel()
                 self._create_tuning_panel()
                 self._create_joystick_panel()
+                self._create_joint_control_panel()  # 新增關節微調面板
             with ui.column().classes('w-2/3'):
                 self._create_status_display()
                 self._create_onnx_display()
@@ -97,6 +98,21 @@ class UIController:
             ).props('throttle')
             ui.button('清除命令 (Clear Command)', on_click=self.state.clear_command).props('outline')
 
+    def _create_joint_control_panel(self):
+        """在 JOINT_TEST 或 MANUAL_CTRL 模式下顯示的關節微調面板。"""
+        with ui.card().bind_visibility_from(self.state, 'control_mode', lambda m: m in ["JOINT_TEST", "MANUAL_CTRL"]).classes('w-full'):
+            ui.label('關節微調 (Joint Fine-Tuning)').classes('text-lg')
+            joint_names = {
+                0: 'FR_Abduction', 1: 'FR_Hip', 2: 'FR_Knee', 3: 'FL_Abduction', 4: 'FL_Hip', 5: 'FL_Knee',
+                6: 'RR_Abduction', 7: 'RR_Hip', 8: 'RR_Knee', 9: 'RL_Abduction', 10: 'RL_Hip', 11: 'RL_Knee'
+            }
+            ui.select(joint_names, label='選擇關節', on_change=lambda e: self._set_joint_index(int(e.value)))
+            self.status_labels['joint_info'] = ui.label('')
+            with ui.row():
+                ui.button('-', on_click=lambda: self._adjust_joint_value(-0.1))
+                ui.button('+', on_click=lambda: self._adjust_joint_value(0.1))
+                ui.button('歸零 (Clear)', on_click=lambda: self._adjust_joint_value(0, clear=True))
+
     def _create_status_display(self):
         with ui.card():
             ui.label('即時狀態 (Real-time Status)').classes('text-lg')
@@ -147,6 +163,15 @@ class UIController:
             self.status_labels['command'].set_text(f"vy: {cmd[0]:.2f}, vx: {cmd[1]:.2f}, wz: {cmd[2]:.2f}")
             pos = self.state.latest_pos
             self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
+            # 更新關節資訊顯示
+            if self.state.control_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
+                if self.state.control_mode == "JOINT_TEST":
+                    idx = self.state.joint_test_index
+                    val = self.state.joint_test_offsets[idx]
+                else:
+                    idx = self.state.manual_ctrl_index
+                    val = self.state.manual_final_ctrl[idx]
+                self.status_labels['joint_info'].set_text(f"關節 {idx}: {val:+.2f}")
             pm = self.policy_manager
             if pm.is_transitioning:
                 alpha_percent = pm.transition_alpha * 100
@@ -199,6 +224,30 @@ class UIController:
             is_connected = self.xbox_handler.scan_and_connect()
             with self.state.lock:
                 self.state.gamepad_is_connected = is_connected
+
+    def _set_joint_index(self, index: int):
+        """設定目前選中的關節索引。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                self.state.joint_test_index = index
+            elif self.state.control_mode == "MANUAL_CTRL":
+                self.state.manual_ctrl_index = index
+
+    def _adjust_joint_value(self, value: float, clear: bool = False):
+        """依目前模式調整關節值或歸零。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                idx = self.state.joint_test_index
+                if clear:
+                    self.state.joint_test_offsets[idx] = 0.0
+                else:
+                    self.state.joint_test_offsets[idx] += value
+            elif self.state.control_mode == "MANUAL_CTRL":
+                idx = self.state.manual_ctrl_index
+                if clear:
+                    self.state.manual_final_ctrl[idx] = 0.0
+                else:
+                    self.state.manual_final_ctrl[idx] += value
 
     def _update_command_from_joystick(self, event):
         x_val = -event.args.y / 50.0
