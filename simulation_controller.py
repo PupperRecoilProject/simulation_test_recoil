@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import TYPE_CHECKING
+from logger import log
 
 import mujoco
 import numpy as np
@@ -88,6 +89,18 @@ class SimulationController:
                 pass
             else:
                 self._simulation_step()
+
+            # 若地形資料已更新，需同步物理與渲染
+            if (
+                self.terrain_manager.is_functional
+                and self.terrain_manager.needs_physics_and_scene_update
+            ):
+                mujoco.mj_forward(self.sim.model, self.sim.data)
+                mujoco.mjr_uploadHField(
+                    self.sim.model, self.sim.context, self.terrain_manager.hfield_id
+                )
+                self.terrain_manager.needs_physics_and_scene_update = False
+                log.info("✅ 地形物理與渲染已同步更新。")
 
             # 先將最新物理狀態寫回 shared state
             with self.state.lock:

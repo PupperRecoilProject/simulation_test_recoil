@@ -52,9 +52,9 @@ class DebugOverlay:
              sim.cam.lookat = sim.data.body('torso').xpos
 
         terrain_manager = getattr(state, 'terrain_manager_ref', None)
-        if terrain_manager and terrain_manager.needs_scene_update:
+        if terrain_manager and terrain_manager.needs_physics_and_scene_update:
             mujoco.mjr_uploadHField(sim.model, sim.context, terrain_manager.hfield_id)
-            terrain_manager.needs_scene_update = False
+            terrain_manager.needs_physics_and_scene_update = False
             print("🔄 地形幾何已上傳至 GPU 進行渲染。")
         
         mujoco.mjv_updateScene(sim.model, sim.data, sim.opt, None, sim.cam, mujoco.mjtCatBit.mjCAT_ALL, sim.scene)

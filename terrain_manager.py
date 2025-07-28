@@ -29,7 +29,8 @@ class TerrainManager:
         self.model = model # 儲存 MuJoCo 模型物件
         self.data = data # 儲存 MuJoCo 資料物件
         self.hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, 'terrain') # 根據名稱 'terrain' 獲取高度場的 ID
-        self.needs_scene_update = False # 標記是否需要更新渲染場景
+        # 當高度場資料被改動後，需同步物理與渲染，此旗標將在 SimulationController 中被檢查
+        self.needs_physics_and_scene_update = False
 
         if self.hfield_id == -1:  # 檢查是否成功找到高度場
             log.error("在 XML 中找不到名為 'terrain' 的 hfield。地形功能將被禁用。")
@@ -185,9 +186,8 @@ class TerrainManager:
                     single_tile_data
                 )
         
-        # 將更新後的數據上傳到 MuJoCo
-        self.model.hfield_data[self.hfield_adr:self.hfield_adr + self.hfield_nrow * self.hfield_ncol] = self.full_hfield_data.flatten()
-        self.needs_scene_update = True
+        # 將數據寫入模型並標記需要同步
+        self._apply_hfield_data()
         log.info(f"✅ 已生成完整的 '{terrain_name}' 地形。")
 
     def regenerate_terrain_and_adjust_robot(self, robot_qpos, robot_height_offset=0.3):
@@ -228,6 +228,15 @@ class TerrainManager:
         self.world_center_x += dx
         self.world_center_y += dy
         self.update_hfield()
+
+    def _apply_hfield_data(self):
+        """將 full_hfield_data 寫入模型並標記需要物理與渲染更新。"""
+        # 將 NumPy 陣列內容複製到 mjModel 中
+        self.model.hfield_data[
+            self.hfield_adr : self.hfield_adr + self.hfield_nrow * self.hfield_ncol
+        ] = self.full_hfield_data.flatten()
+        # 在下一個模擬步中由 SimulationController 進行同步
+        self.needs_physics_and_scene_update = True
 
     def get_or_generate_tile(self, grid_x: int, grid_y: int) -> TerrainTile:
         """如果地塊已在快取中，則返回它；否則，生成新地塊並存入快取。"""
@@ -271,8 +280,8 @@ class TerrainManager:
                     tile_data
                 )
                 
-        self.model.hfield_data[self.hfield_adr:self.hfield_adr + self.hfield_nrow * self.hfield_ncol] = self.full_hfield_data.flatten()
-        self.needs_scene_update = True
+        # 將數據寫入模型並標記需要同步
+        self._apply_hfield_data()
         log.info("✅ 完整高度場已更新。")
 
     def initial_generate(self):
