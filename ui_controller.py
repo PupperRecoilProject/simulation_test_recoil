@@ -22,6 +22,8 @@ class UIController:
         self.onnx_input_labels = {}
         self.log_area = None
         self.serial_command_buffer = None
+        # 關節控制滑桿 (僅在關節測試與手動控制模式下啟用)
+        self.joint_control_slider = None
 
         # 儲存 UI 下拉選單的地形選擇值，避免與後端狀態互相觸發
         if self.state.terrain_mode == 'SINGLE':
@@ -122,10 +124,12 @@ class UIController:
             }
             ui.select(joint_names, label='選擇關節', on_change=lambda e: self._set_joint_index(int(e.value)))
             self.status_labels['joint_info'] = ui.label('')
+            # 可以精確拖曳的滑桿
+            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01, on_change=self._on_joint_slider_change).props('label-always')
             with ui.row():
-                ui.button('-', on_click=lambda: self._adjust_joint_value(-0.1))
-                ui.button('+', on_click=lambda: self._adjust_joint_value(0.1))
-                ui.button('歸零 (Clear)', on_click=lambda: self._adjust_joint_value(0, clear=True))
+                ui.button('-0.1', on_click=lambda: self._adjust_joint_value(-0.1)).props('dense')
+                ui.button('+0.1', on_click=lambda: self._adjust_joint_value(0.1)).props('dense')
+                ui.button('歸零 (Clear)', on_click=lambda: self._adjust_joint_value(0, clear=True)).props('dense')
 
     def _create_status_display(self):
         with ui.card():
@@ -181,15 +185,9 @@ class UIController:
             self.status_labels['command'].set_text(f"vy: {cmd[0]:.2f}, vx: {cmd[1]:.2f}, wz: {cmd[2]:.2f}")
             pos = self.state.latest_pos
             self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
-            # 更新關節資訊顯示
+            # 若處於關節相關模式，更新面板顯示
             if self.state.control_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
-                if self.state.control_mode == "JOINT_TEST":
-                    idx = self.state.joint_test_index
-                    val = self.state.joint_test_offsets[idx]
-                else:
-                    idx = self.state.manual_ctrl_index
-                    val = self.state.manual_final_ctrl[idx]
-                self.status_labels['joint_info'].set_text(f"關節 {idx}: {val:+.2f}")
+                self._update_joint_control_display()
             pm = self.policy_manager
             if pm.is_transitioning:
                 alpha_percent = pm.transition_alpha * 100
@@ -257,6 +255,14 @@ class UIController:
             elif self.state.control_mode == "MANUAL_CTRL":
                 self.state.manual_ctrl_index = index
 
+    def _on_joint_slider_change(self, event):
+        """滑桿改變時即時更新目標值。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                self.state.joint_test_offsets[self.state.joint_test_index] = event.value
+            elif self.state.control_mode == "MANUAL_CTRL":
+                self.state.manual_final_ctrl[self.state.manual_ctrl_index] = event.value
+
     def _adjust_joint_value(self, value: float, clear: bool = False):
         """依目前模式調整關節值或歸零。"""
         with self.state.lock:
@@ -272,6 +278,14 @@ class UIController:
                     self.state.manual_final_ctrl[idx] = 0.0
                 else:
                     self.state.manual_final_ctrl[idx] += value
+
+        # 更新滑桿顯示值
+        if self.joint_control_slider is not None:
+            with self.state.lock:
+                if self.state.control_mode == "JOINT_TEST":
+                    self.joint_control_slider.set_value(self.state.joint_test_offsets[self.state.joint_test_index])
+                elif self.state.control_mode == "MANUAL_CTRL":
+                    self.joint_control_slider.set_value(self.state.manual_final_ctrl[self.state.manual_ctrl_index])
 
     def _update_command_from_joystick(self, event):
         """虛擬搖桿移動時的回呼函式，根據 x、y 更新指令。"""
@@ -291,6 +305,27 @@ class UIController:
                 self.state.clear_command()
         # 切回鍵盤輸入模式，但不要再次清除指令
         self.state.toggle_input_mode("KEYBOARD", clear_cmd=False)
+
+    def _update_joint_control_display(self):
+        """根據當前模式更新滑桿與資訊標籤顯示。"""
+        if self.joint_control_slider is None:
+            return
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                idx = self.state.joint_test_index
+                target = self.state.joint_test_offsets[idx]
+                actual = self.state.sim.data.qpos[7 + idx] - self.state.sim.default_pose[idx]
+                self.joint_control_slider.set_value(target)
+                text = f"模式: 偏移 | 目標: {target:.2f} | 實際: {actual:.2f}"
+            elif self.state.control_mode == "MANUAL_CTRL":
+                idx = self.state.manual_ctrl_index
+                target = self.state.manual_final_ctrl[idx]
+                actual = self.state.sim.data.qpos[7 + idx]
+                self.joint_control_slider.set_value(target)
+                text = f"模式: 絕對 | 目標: {target:.2f} | 實際: {actual:.2f}"
+            else:
+                text = ""
+        self.status_labels['joint_info'].set_text(text)
 
     def _on_terrain_change(self, event):
         """當地形下拉選單改變時，更新後端狀態並生成新的地形。"""
