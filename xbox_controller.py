@@ -27,8 +27,11 @@ class XboxController:
         """在當前執行緒中初始化 Pygame 與搖桿模組。"""
         try:
             pygame.init()
+            # 【關鍵修正】建立一個 1x1 的不可見視窗，
+            # 以確保 pygame 的事件系統穩定運作。
+            pygame.display.set_mode((1, 1), pygame.NOFRAME)
             pygame.joystick.init()
-            print("✅ Pygame 在模擬執行緒中初始化完成。")
+            print("✅ Pygame 在模擬執行緒中初始化完成 (含虛擬視窗)。")
             return True
         except pygame.error as e:
             print(f"❌ Pygame 初始化失敗: {e}")
@@ -64,32 +67,36 @@ class XboxController:
         if not self.is_connected():
             return
             
-        for event in pygame.event.get():
-            if event.type == pygame.JOYAXISMOTION:
-                if event.axis == 0: self.state['left_analog_x'] = event.value
-                elif event.axis == 1: self.state['left_analog_y'] = event.value
-                elif event.axis == 2: self.state['right_analog_x'] = event.value
-                elif event.axis == 3: self.state['right_analog_y'] = event.value
-            elif event.type == pygame.JOYBUTTONDOWN:
-                if event.button == 0: self.state['button_a'] = 1
-                elif event.button == 1: self.state['button_b'] = 1
-                elif event.button == 2: self.state['button_x'] = 1
-                elif event.button == 3: self.state['button_y'] = 1
-                elif event.button == 4: self.state['button_l1'] = 1
-                elif event.button == 5: self.state['button_r1'] = 1
-                elif event.button == 6: self.state['button_select'] = 1
-                elif event.button == 7: self.state['button_start'] = 1
-            elif event.type == pygame.JOYBUTTONUP:
-                if event.button == 0: self.state['button_a'] = 0
-                elif event.button == 1: self.state['button_b'] = 0
-                elif event.button == 2: self.state['button_x'] = 0
-                elif event.button == 3: self.state['button_y'] = 0
-                elif event.button == 4: self.state['button_l1'] = 0
-                elif event.button == 5: self.state['button_r1'] = 0
-                elif event.button == 6: self.state['button_select'] = 0
-                elif event.button == 7: self.state['button_start'] = 0
-            elif event.type == pygame.JOYHATMOTION:
-                self.state['dpad'] = event.value
+        try:
+            for event in pygame.event.get():
+                if event.type == pygame.JOYAXISMOTION:
+                    if event.axis == 0: self.state['left_analog_x'] = event.value
+                    elif event.axis == 1: self.state['left_analog_y'] = event.value
+                    elif event.axis == 2: self.state['right_analog_x'] = event.value
+                    elif event.axis == 3: self.state['right_analog_y'] = event.value
+                elif event.type == pygame.JOYBUTTONDOWN:
+                    if event.button == 0: self.state['button_a'] = 1
+                    elif event.button == 1: self.state['button_b'] = 1
+                    elif event.button == 2: self.state['button_x'] = 1
+                    elif event.button == 3: self.state['button_y'] = 1
+                    elif event.button == 4: self.state['button_l1'] = 1
+                    elif event.button == 5: self.state['button_r1'] = 1
+                    elif event.button == 6: self.state['button_select'] = 1
+                    elif event.button == 7: self.state['button_start'] = 1
+                elif event.type == pygame.JOYBUTTONUP:
+                    if event.button == 0: self.state['button_a'] = 0
+                    elif event.button == 1: self.state['button_b'] = 0
+                    elif event.button == 2: self.state['button_x'] = 0
+                    elif event.button == 3: self.state['button_y'] = 0
+                    elif event.button == 4: self.state['button_l1'] = 0
+                    elif event.button == 5: self.state['button_r1'] = 0
+                    elif event.button == 6: self.state['button_select'] = 0
+                    elif event.button == 7: self.state['button_start'] = 0
+                elif event.type == pygame.JOYHATMOTION:
+                    self.state['dpad'] = event.value
+        except pygame.error as e:
+            # 當系統焦點改變時，事件處理可能失敗，此處捕獲並警告
+            print(f"⚠️ Pygame 事件處理時發生錯誤: {e}")
 
     def get_input(self) -> dict:
         """獲取當前搖桿狀態的淺拷貝，並應用死區。"""
