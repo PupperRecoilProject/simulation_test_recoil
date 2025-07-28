@@ -5,10 +5,12 @@ class XboxController:
     """
     一個使用 Pygame 函式庫來讀取 Xbox 搖桿輸入的類別。
     這個版本是非阻塞的，可以安全地在主迴圈中更新。
+    由於 Pygame 的事件系統必須在初始化它的執行緒中運作，
+    因此真正的 `pygame.init()` 將由模擬執行緒呼叫 :func:`initialize` 完成。
     """
+
     def __init__(self):
-        """初始化 Pygame 但不立即掃描搖桿。"""
-        pygame.init()
+        """僅設定初始狀態，不立即初始化 Pygame。"""
         self.joystick = None
         self.deadzone = 0.15
         self.state = {
@@ -19,7 +21,18 @@ class XboxController:
             'button_l1': 0, 'button_r1': 0,
             'button_select': 0, 'button_start': 0,
         }
-        print("✅ XBox 控制器已初始化 (等待連接指令)。")
+        print("✅ XBox Controller 物件已建立 (等待執行緒初始化)。")
+
+    def initialize(self) -> bool:
+        """在當前執行緒中初始化 Pygame 與搖桿模組。"""
+        try:
+            pygame.init()
+            pygame.joystick.init()
+            print("✅ Pygame 在模擬執行緒中初始化完成。")
+            return True
+        except pygame.error as e:
+            print(f"❌ Pygame 初始化失敗: {e}")
+            return False
 
     def scan_and_connect(self) -> bool:
         """掃描並連接到第一個可用的搖桿。"""
@@ -28,7 +41,9 @@ class XboxController:
             return True
 
         print("\n" + "="*20 + " 正在掃描搖桿 " + "="*20)
-        pygame.joystick.init() # 每次掃描時重新初始化
+        # 重新初始化搖桿子系統，確保能偵測到新插入的設備
+        pygame.joystick.quit()
+        pygame.joystick.init()
         
         if pygame.joystick.get_count() > 0:
             self.joystick = pygame.joystick.Joystick(0)

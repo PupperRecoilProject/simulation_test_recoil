@@ -42,6 +42,8 @@ class SimulationController:
     def run(self) -> None:
         # 執行緒啟動後的初始化
         self.sim.initialize_window_and_context()
+        # 在模擬執行緒中初始化 Pygame，確保事件處理在同一執行緒
+        self.xbox_handler.controller.initialize()
         self._initialize_simulation_state()
 
         while self._running.is_set():
@@ -72,8 +74,8 @@ class SimulationController:
             if soft_reset_req:
                 self.soft_reset()
 
-            if current_input_mode == "GAMEPAD":
-                self.xbox_handler.update_state()
+            # 持續更新搖桿事件，避免事件堆積並能即時偵測連線狀態
+            self.xbox_handler.update_state()
 
             if current_control_mode in ["HARDWARE_MODE", "SERIAL_MODE"]:
                 pass
