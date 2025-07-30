@@ -307,11 +307,8 @@ class UIController:
 
     def _on_joystick_end(self, event):
         """虛擬搖桿釋放時的回呼函式。"""
-        with self.state.lock:
-            if self.state.input_mode == "VJOY":
-                self.state.clear_command()
-        # 切回鍵盤輸入模式，但不要再次清除指令
-        self.state.toggle_input_mode("KEYBOARD", clear_cmd=False)
+        self.state.clear_command()
+        self.state.toggle_input_mode("KEYBOARD")
 
     def _update_joint_control_display(self):
         """根據當前模式更新滑桿與資訊標籤顯示。"""

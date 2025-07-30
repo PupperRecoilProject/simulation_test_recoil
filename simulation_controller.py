@@ -26,9 +26,9 @@ class SimulationController:
         self.terrain_manager = state.terrain_manager_ref
         self.floating_controller = state.floating_controller_ref
         self.xbox_handler = state.xbox_handler_ref
+        self.hardware_controller = state.hardware_controller_ref
 
         self._running = threading.Event()
-        self._running.set()
         self.thread: threading.Thread | None = None
 
         # 初始化將在執行緒啟動後進行
@@ -55,6 +55,8 @@ class SimulationController:
         self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
 
+        last_control_mode = self.state.control_mode
+
         while self._running.is_set():
             if self.sim.should_close():
                 self._running.clear()
@@ -69,16 +71,21 @@ class SimulationController:
                     self.state.control_mode_pending = None
 
             if pending_mode:
-                # 在鎖外呼叫以避免死鎖
+                # 在鎖外執行實際切換
                 self.state.set_control_mode(pending_mode)
+
+            with self.state.lock:
+                current_control_mode = self.state.control_mode
+
+            if current_control_mode != last_control_mode:
+                self.handle_mode_transition(last_control_mode, current_control_mode)
+                last_control_mode = current_control_mode
 
             with self.state.lock:
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
                 hard_reset_req = self.state.hard_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
-                current_control_mode = self.state.control_mode
-                # 【新增】讀取地形模式與機器人當前位置
                 current_terrain_mode = self.state.terrain_mode
                 latest_pos = self.state.latest_pos.copy()
 
@@ -213,5 +220,15 @@ class SimulationController:
             self.state.manual_mode_is_floating = False
             mujoco.mj_forward(self.sim.model, self.sim.data)
             self.state.soft_reset_requested = False
+
+    def handle_mode_transition(self, old_mode: str, new_mode: str) -> None:
+        """在模式改變時處理可能耗時的操作。"""
+        log.info(f"偵測到模式轉換：{old_mode} -> {new_mode}")
+        if new_mode == "HARDWARE_MODE":
+            if self.hardware_controller and not self.hardware_controller.is_running:
+                threading.Thread(target=self.hardware_controller.start_controller_threads, daemon=True).start()
+        elif old_mode == "HARDWARE_MODE":
+            if self.hardware_controller and self.hardware_controller.is_running:
+                threading.Thread(target=self.hardware_controller.stop_controller_threads, daemon=True).start()
 
 
