@@ -64,6 +64,19 @@ class UIController:
                 ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self._request_mode_change("MANUAL_CTRL"))
 
             ui.separator()
+            # --- 【新增】模擬播放控制 ---
+            ui.label('模擬播放 (Playback)').classes('text-lg')
+            with ui.row():
+                # 建立「暫停/播放」按鈕
+                ui.button(on_click=self._toggle_pause) \
+                    .bind_text_from(self.state, 'single_step_mode',
+                                    lambda is_paused: '播放 (Play)' if is_paused else '暫停 (Pause)')
+
+                # 建立「下一步」按鈕
+                ui.button('下一步 (Next Step)', on_click=self._request_one_step) \
+                    .bind_enabled_from(self.state, 'single_step_mode')
+
+            ui.separator()
             ui.label('硬體 AI 控制').classes('text-lg')
             ui.button('啟用/停用 AI (K)', on_click=self._toggle_hardware_ai).bind_enabled_from(self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
 
@@ -307,6 +320,21 @@ class UIController:
         with self.state.lock:
             self.state.control_mode_pending = mode
         log.info(f"UI 請求切換模式至 {mode}")
+
+    # 【新增】「暫停/播放」按鈕的回呼函式
+    def _toggle_pause(self):
+        """切換模擬的暫停/播放狀態。"""
+        with self.state.lock:
+            self.state.single_step_mode = not self.state.single_step_mode
+        status = 'PAUSED' if self.state.single_step_mode else 'PLAYING'
+        log.info(f"--- SIMULATION {status} (toggled from UI) ---")
+
+    # 【新增】「下一步」按鈕的回呼函式
+    def _request_one_step(self):
+        """請求在暫停模式下執行單步模擬。"""
+        with self.state.lock:
+            if self.state.single_step_mode:
+                self.state.execute_one_step = True
 
     def _toggle_hardware_ai(self):
         if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':
