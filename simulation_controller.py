@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 from logger import log
 
 import numpy as np
-import glfw  # 用於程式化關閉視窗
 from mock_simulation import MockSimulation
 
 try:
@@ -82,7 +81,8 @@ class SimulationController:
             if should_close:
                 if shutdown_req and not is_headless and not self.sim.should_close():
                     log.info("偵測到全域關閉請求，正在關閉模擬視窗...")
-                    glfw.set_window_should_close(self.sim.window, 1)
+                    from glfw import set_window_should_close
+                    set_window_should_close(self.sim.window, 1)
                 self._running.clear()
                 from nicegui import app
                 app.shutdown()
