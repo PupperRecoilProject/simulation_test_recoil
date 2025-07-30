@@ -1,6 +1,7 @@
 # state.py
 from __future__ import annotations
 import numpy as np
+import mujoco  # 新增：進入手動模式時需要重設物理狀態
 from dataclasses import dataclass, field
 from config import AppConfig
 from logger import log
@@ -146,9 +147,21 @@ class SimulationState:
                 if self.floating_controller_ref:
                     self.floating_controller_ref.enable(self.latest_pos)
             elif new_mode == "JOINT_TEST":
+                # 進入關節測試模式時，偏移量歸零並重置物理狀態
                 self.joint_test_offsets.fill(0.0)
+                if self.sim:
+                    log.info("進入 JOINT_TEST 模式，重置機器人關節與速度")
+                    self.sim.data.qpos[7:] = self.sim.default_pose.copy()
+                    self.sim.data.qvel[6:] = 0
+                    mujoco.mj_forward(self.sim.model, self.sim.data)
             elif new_mode == "MANUAL_CTRL":
-                self.manual_final_ctrl[:] = self.latest_final_ctrl
+                # 手動控制模式以預設姿態作為起始角度
+                self.manual_final_ctrl[:] = self.sim.default_pose.copy() if self.sim else self.latest_final_ctrl
+                if self.sim:
+                    log.info("進入 MANUAL_CTRL 模式，重置機器人關節與速度")
+                    self.sim.data.qpos[7:] = self.sim.default_pose.copy()
+                    self.sim.data.qvel[6:] = 0
+                    mujoco.mj_forward(self.sim.model, self.sim.data)
 
             # --- 從手動模式返回 AI 模式時，重置 AI 狀態 ---
             is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
