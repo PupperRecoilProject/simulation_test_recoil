@@ -246,7 +246,8 @@ class SimulationController:
             terrain_name = self.terrain_manager.get_current_terrain_name_simple(self.state)
 
         difficult = ["Pyramid", "Stepped Pyramid"]
-        start_z_offset = 1.0 if terrain_name in difficult else 0.3
+        # 困難地形需要更高的初始高度以保證落地安全
+        start_z_offset = 1.5 if terrain_name in difficult else 0.3
 
         print(f"\n--- 正在執行機器人硬重置 (地形: {terrain_name}, 高度偏移: {start_z_offset}m) ---")
         # 【核心修正】硬重置僅重置機器人狀態，不再重置地形
