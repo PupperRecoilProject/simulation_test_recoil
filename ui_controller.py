@@ -202,14 +202,27 @@ class UIController:
             joint_info = None
             if mode == "JOINT_TEST":
                 idx = self.state.joint_test_index
-                tgt = self.state.joint_test_offsets[idx]
-                actual = self.state.latest_joint_positions[idx] - self.state.sim.default_pose[idx]
-                joint_info = ("offset", tgt, actual)
+                offset = self.state.joint_test_offsets[idx]
+                default_pos = self.state.sim.default_pose[idx]
+                target_abs = default_pos + offset
+                actual_abs = self.state.latest_joint_positions[idx]
+                joint_info = {
+                    "mode": "offset",
+                    "index": idx,
+                    "target_abs": target_abs,
+                    "actual_abs": actual_abs,
+                    "offset": offset,
+                }
             elif mode == "MANUAL_CTRL":
                 idx = self.state.manual_ctrl_index
-                tgt = self.state.manual_final_ctrl[idx]
-                actual = self.state.latest_joint_positions[idx]
-                joint_info = ("absolute", tgt, actual)
+                target_abs = self.state.manual_final_ctrl[idx]
+                actual_abs = self.state.latest_joint_positions[idx]
+                joint_info = {
+                    "mode": "absolute",
+                    "index": idx,
+                    "target_abs": target_abs,
+                    "actual_abs": actual_abs,
+                }
 
         # --- 在鎖外更新 UI 元件 ---
         self.status_labels['mode'].set_text(f"模式: {mode}")
@@ -240,16 +253,21 @@ class UIController:
 
         # 更新關節控制資訊
         if joint_info and self.joint_control_slider is not None:
-            mode_type, tgt, actual = joint_info
-            # 依據模式選擇正確的索引
-            self.joint_selector.set_value(self.state.joint_test_index if mode_type == "offset" else self.state.manual_ctrl_index)
-            # 若滑桿值與目標值差異較大，再更新以避免回圈觸發
-            if abs(self.joint_control_slider.value - tgt) > 1e-3:
-                self.joint_control_slider.set_value(tgt)
-            if mode_type == "offset":
-                text = f"模式: 偏移 | 目標: {tgt:.2f} | 實際: {actual:.2f}"
+            idx = joint_info['index']
+            self.joint_selector.set_value(idx)
+
+            target_abs = joint_info['target_abs']
+            actual_abs = joint_info['actual_abs']
+
+            if abs(self.joint_control_slider.value - target_abs) > 1e-3:
+                self.joint_control_slider.set_value(target_abs)
+
+            error = target_abs - actual_abs
+            if joint_info['mode'] == 'offset':
+                offset = joint_info['offset']
+                text = f"模式: 偏移 | Offset={offset:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
             else:
-                text = f"模式: 絕對 | 目標: {tgt:.2f} | 實際: {actual:.2f}"
+                text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
             self.status_labels['joint_info'].set_text(text)
 
         # 更新 ONNX 標籤與日誌
@@ -316,11 +334,15 @@ class UIController:
 
     def _on_joint_slider_change(self, event):
         """滑桿改變時即時更新目標值。"""
+        value = event.value
         with self.state.lock:
             if self.state.control_mode == "JOINT_TEST":
-                self.state.joint_test_offsets[self.state.joint_test_index] = event.value
+                idx = self.state.joint_test_index
+                # 滑桿給的是絕對角度，轉成偏移量存回 state
+                self.state.joint_test_offsets[idx] = value - self.state.sim.default_pose[idx]
             elif self.state.control_mode == "MANUAL_CTRL":
-                self.state.manual_final_ctrl[self.state.manual_ctrl_index] = event.value
+                idx = self.state.manual_ctrl_index
+                self.state.manual_final_ctrl[idx] = value
 
     def _adjust_joint_value(self, value: float, clear: bool = False):
         """依目前模式調整關節值或歸零。"""
