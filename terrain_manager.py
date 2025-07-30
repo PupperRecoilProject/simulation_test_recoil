@@ -2,7 +2,6 @@
 import mujoco
 import numpy as np
 import random
-from scipy.ndimage import uniform_filter
 from typing import Dict, Optional, Callable, Tuple
 from datetime import datetime
 from PIL import Image
@@ -344,10 +343,6 @@ class TerrainManager:
         noise = np.random.rand(self.tile_resolution, self.tile_resolution) * 0.1
         return noise * self._create_boundary_fade()
 
-    def _apply_flattening_filter(self, hfield_data: np.ndarray, foot_contact_area_size: int = 5) -> np.ndarray:
-        """對高度場應用均值濾波，使局部區域更加平坦。"""
-        # uniform_filter 會計算周圍區塊的平均值，以消除尖銳斜坡
-        return uniform_filter(hfield_data, size=foot_contact_area_size)
 
     def generate_pyramid(self):
         """生成一個中央高、四周低的正金字塔地形。"""
@@ -357,8 +352,8 @@ class TerrainManager:
         X, Y = np.meshgrid(x, y)
         dist = np.maximum(np.abs(X), np.abs(Y))
         hfield_data = max_height * (1 - dist)
-        # 對高度場執行平坦化處理，減少局部尖坡
-        return self._apply_flattening_filter(hfield_data)
+        # 直接回傳未平滑的金字塔高度
+        return hfield_data
 
     def generate_stepped_pyramid(self):
         """
@@ -413,5 +408,5 @@ class TerrainManager:
         # 以確保與相鄰地塊拼接時完美無縫。
         hfield_data[dist >= 1.0] = 0.0
 
-        # 返回處理過的階梯金字塔高度數據
-        return self._apply_flattening_filter(hfield_data, foot_contact_area_size=3)
+        # 返回最終生成的階梯金字塔高度數據
+        return hfield_data
