@@ -39,12 +39,31 @@ class UIController:
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
         with ui.row().classes('w-full no-wrap'):
+            # 左側欄：控制相關的面板
             with ui.column().classes('w-1/3'):
-                self._create_control_panel()
-                self._create_tuning_panel()
-                # 先建立關節控制面板，再建立搖桿面板
-                self._create_joint_control_panel()  # 新增關節微調面板
+                # 使用垂直 Tabs 組織面板
+                with ui.tabs().props('vertical').classes('w-full') as tabs:
+                    # 名稱作為第一參數，label 是顯示文字，避免重複傳 name 造成錯誤
+                    ui.tab('control', label='控制')
+                    ui.tab('tuning', label='參數')
+                    ui.tab('hardware', label='硬體')
+
+                with ui.tab_panels(tabs, value='control').props('vertical').classes('w-full'):
+                    with ui.tab_panel('control'):
+                        ui.label('主控制項').classes('text-lg font-bold mb-4')
+                        self._create_main_control_panel()
+                    with ui.tab_panel('tuning'):
+                        ui.label('AI 與物理').classes('text-lg font-bold mb-4')
+                        self._create_tuning_panel()
+                    with ui.tab_panel('hardware'):
+                        ui.label('設備連接').classes('text-lg font-bold mb-4')
+                        self._create_device_panel()
+
+                # 關節微調與搖桿控制仍在主頁面下方
+                self._create_joint_control_panel()
                 self._create_joystick_panel()
+
+            # 右側欄：狀態與日誌顯示
             with ui.column().classes('w-2/3'):
                 self._create_status_display()
                 self._create_onnx_display()
@@ -52,7 +71,8 @@ class UIController:
 
         ui.timer(0.1, self.update_ui_elements)
 
-    def _create_control_panel(self):
+    # 主要控制面板：模式切換與播放控制
+    def _create_main_control_panel(self):
         with ui.card():
             ui.label('模式控制 (Control Mode)').classes('text-lg')
             with ui.row():
@@ -64,19 +84,22 @@ class UIController:
                 ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self._request_mode_change("MANUAL_CTRL"))
 
             ui.separator()
-            ui.label('硬體 AI 控制').classes('text-lg')
-            ui.button('啟用/停用 AI (K)', on_click=self._toggle_hardware_ai).bind_enabled_from(self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
+            ui.label('模擬播放 (Playback)').classes('text-lg')
+            with ui.row():
+                # 建立「暫停/播放」按鈕，文字會依狀態變化
+                ui.button(on_click=self._toggle_pause) \
+                    .bind_text_from(self.state, 'single_step_mode',
+                                    lambda is_paused: '播放 (Play)' if is_paused else '暫停 (Pause)')
+
+                # 建立「下一步」按鈕，只在暫停時啟用
+                ui.button('下一步 (Next Step)', on_click=self._request_one_step) \
+                    .bind_enabled_from(self.state, 'single_step_mode')
 
             ui.separator()
-            ui.label('設備與重置').classes('text-lg')
-            with ui.row():
-                ui.button('連接序列埠 (U)', on_click=self._connect_serial)
-                ui.button('連接搖桿 (J)', on_click=self._connect_gamepad)
+            ui.label('重置').classes('text-lg')
             with ui.row():
                 ui.button('軟重置 (X)', on_click=lambda: self._request_flag_change('soft_reset_requested'))
                 ui.button('硬重置 (R)', on_click=lambda: self._request_flag_change('hard_reset_requested'))
-                # 新增退出按鈕，透過狀態旗標通知模擬執行緒
-                ui.button('退出程式', on_click=self._request_shutdown, color='red')
 
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
@@ -105,6 +128,23 @@ class UIController:
             label='Terrain Mode',
             on_change=self._on_terrain_change
         ).bind_value(self, 'ui_terrain_selection').classes('w-full')
+
+    # 設備與系統相關控制
+    def _create_device_panel(self):
+        with ui.card():
+            ui.label('硬體 AI 控制').classes('text-lg')
+            ui.button('啟用/停用 AI (K)', on_click=self._toggle_hardware_ai).bind_enabled_from(
+                self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
+
+            ui.separator()
+            ui.label('設備連接').classes('text-lg')
+            with ui.row():
+                ui.button('連接序列埠 (U)', on_click=self._connect_serial)
+                ui.button('連接搖桿 (J)', on_click=self._connect_gamepad)
+
+            ui.separator()
+            ui.label('系統').classes('text-lg')
+            ui.button('退出程式', on_click=self._request_shutdown, color='red')
 
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
@@ -307,6 +347,21 @@ class UIController:
         with self.state.lock:
             self.state.control_mode_pending = mode
         log.info(f"UI 請求切換模式至 {mode}")
+
+    # 【新增】「暫停/播放」按鈕的回呼函式
+    def _toggle_pause(self):
+        """切換模擬的暫停/播放狀態。"""
+        with self.state.lock:
+            self.state.single_step_mode = not self.state.single_step_mode
+        status = 'PAUSED' if self.state.single_step_mode else 'PLAYING'
+        log.info(f"--- SIMULATION {status} (toggled from UI) ---")
+
+    # 【新增】「下一步」按鈕的回呼函式
+    def _request_one_step(self):
+        """請求在暫停模式下執行單步模擬。"""
+        with self.state.lock:
+            if self.state.single_step_mode:
+                self.state.execute_one_step = True
 
     def _toggle_hardware_ai(self):
         if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':
