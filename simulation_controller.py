@@ -127,9 +127,9 @@ class SimulationController:
             self.terrain_manager.needs_physics_and_scene_update = False
             log.info("✅ 地形物理與渲染已同步更新。")
 
-       with self.state.lock:
-           self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
-           self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
+        with self.state.lock:
+            self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
+            self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
             # 將當前關節角度複製到共享狀態，避免 UI 執行緒直接讀取 sim.data
             self.state.latest_joint_positions = self.sim.data.qpos[7:].copy()
 
