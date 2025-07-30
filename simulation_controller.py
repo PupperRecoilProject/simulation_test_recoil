@@ -7,10 +7,14 @@ import time
 from typing import TYPE_CHECKING
 from logger import log
 
-import mujoco
 import numpy as np
 import glfw  # 用於程式化關閉視窗
 from mock_simulation import MockSimulation
+
+try:
+    import mujoco
+except ImportError:  # 無頭環境可能沒有安裝
+    mujoco = None
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from state import SimulationState
@@ -144,8 +148,29 @@ class SimulationController:
                 self.soft_reset()
 
     def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
-        """執行模式切換並處理硬體控制執行緒。"""
+        """執行模式切換並處理硬體控制執行緒與模擬狀態。"""
         self.state.set_control_mode(new_mode)
+
+        is_headless = isinstance(self.sim, MockSimulation)
+
+        if not is_headless:
+            # 離開舊模式時的物理處理
+            if old_mode == "FLOATING":
+                self.floating_controller.disable()
+            elif old_mode == "MANUAL_CTRL" and self.state.manual_mode_is_floating:
+                self.floating_controller.disable()
+                self.state.manual_mode_is_floating = False
+
+            # 進入新模式時的初始化
+            if new_mode == "FLOATING":
+                self.floating_controller.enable(self.state.latest_pos)
+            elif new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
+                log.info(f"進入 {new_mode} 模式，重置機器人關節與速度")
+                self.sim.data.qpos[7:] = self.sim.default_pose.copy()
+                self.sim.data.qvel[6:] = 0
+                if mujoco:
+                    mujoco.mj_forward(self.sim.model, self.sim.data)
+
         if new_mode == "HARDWARE_MODE" and not self.hardware_controller.is_running:
             log.info("派生執行緒以啟動硬體控制器...")
             threading.Thread(target=self.hardware_controller.start_controller_threads, daemon=True).start()

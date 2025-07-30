@@ -1,7 +1,7 @@
 # state.py
 from __future__ import annotations
 import numpy as np
-import mujoco  # 新增：進入手動模式時需要重設物理狀態
+
 from dataclasses import dataclass, field
 from config import AppConfig
 from logger import log
@@ -10,6 +10,7 @@ import threading
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
+    import mujoco
     from floating_controller import FloatingController
     from policy import PolicyManager
     from hardware_controller import HardwareController
@@ -122,7 +123,7 @@ class SimulationState:
                 log.info(f"輸入模式已切換至: {self.input_mode}")
             
     def set_control_mode(self, new_mode: str):
-        """【最終修正】僅更新狀態本身，不在此執行耗時操作。"""
+        """更新控制模式，此函式僅變更狀態本身。"""
         with self.lock:
             if self.control_mode == new_mode:
                 return
@@ -132,40 +133,21 @@ class SimulationState:
             if new_mode == "SERIAL_MODE":
                 self.previous_control_mode = old_mode
 
-            # --- 離開舊模式時的快速清理 ---
-            if old_mode == "FLOATING":
-                if self.floating_controller_ref:
-                    self.floating_controller_ref.disable()
-            # 離開手動模式時不再直接操作懸浮，由模擬執行緒統一處理
-
+            # 僅變更模式，不做任何實際硬體或模擬操作
             self.control_mode = new_mode
             log.info(f"控制模式已設定為: {self.control_mode}")
 
-            # --- 進入新模式時的初始化 ---
-            if new_mode == "FLOATING":
-                if self.floating_controller_ref:
-                    self.floating_controller_ref.enable(self.latest_pos)
-            elif new_mode == "JOINT_TEST":
-                # 進入關節測試模式時，偏移量歸零並重置物理狀態
+            # 進入新模式時初始化相關狀態
+            if new_mode == "JOINT_TEST":
                 self.joint_test_offsets.fill(0.0)
-                if self.sim:
-                    log.info("進入 JOINT_TEST 模式，重置機器人關節與速度")
-                    self.sim.data.qpos[7:] = self.sim.default_pose.copy()
-                    self.sim.data.qvel[6:] = 0
-                    mujoco.mj_forward(self.sim.model, self.sim.data)
             elif new_mode == "MANUAL_CTRL":
-                # 手動控制模式以預設姿態作為起始角度
-                self.manual_final_ctrl[:] = self.sim.default_pose.copy() if self.sim else self.latest_final_ctrl
-                if self.sim:
-                    log.info("進入 MANUAL_CTRL 模式，重置機器人關節與速度")
-                    self.sim.data.qpos[7:] = self.sim.default_pose.copy()
-                    self.sim.data.qvel[6:] = 0
-                    mujoco.mj_forward(self.sim.model, self.sim.data)
+                initial_pose = self.sim.default_pose.copy() if hasattr(self.sim, 'default_pose') else np.zeros(self.config.num_motors)
+                self.manual_final_ctrl[:] = initial_pose
 
-            # --- 從手動模式返回 AI 模式時，重置 AI 狀態 ---
-            is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
-            is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
-            if is_entering_ai_mode and is_leaving_manual_mode:
+            # 若從手動模式回到 AI 模式，重置 AI 狀態
+            is_entering_ai = new_mode in ["WALKING", "FLOATING"]
+            is_leaving_manual = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
+            if is_entering_ai and is_leaving_manual:
                 log.info("從手動模式返回，重置 AI 狀態...")
                 if self.policy_manager_ref:
                     self.policy_manager_ref.reset()
