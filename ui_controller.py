@@ -43,9 +43,10 @@ class UIController:
             with ui.column().classes('w-1/3'):
                 # 使用垂直 Tabs 組織面板
                 with ui.tabs().props('vertical').classes('w-full') as tabs:
-                    ui.tab('控制', name='control')
-                    ui.tab('參數', name='tuning')
-                    ui.tab('硬體', name='hardware')
+                    # 名稱作為第一參數，label 是顯示文字，避免重複傳 name 造成錯誤
+                    ui.tab('control', label='控制')
+                    ui.tab('tuning', label='參數')
+                    ui.tab('hardware', label='硬體')
 
                 with ui.tab_panels(tabs, value='control').props('vertical').classes('w-full'):
                     with ui.tab_panel('control'):
