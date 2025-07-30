@@ -15,7 +15,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
 
 
 class SimulationController:
-    """Handle stepping and rendering of the simulation in its own thread."""
+    """在獨立執行緒中運行模擬並處理所有狀態變更。"""
 
     def __init__(self, state: SimulationState) -> None:
         self.state = state
@@ -51,11 +51,9 @@ class SimulationController:
         self.thread.start()
 
     def run(self) -> None:
-        # 執行緒啟動後的初始化
+        """執行緒進入點：負責處理所有請求並運行模擬。"""
         self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
-
-        last_control_mode = self.state.control_mode
 
         while self._running.is_set():
             if self.sim.should_close():
@@ -64,30 +62,16 @@ class SimulationController:
                 app.shutdown()
                 continue
 
-            # 【核心修正】檢查是否有待處理的模式切換請求
+            # 1) 先處理所有待辦請求
+            self.process_requests()
+
+            # 2) 讀取必要狀態
             with self.state.lock:
-                pending_mode = self.state.control_mode_pending
-                if pending_mode:
-                    self.state.control_mode_pending = None
-
-            if pending_mode:
-                # 在鎖外執行實際切換
-                self.state.set_control_mode(pending_mode)
-
-            with self.state.lock:
-                current_control_mode = self.state.control_mode
-
-            if current_control_mode != last_control_mode:
-                self.handle_mode_transition(last_control_mode, current_control_mode)
-                last_control_mode = current_control_mode
-
-            with self.state.lock:
+                mode = self.state.control_mode
+                terrain_mode = self.state.terrain_mode
+                pos = self.state.latest_pos
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
-                hard_reset_req = self.state.hard_reset_requested
-                soft_reset_req = self.state.soft_reset_requested
-                current_terrain_mode = self.state.terrain_mode
-                latest_pos = self.state.latest_pos.copy()
 
             if single_step and not execute_one:
                 self.sim.render_from_thread(self.state)
@@ -97,41 +81,60 @@ class SimulationController:
                 with self.state.lock:
                     self.state.execute_one_step = False
 
-            if hard_reset_req:
-                self.hard_reset()
-            if soft_reset_req:
-                self.soft_reset()
-
-            if current_control_mode in ["HARDWARE_MODE", "SERIAL_MODE"]:
-                pass
-            else:
+            if mode not in ["HARDWARE_MODE", "SERIAL_MODE"]:
                 self._simulation_step()
 
-            # 若地形資料已更新，需同步物理與渲染
-            if (
-                self.terrain_manager.is_functional
-                and self.terrain_manager.needs_physics_and_scene_update
-            ):
-                mujoco.mj_forward(self.sim.model, self.sim.data)
-                mujoco.mjr_uploadHField(
-                    self.sim.model, self.sim.context, self.terrain_manager.hfield_id
-                )
-                self.terrain_manager.needs_physics_and_scene_update = False
-                log.info("✅ 地形物理與渲染已同步更新。")
+            self.update_derived_states_and_render(pos, terrain_mode)
 
-            # 先將最新物理狀態寫回 shared state
-            with self.state.lock:
-                self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
-                self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
-                latest_pos_for_terrain = self.state.latest_pos
+        print("模擬執行緒已停止。")
 
-            # 再以最新位置檢查是否需要更新地形
-            if self.terrain_manager.is_functional:
-                self.terrain_manager.update(latest_pos_for_terrain, current_terrain_mode)
+    def process_requests(self) -> None:
+        """檢查並處理所有待處理的狀態變更請求。"""
+        with self.state.lock:
+            pending_mode = self.state.control_mode_pending
+            hard_reset = self.state.hard_reset_requested
+            soft_reset = self.state.soft_reset_requested
+            if pending_mode:
+                self.state.control_mode_pending = None
+            if hard_reset:
+                self.state.hard_reset_requested = False
+            if soft_reset:
+                self.state.soft_reset_requested = False
 
-            self.sim.render_from_thread(self.state)
+        if pending_mode:
+            self.handle_mode_change(self.state.control_mode, pending_mode)
+        if hard_reset:
+            self.hard_reset()
+        if soft_reset:
+            self.soft_reset()
 
-        print("simulation thread stopped")
+    def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
+        """執行模式切換並處理硬體控制執行緒。"""
+        self.state.set_control_mode(new_mode)
+        if new_mode == "HARDWARE_MODE" and not self.hardware_controller.is_running:
+            log.info("派生執行緒以啟動硬體控制器...")
+            threading.Thread(target=self.hardware_controller.start_controller_threads, daemon=True).start()
+        elif old_mode == "HARDWARE_MODE" and new_mode != "HARDWARE_MODE":
+            if self.hardware_controller.is_running:
+                log.info("派生執行緒以停止硬體控制器...")
+                threading.Thread(target=self.hardware_controller.stop_controller_threads, daemon=True).start()
+
+    def update_derived_states_and_render(self, pos, terrain_mode) -> None:
+        """更新衍生狀態並渲染場景。"""
+        if self.terrain_manager.is_functional and self.terrain_manager.needs_physics_and_scene_update:
+            mujoco.mj_forward(self.sim.model, self.sim.data)
+            mujoco.mjr_uploadHField(self.sim.model, self.sim.context, self.terrain_manager.hfield_id)
+            self.terrain_manager.needs_physics_and_scene_update = False
+            log.info("✅ 地形物理與渲染已同步更新。")
+
+        with self.state.lock:
+            self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
+            self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
+
+        if self.terrain_manager.is_functional:
+            self.terrain_manager.update(pos, terrain_mode)
+
+        self.sim.render_from_thread(self.state)
 
     # ------------------------------------------------------------------
     def _simulation_step(self) -> None:
@@ -221,14 +224,5 @@ class SimulationController:
             mujoco.mj_forward(self.sim.model, self.sim.data)
             self.state.soft_reset_requested = False
 
-    def handle_mode_transition(self, old_mode: str, new_mode: str) -> None:
-        """在模式改變時處理可能耗時的操作。"""
-        log.info(f"偵測到模式轉換：{old_mode} -> {new_mode}")
-        if new_mode == "HARDWARE_MODE":
-            if self.hardware_controller and not self.hardware_controller.is_running:
-                threading.Thread(target=self.hardware_controller.start_controller_threads, daemon=True).start()
-        elif old_mode == "HARDWARE_MODE":
-            if self.hardware_controller and self.hardware_controller.is_running:
-                threading.Thread(target=self.hardware_controller.stop_controller_threads, daemon=True).start()
 
 

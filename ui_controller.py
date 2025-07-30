@@ -73,8 +73,8 @@ class UIController:
                 ui.button('連接序列埠 (U)', on_click=self._connect_serial)
                 ui.button('連接搖桿 (J)', on_click=self._connect_gamepad)
             with ui.row():
-                ui.button('軟重置 (X)', on_click=lambda: self.set_request_flag('soft_reset_requested'))
-                ui.button('硬重置 (R)', on_click=lambda: self.set_request_flag('hard_reset_requested'))
+                ui.button('軟重置 (X)', on_click=lambda: self._request_flag_change('soft_reset_requested'))
+                ui.button('硬重置 (R)', on_click=lambda: self._request_flag_change('hard_reset_requested'))
 
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
@@ -238,9 +238,11 @@ class UIController:
             else:
                 self.hardware_controller.enable_ai()
 
-    def set_request_flag(self, flag_name: str):
+    def _request_flag_change(self, flag_name: str):
+        """非阻塞地請求一次性操作，如重置。"""
         with self.state.lock:
             setattr(self.state, flag_name, True)
+        log.info(f"UI請求旗標設定: {flag_name}")
 
     def _connect_serial(self):
         if self.serial_comm:
