@@ -240,7 +240,16 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def hard_reset(self) -> None:
-        print("\n--- 正在執行機器人硬重置 ---")
+        """根據目前地形自動決定適當高度並執行硬重置。"""
+        with self.state.lock:
+            # 取得當前地形名稱以判斷重置高度
+            terrain_name = self.terrain_manager.get_current_terrain_name_simple(self.state)
+
+        difficult = ["Pyramid", "Stepped Pyramid"]
+        # 困難地形需要更高的初始高度以保證落地安全
+        start_z_offset = 1.5 if terrain_name in difficult else 0.3
+
+        print(f"\n--- 正在執行機器人硬重置 (地形: {terrain_name}, 高度偏移: {start_z_offset}m) ---")
         # 【核心修正】硬重置僅重置機器人狀態，不再重置地形
 
         with self.state.lock:
@@ -251,8 +260,7 @@ class SimulationController:
             self.sim.data.qpos[0], self.sim.data.qpos[1] = 0, 0
             # 依照目前地形取得原點的高度，確保重置後不會埋在地底
             start_ground_z = self.terrain_manager.get_height_at(0, 0)
-            robot_height_offset = 0.3
-            self.sim.data.qpos[2] = start_ground_z + robot_height_offset
+            self.sim.data.qpos[2] = start_ground_z + start_z_offset
             self.sim.data.qpos[3:7] = np.array([1., 0, 0, 0])
             self.sim.data.qpos[7:] = self.sim.default_pose
             self.sim.data.qvel[:] = 0

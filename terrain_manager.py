@@ -343,6 +343,7 @@ class TerrainManager:
         noise = np.random.rand(self.tile_resolution, self.tile_resolution) * 0.1
         return noise * self._create_boundary_fade()
 
+
     def generate_pyramid(self):
         """生成一個中央高、四周低的正金字塔地形。"""
         max_height = random.uniform(0.3, 0.6)
@@ -351,6 +352,7 @@ class TerrainManager:
         X, Y = np.meshgrid(x, y)
         dist = np.maximum(np.abs(X), np.abs(Y))
         hfield_data = max_height * (1 - dist)
+        # 直接回傳未平滑的金字塔高度
         return hfield_data
 
     def generate_stepped_pyramid(self):
@@ -405,6 +407,6 @@ class TerrainManager:
         # 由於浮點數計算可能存在微小誤差，此步驟強制將網格最外圍的高度設為 0，
         # 以確保與相鄰地塊拼接時完美無縫。
         hfield_data[dist >= 1.0] = 0.0
-        
+
         # 返回最終生成的階梯金字塔高度數據
         return hfield_data

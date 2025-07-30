@@ -23,9 +23,11 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" type="hfield" hfield="terrain" material="groundplane" 
-          condim="3" contype="1" conaffinity="1" 
-          solimp="0.99 0.999 0.001" solref="0.001 1"/>
+    <!-- 強化金字塔地形的物理特性，避免腳部陷入 -->
+    <geom name="floor" type="hfield" hfield="terrain" material="groundplane"
+          condim="6" contype="1" conaffinity="1"
+          solimp="0.99 0.999 0.0001" solref="0.001 1"
+          friction="1.5 0.1 0.1" priority="1"/>
     
     <body name="anchor" pos="0 0 0.35" mocap="true">
       <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>
