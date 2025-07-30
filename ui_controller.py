@@ -1,4 +1,4 @@
-from nicegui import ui
+from nicegui import ui, app
 import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
@@ -75,6 +75,8 @@ class UIController:
             with ui.row():
                 ui.button('軟重置 (X)', on_click=lambda: self._request_flag_change('soft_reset_requested'))
                 ui.button('硬重置 (R)', on_click=lambda: self._request_flag_change('hard_reset_requested'))
+                # 新增退出按鈕，直接呼叫 NiceGUI 的 app.shutdown
+                ui.button('退出程式', on_click=app.shutdown, color='red')
 
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
