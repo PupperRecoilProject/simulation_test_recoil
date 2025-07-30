@@ -70,7 +70,8 @@ def main() -> None:
         """UI 關閉時釋放所有背景資源。"""
         print("NiceGUI 正在關閉，正在清理資源...")
         simulation_controller.stop()
-        hw_controller.stop()
+        # 關閉硬體控制執行緒
+        hw_controller.stop_controller_threads()
         serial_comm.close()
         xbox_handler.close()
         sim.close()
