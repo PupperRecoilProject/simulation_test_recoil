@@ -130,10 +130,12 @@ class SimulationController:
             pending_mode = self.state.control_mode_pending
             hard_reset = self.state.hard_reset_requested
             soft_reset = self.state.soft_reset_requested
+            reset_offset = self.state.next_reset_z_offset
             if pending_mode:
                 self.state.control_mode_pending = None
             if hard_reset:
                 self.state.hard_reset_requested = False
+                self.state.next_reset_z_offset = None
             if soft_reset:
                 self.state.soft_reset_requested = False
 
@@ -143,7 +145,10 @@ class SimulationController:
         # 無頭模式下沒有真實模擬，跳過重置流程
         if not isinstance(self.sim, MockSimulation):
             if hard_reset:
-                self.hard_reset()
+                if reset_offset is not None:
+                    self.hard_reset(start_z_offset=reset_offset)
+                else:
+                    self.hard_reset()
             if soft_reset:
                 self.soft_reset()
 
@@ -239,8 +244,12 @@ class SimulationController:
             self.thread.join(timeout=1)
 
     # ------------------------------------------------------------------
-    def hard_reset(self) -> None:
-        print("\n--- 正在執行機器人硬重置 ---")
+    def hard_reset(self, start_z_offset: float = 0.3) -> None:
+        """Perform a full robot reset at a given height offset.
+
+        :param start_z_offset: 放置機器人時離地面的高度偏移值，預設 0.3 公尺
+        """
+        print(f"\n--- 正在執行機器人硬重置 (起始高度偏移: {start_z_offset}m) ---")
         # 【核心修正】硬重置僅重置機器人狀態，不再重置地形
 
         with self.state.lock:
@@ -251,8 +260,7 @@ class SimulationController:
             self.sim.data.qpos[0], self.sim.data.qpos[1] = 0, 0
             # 依照目前地形取得原點的高度，確保重置後不會埋在地底
             start_ground_z = self.terrain_manager.get_height_at(0, 0)
-            robot_height_offset = 0.3
-            self.sim.data.qpos[2] = start_ground_z + robot_height_offset
+            self.sim.data.qpos[2] = start_ground_z + start_z_offset
             self.sim.data.qpos[3:7] = np.array([1., 0, 0, 0])
             self.sim.data.qpos[7:] = self.sim.default_pose
             self.sim.data.qvel[:] = 0

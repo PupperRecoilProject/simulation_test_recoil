@@ -487,6 +487,12 @@ class UIController:
                     terrain_manager.set_single_terrain(terrain_name)
 
             if terrain_manager.is_functional:
+                DIFFICULT_TERRAINS = ["Pyramid", "Stepped Pyramid"]
+                if terrain_name in DIFFICULT_TERRAINS:
+                    log.info(f"偵測到困難地形 '{terrain_name}'，將使用更高的重置高度。")
+                    self.state.next_reset_z_offset = 1.0
+                else:
+                    self.state.next_reset_z_offset = None
                 # 請求硬重置以適應新的地形
                 self.state.hard_reset_requested = True
 
