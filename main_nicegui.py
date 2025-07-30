@@ -1,42 +1,74 @@
 """Entry point using NiceGUI for the control interface."""
 
 import sys
-import threading  # 新增：用於啟動模擬執行緒
-from nicegui import ui, app  # 從 nicegui 匯入 ui 物件與 app 實例
+import argparse
+from nicegui import ui, app
 
 from config import load_config
 from state import SimulationState
-from simulation import Simulation
-from simulation_controller import SimulationController
-from ui_controller import UIController
 from policy import PolicyManager
-from observation import ObservationBuilder
-from floating_controller import FloatingController
-from serial_communicator import SerialCommunicator
-from terrain_manager import TerrainManager
 from hardware_controller import HardwareController
-from keyboard_input_handler import KeyboardInputHandler
+from serial_communicator import SerialCommunicator
 from xbox_input_handler import XboxInputHandler
+from ui_controller import UIController
+from simulation_controller import SimulationController
+from keyboard_input_handler import KeyboardInputHandler
+from logger import log
+
+
+def create_simulation_components(use_sim: bool, config):
+    """根據是否使用模擬，建立對應的模組實例。"""
+    if use_sim:
+        log.info("✅ Simulation mode enabled.")
+        from simulation import Simulation
+        from observation import ObservationBuilder
+        from terrain_manager import TerrainManager
+        from floating_controller import FloatingController
+
+        sim = Simulation(config)
+        terrain = TerrainManager(sim.model, sim.data)
+        floating = FloatingController(config, sim.model, sim.data, terrain)
+        obs = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+        return sim, obs, terrain, floating
+    else:
+        log.info("🚫 Simulation disabled, using mock components.")
+        from mock_simulation import (
+            MockSimulation,
+            MockObservationBuilder,
+            MockTerrainManager,
+            MockFloatingController,
+        )
+
+        sim = MockSimulation(config)
+        terrain = MockTerrainManager()
+        floating = MockFloatingController()
+        obs = MockObservationBuilder()
+        return sim, obs, terrain, floating
 
 
 def main() -> None:
     """Initialise all components and start UI and simulation threads."""
 
+    parser = argparse.ArgumentParser(description="Pupper Robot Controller")
+    parser.add_argument("--no-sim", action="store_true", help="run without MuJoCo simulation")
+    args = parser.parse_args()
+
+    use_sim = not args.no_sim
+
     print("\n--- Robot Simulation Controller (NiceGUI edition) ---")
+    if not use_sim:
+        print("========= RUNNING IN NO-SIM MODE =========")
 
     try:
         config = load_config()
         state = SimulationState(config)
-        sim = Simulation(config)
-    except Exception as exc:  # pragma: no cover - startup errors
+    except Exception as exc:
         sys.exit(f"failed to initialise: {exc}")
 
+    sim, obs_builder, terrain_manager, floating_controller = create_simulation_components(use_sim, config)
+
     state.sim = sim
-
-    terrain_manager = TerrainManager(sim.model, sim.data)
     state.terrain_manager_ref = terrain_manager
-
-    floating_controller = FloatingController(config, sim.model, sim.data, terrain_manager)
     state.floating_controller_ref = floating_controller
 
     serial_comm = SerialCommunicator()
@@ -44,8 +76,6 @@ def main() -> None:
 
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
-
-    obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
 
     policy_manager = PolicyManager(config, obs_builder, None)
     state.policy_manager_ref = policy_manager
@@ -60,32 +90,26 @@ def main() -> None:
     simulation_controller = SimulationController(state)
     ui_controller = UIController(state)
 
-    def start_simulation_thread() -> None:
-        """UI 啟動後啟動模擬執行緒。"""
-        print("NiceGUI 已啟動，現在安全地啟動模擬執行緒...")
-        thread = threading.Thread(target=simulation_controller.run, daemon=True)
-        thread.start()
+    def start_background_threads() -> None:
+        log.info("NiceGUI 已啟動，啟動背景執行緒...")
+        simulation_controller.start()
+        xbox_handler.start()
 
     def cleanup_resources() -> None:
-        """UI 關閉時釋放所有背景資源。"""
-        print("NiceGUI 正在關閉，正在清理資源...")
+        log.info("NiceGUI 正在關閉，釋放資源...")
         simulation_controller.stop()
-        hw_controller.stop()
+        hw_controller.stop_controller_threads()
         serial_comm.close()
         xbox_handler.close()
         sim.close()
-        print("✅ 所有資源已成功釋放。")
+        log.info("✅ All resources released.")
 
-    app.on_startup(start_simulation_thread)
+    app.on_startup(start_background_threads)
     app.on_shutdown(cleanup_resources)
 
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
-    ui.run(
-        title="Pupper Robot Console",
-        port=8080,
-    )
+    ui.run(title="Pupper Robot Console", port=8080)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
     main()
-

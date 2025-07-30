@@ -1,5 +1,8 @@
 # keyboard_input_handler.py
-import glfw
+try:
+    import glfw
+except ImportError:  # 無頭環境可能沒有安裝 glfw
+    glfw = None
 from state import SimulationState
 from logger import log
 
@@ -16,9 +19,12 @@ class KeyboardInputHandler:
         self.num_params = len(self.param_keys) # 可調參數的數量
 
     def register_callbacks(self, window):
-        """向 GLFW 註冊鍵盤事件的回呼函式。"""
-        glfw.set_key_callback(window, self.key_callback) # 註冊按鍵事件
-        glfw.set_char_callback(window, self.char_callback) # 註冊字元輸入事件
+        """向 GLFW 註冊鍵盤事件的回呼函式 (若可用)。"""
+        if glfw is None:
+            log.warning("glfw 模組不存在，無法註冊鍵盤事件")
+            return
+        glfw.set_key_callback(window, self.key_callback)  # 註冊按鍵事件
+        glfw.set_char_callback(window, self.char_callback)  # 註冊字元輸入事件
 
     def char_callback(self, window, codepoint):
         """處理可列印字元的輸入，專門用於序列埠模式。"""
@@ -84,12 +90,8 @@ class KeyboardInputHandler:
             
         if action in [glfw.PRESS, glfw.REPEAT]:
             if key == glfw.KEY_F and action == glfw.PRESS:
+                # 只切換狀態旗標，由模擬執行緒處理實際啟用或停用懸浮
                 self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
-                is_floating = self.state.manual_mode_is_floating
-                if is_floating:
-                    if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
-                else:
-                    if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
             elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
             elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
             elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1
@@ -111,10 +113,11 @@ class KeyboardInputHandler:
             if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
             if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
             if key == glfw.KEY_Y:
-                if self.state.terrain_mode == "INFINITE": self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
-                else: print("⚠️ 'Y'鍵 (重生地形) 只在無限地形模式下有效。")
+                if self.state.terrain_mode == "INFINITE":
+                    self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
+                else:
+                    print("⚠️ 'Y'鍵 (重生地形) 只在無限地形模式下有效。")
                 return
-            if key == glfw.KEY_V: self.terrain_manager.cycle_terrain_mode(self.state); return
             if key == glfw.KEY_P: self.terrain_manager.save_hfield_to_png(); return
             if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
             if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
