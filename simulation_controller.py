@@ -40,6 +40,10 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def _initialize_simulation_state(self) -> None:
+        if isinstance(self.sim, MockSimulation):
+            log.info("[MOCK] Skip simulation state initialization.")
+            return
+
         if self.terrain_manager.is_functional:
             # 初始啟動時重置地形管理器，以確保中心點與高度場為最新狀態
             self.terrain_manager.reset()
@@ -63,8 +67,7 @@ class SimulationController:
             self._initialize_simulation_state()
         else:
             print("[MOCK] Headless mode, skip window/context init.")
-            # 無頭模式僅需初始化狀態，不啟動視窗
-            self._initialize_simulation_state()
+            # 無頭模式不需要初始化真實模擬狀態
 
         while self._running.is_set():
             with self.state.lock:
@@ -101,7 +104,7 @@ class SimulationController:
                 with self.state.lock:
                     self.state.execute_one_step = False
 
-            if mode not in ["HARDWARE_MODE", "SERIAL_MODE"]:
+            if not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]:
                 self._simulation_step()
 
             # 根據手動懸浮開關決定是否啟用懸浮控制器
@@ -132,10 +135,13 @@ class SimulationController:
 
         if pending_mode:
             self.handle_mode_change(self.state.control_mode, pending_mode)
-        if hard_reset:
-            self.hard_reset()
-        if soft_reset:
-            self.soft_reset()
+
+        # 無頭模式下沒有真實模擬，跳過重置流程
+        if not isinstance(self.sim, MockSimulation):
+            if hard_reset:
+                self.hard_reset()
+            if soft_reset:
+                self.soft_reset()
 
     def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
         """執行模式切換並處理硬體控制執行緒。"""
@@ -150,17 +156,20 @@ class SimulationController:
 
     def update_derived_states_and_render(self, pos, terrain_mode) -> None:
         """更新衍生狀態並渲染場景。"""
-        if self.terrain_manager.is_functional and self.terrain_manager.needs_physics_and_scene_update:
+        is_headless = isinstance(self.sim, MockSimulation)
+
+        if not is_headless and self.terrain_manager.is_functional and self.terrain_manager.needs_physics_and_scene_update:
             mujoco.mj_forward(self.sim.model, self.sim.data)
             mujoco.mjr_uploadHField(self.sim.model, self.sim.context, self.terrain_manager.hfield_id)
             self.terrain_manager.needs_physics_and_scene_update = False
             log.info("✅ 地形物理與渲染已同步更新。")
 
-        with self.state.lock:
-            self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
-            self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
-            # 將當前關節角度複製到共享狀態，避免 UI 執行緒直接讀取 sim.data
-            self.state.latest_joint_positions = self.sim.data.qpos[7:].copy()
+        if not is_headless:
+            with self.state.lock:
+                self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
+                self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
+                # 將當前關節角度複製到共享狀態，避免 UI 執行緒直接讀取 sim.data
+                self.state.latest_joint_positions = self.sim.data.qpos[7:].copy()
 
         if self.terrain_manager.is_functional:
             self.terrain_manager.update(pos, terrain_mode)
