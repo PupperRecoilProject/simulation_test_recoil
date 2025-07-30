@@ -2,11 +2,18 @@
 
 import sys
 import threading  # 新增：用於啟動背景執行緒
+import numpy as np
 from nicegui import ui, app  # 從 nicegui 匯入 ui 物件與 app 實例
 
 from config import load_config
 from state import SimulationState
-from simulation import Simulation
+# 若要在無頭環境測試，可切換使用 MockSimulation
+USE_MOCK_SIM = True
+
+if USE_MOCK_SIM:
+    from mock_simulation import MockSimulation as Simulation
+else:
+    from simulation import Simulation
 from simulation_controller import SimulationController
 from ui_controller import UIController
 from policy import PolicyManager
@@ -33,10 +40,19 @@ def main() -> None:
 
     state.sim = sim
 
-    terrain_manager = TerrainManager(sim.model, sim.data)
+    if USE_MOCK_SIM:
+        class DummyModel:
+            hfield_nrow = hfield_ncol = hfield_size = hfield_adr = [0]
+        dummy_model = DummyModel()
+        dummy_data = None
+    else:
+        dummy_model = sim.model
+        dummy_data = sim.data
+
+    terrain_manager = TerrainManager(dummy_model, dummy_data)
     state.terrain_manager_ref = terrain_manager
 
-    floating_controller = FloatingController(config, sim.model, sim.data, terrain_manager)
+    floating_controller = FloatingController(config, dummy_model, dummy_data, terrain_manager)
     state.floating_controller_ref = floating_controller
 
     serial_comm = SerialCommunicator()
@@ -45,7 +61,7 @@ def main() -> None:
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
 
-    obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    obs_builder = ObservationBuilder(dummy_data, dummy_model, sim.torso_id, sim.default_pose, config)
 
     policy_manager = PolicyManager(config, obs_builder, None)
     state.policy_manager_ref = policy_manager
