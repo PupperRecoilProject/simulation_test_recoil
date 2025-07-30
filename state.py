@@ -136,10 +136,7 @@ class SimulationState:
             if old_mode == "FLOATING":
                 if self.floating_controller_ref:
                     self.floating_controller_ref.disable()
-            elif old_mode == "MANUAL_CTRL" and self.manual_mode_is_floating:
-                if self.floating_controller_ref:
-                    self.floating_controller_ref.disable()
-                self.manual_mode_is_floating = False
+            # 離開手動模式時不再直接操作懸浮，由模擬執行緒統一處理
 
             self.control_mode = new_mode
             log.info(f"控制模式已設定為: {self.control_mode}")

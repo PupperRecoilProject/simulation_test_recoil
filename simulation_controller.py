@@ -32,6 +32,9 @@ class SimulationController:
         self._running = threading.Event()
         self.thread: threading.Thread | None = None
 
+        # 追蹤手動模式下懸浮是否已啟用
+        self._manual_float_active = False
+
         # 初始化將在執行緒啟動後進行
 
     # ------------------------------------------------------------------
@@ -78,6 +81,7 @@ class SimulationController:
                 pos = self.state.latest_pos
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
+                manual_float = self.state.manual_mode_is_floating
 
             if single_step and not execute_one:
                 self.sim.render_from_thread(self.state)
@@ -89,6 +93,15 @@ class SimulationController:
 
             if mode not in ["HARDWARE_MODE", "SERIAL_MODE"]:
                 self._simulation_step()
+
+            # 根據手動懸浮開關決定是否啟用懸浮控制器
+            is_manual_mode = mode in ["JOINT_TEST", "MANUAL_CTRL"]
+            if is_manual_mode and manual_float and not self._manual_float_active:
+                self.floating_controller.enable(self.state.latest_pos)
+                self._manual_float_active = True
+            elif (not is_manual_mode or not manual_float) and self._manual_float_active:
+                self.floating_controller.disable()
+                self._manual_float_active = False
 
             self.update_derived_states_and_render(pos, terrain_mode)
 
@@ -211,6 +224,9 @@ class SimulationController:
             self.state.joint_test_offsets.fill(0.0)
             self.state.manual_final_ctrl.fill(0.0)
             self.state.manual_mode_is_floating = False
+            if self._manual_float_active:
+                self.floating_controller.disable()
+                self._manual_float_active = False
             self.state.hard_reset_requested = False
             mujoco.mj_forward(self.sim.model, self.sim.data)
 
@@ -229,6 +245,9 @@ class SimulationController:
             self.state.joint_test_offsets.fill(0.0)
             self.state.manual_final_ctrl.fill(0.0)
             self.state.manual_mode_is_floating = False
+            if self._manual_float_active:
+                self.floating_controller.disable()
+                self._manual_float_active = False
             mujoco.mj_forward(self.sim.model, self.sim.data)
             self.state.soft_reset_requested = False
 

@@ -84,12 +84,8 @@ class KeyboardInputHandler:
             
         if action in [glfw.PRESS, glfw.REPEAT]:
             if key == glfw.KEY_F and action == glfw.PRESS:
+                # 只切換狀態旗標，由模擬執行緒處理實際啟用或停用懸浮
                 self.state.manual_mode_is_floating = not self.state.manual_mode_is_floating
-                is_floating = self.state.manual_mode_is_floating
-                if is_floating:
-                    if self.state.floating_controller_ref: self.state.floating_controller_ref.enable(self.state.latest_pos)
-                else:
-                    if self.state.floating_controller_ref: self.state.floating_controller_ref.disable()
             elif key == glfw.KEY_LEFT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index - 1) % 12
             elif key == glfw.KEY_RIGHT_BRACKET and action == glfw.PRESS: self.state.manual_ctrl_index = (self.state.manual_ctrl_index + 1) % 12
             elif key == glfw.KEY_UP: self.state.manual_final_ctrl[self.state.manual_ctrl_index] += 0.1

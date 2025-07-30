@@ -121,6 +121,10 @@ class UIController:
         """在 JOINT_TEST 或 MANUAL_CTRL 模式下顯示的關節微調面板。"""
         with ui.card().bind_visibility_from(self.state, 'control_mode', lambda m: m in ["JOINT_TEST", "MANUAL_CTRL"]).classes('w-full'):
             ui.label('關節微調 (Joint Fine-Tuning)').classes('text-lg')
+            # 懸浮開關，適用於手動相關模式
+            with ui.row().classes('items-center'):
+                ui.label('啟用懸浮')
+                ui.switch(on_change=self._on_manual_float_toggle).bind_value(self.state, 'manual_mode_is_floating')
             joint_names = {
                 0: 'FR_Abduction', 1: 'FR_Hip', 2: 'FR_Knee', 3: 'FL_Abduction', 4: 'FL_Hip', 5: 'FL_Knee',
                 6: 'RR_Abduction', 7: 'RR_Hip', 8: 'RR_Knee', 9: 'RL_Abduction', 10: 'RL_Hip', 11: 'RL_Knee'
@@ -372,6 +376,13 @@ class UIController:
                     self.state.manual_final_ctrl[idx] += value
 
         # 滑桿的實際更新由 update_ui_elements 進行，避免鎖重複取得
+
+    def _on_manual_float_toggle(self, event) -> None:
+        """手動模式懸浮開關變化時呼叫，僅更新狀態由模擬執行緒處理"""
+        is_floating = bool(event.value)
+        with self.state.lock:
+            self.state.manual_mode_is_floating = is_floating
+        log.info(f"手動懸浮狀態切換為: {is_floating}")
 
     def _update_command_from_joystick(self, event):
         """虛擬搖桿移動時的回呼函式，根據 x、y 更新指令。"""
