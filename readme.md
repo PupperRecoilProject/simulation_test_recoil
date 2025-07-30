@@ -6,3 +6,4 @@ pip install inputs //搖桿用的
 pip install pygame
 pip install pyserial
 pip install Pillow
+pip install scipy  //運動學 hardware 需用
