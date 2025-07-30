@@ -320,13 +320,15 @@ class UIController:
             if self.state.control_mode == "JOINT_TEST":
                 idx = self.state.joint_test_index
                 target = self.state.joint_test_offsets[idx]
-                actual = self.state.sim.data.qpos[7 + idx] - self.state.sim.default_pose[idx]
+                # 從共享狀態讀取最新關節位置，避免直接存取 sim.data
+                actual = self.state.latest_joint_positions[idx] - self.state.sim.default_pose[idx]
                 self.joint_control_slider.set_value(target)
                 text = f"模式: 偏移 | 目標: {target:.2f} | 實際: {actual:.2f}"
             elif self.state.control_mode == "MANUAL_CTRL":
                 idx = self.state.manual_ctrl_index
                 target = self.state.manual_final_ctrl[idx]
-                actual = self.state.sim.data.qpos[7 + idx]
+                # 從共享狀態讀取最新關節位置
+                actual = self.state.latest_joint_positions[idx]
                 self.joint_control_slider.set_value(target)
                 text = f"模式: 絕對 | 目標: {target:.2f} | 實際: {actual:.2f}"
             else:

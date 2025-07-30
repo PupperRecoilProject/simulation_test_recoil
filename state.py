@@ -53,6 +53,8 @@ class SimulationState:
     latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最終計算後要傳給致動器的控制指令
     latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3)) # 機器人軀幹的最新位置
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.])) # 機器人軀幹的最新姿態（四元數）
+    # 新增欄位：安全儲存最新的各關節角度，避免 UI 執行緒直接讀取 sim.data
+    latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
     display_page: int = 0 # 除錯資訊顯示的當前頁碼
     num_display_pages: int = 2 # 除錯資訊的總頁數
 
@@ -94,6 +96,7 @@ class SimulationState:
         self.latest_action_raw = np.zeros(self.config.num_motors) # 初始化原始動作向量
         self.latest_final_ctrl = np.zeros(self.config.num_motors) # 初始化最終控制向量
         self.manual_final_ctrl = np.zeros(self.config.num_motors) # 初始化手動控制向量
+        self.latest_joint_positions = np.zeros(self.config.num_motors) # 初始化關節位置副本
         log.info("✅ SimulationState 初始化完成 (含執行緒鎖)。")
 
     def reset_control_state(self, sim_time: float):
