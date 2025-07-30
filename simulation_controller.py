@@ -10,6 +10,7 @@ from logger import log
 import mujoco
 import numpy as np
 import glfw  # 用於程式化關閉視窗
+from mock_simulation import MockSimulation
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from state import SimulationState
@@ -56,14 +57,23 @@ class SimulationController:
 
     def run(self) -> None:
         """執行緒進入點：負責處理所有請求並運行模擬。"""
-        self.sim.initialize_window_and_context()
-        self._initialize_simulation_state()
+        is_headless = isinstance(self.sim, MockSimulation)
+        if not is_headless:
+            self.sim.initialize_window_and_context()
+            self._initialize_simulation_state()
+        else:
+            print("[MOCK] Headless mode, skip window/context init.")
+            # 無頭模式僅需初始化狀態，不啟動視窗
+            self._initialize_simulation_state()
 
         while self._running.is_set():
             with self.state.lock:
                 shutdown_req = self.state.shutdown_requested
-            if self.sim.should_close() or shutdown_req:
-                if shutdown_req and not self.sim.should_close():
+            should_close = shutdown_req
+            if not is_headless:
+                should_close = should_close or self.sim.should_close()
+            if should_close:
+                if shutdown_req and not is_headless and not self.sim.should_close():
                     log.info("偵測到全域關閉請求，正在關閉模擬視窗...")
                     glfw.set_window_should_close(self.sim.window, 1)
                 self._running.clear()

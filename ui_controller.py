@@ -403,8 +403,17 @@ class UIController:
 
     def _on_terrain_change(self, event):
         """當地形下拉選單改變時，更新後端狀態並生成新的地形。"""
+        # 有些情況(如初始化)會傳入 None，此時直接忽略
+        if event.value is None:
+            return
+
         terrain_name = event.value
         terrain_manager = self.state.terrain_manager_ref
+
+        # 若 terrain_manager 在無頭模式下可能為 mock，需先檢查屬性
+        if not hasattr(terrain_manager, 'single_terrain_names'):
+            return
+
         with self.state.lock:
             # 若選擇與目前狀態相同，則不進行任何操作
             current_real = terrain_manager.get_current_terrain_name_simple(self.state)
@@ -413,15 +422,18 @@ class UIController:
 
             if terrain_name == 'INFINITE':
                 self.state.terrain_mode = 'INFINITE'
-                # 切回無限模式時需要重新產生地形
-                terrain_manager.reset()
+                if terrain_manager.is_functional:
+                    terrain_manager.reset()
             else:
                 self.state.terrain_mode = 'SINGLE'
-                self.state.single_terrain_index = terrain_manager.single_terrain_names.index(terrain_name)
-                terrain_manager.set_single_terrain(terrain_name)
+                if terrain_name in terrain_manager.single_terrain_names:
+                    self.state.single_terrain_index = terrain_manager.single_terrain_names.index(terrain_name)
+                if terrain_manager.is_functional:
+                    terrain_manager.set_single_terrain(terrain_name)
 
-            # 請求硬重置以適應新的地形
-            self.state.hard_reset_requested = True
+            if terrain_manager.is_functional:
+                # 請求硬重置以適應新的地形
+                self.state.hard_reset_requested = True
 
     def _send_serial_command(self):
         command_text = self.serial_command_buffer.value
