@@ -3,6 +3,7 @@ import mujoco
 import glfw
 import sys
 import numpy as np
+import time  # 新增: 提供初始化延遲
 from typing import TYPE_CHECKING, Optional
 
 from config import AppConfig
@@ -87,7 +88,13 @@ class Simulation:
         if self.keyboard_handler:
             self.keyboard_handler.register_callbacks(self.window)
 
-        print("✅ GLFW 視窗與渲染上下文在模擬執行緒中初始化完成。")
+        # 初始化完成後稍作延遲並處理幾次事件，避免與其他視窗系統衝突
+        time.sleep(0.1)
+        for _ in range(3):
+            glfw.poll_events()
+            time.sleep(0.01)
+
+        print("✅ GLFW 視窗與渲染上下文在模擬執行緒中初始化完成 (已穩定)。")
 
     def _mouse_button_callback(self, window, button, action, mods):
         if button == glfw.MOUSE_BUTTON_LEFT:
