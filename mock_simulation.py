@@ -53,3 +53,40 @@ class MockSimulation:
 
     def close(self):
         print("[MOCK] close() called. Shutting down.")
+
+class MockFloatingController:
+    """假浮空控制器，僅提供介面"""
+    def __init__(self, *args, **kwargs):
+        print("FloatingController disabled in mock mode")
+    def enable(self, *args, **kwargs):
+        pass
+    def disable(self, *args, **kwargs):
+        pass
+
+class MockTerrainManager:
+    """假地形管理器"""
+    def __init__(self, *args, **kwargs):
+        print("TerrainManager disabled in mock mode")
+        self.is_functional = False
+    def get_current_terrain_name_simple(self, state):
+        return "N/A"
+    def update(self, *args, **kwargs):
+        pass
+
+class MockObservationBuilder:
+    """假觀察建構器"""
+    def __init__(self, *args, **kwargs):
+        self._component_dims = {}
+        print("ObservationBuilder disabled in mock mode")
+    def get_observation(self, *args, **kwargs):
+        return np.array([])
+    def get_active_recipe(self):
+        return []
+    @property
+    def component_dims(self):
+        return self._component_dims
+    @component_dims.setter
+    def component_dims(self, val):
+        self._component_dims = val
+    def set_recipe(self, recipe):
+        pass
