@@ -172,38 +172,78 @@ class UIController:
                 ui.button('Send', on_click=self._send_serial_command)
 
     def update_ui_elements(self):
+        """更新所有 UI 元件，先鎖定狀態取得資料，再在鎖外更新。"""
+        # --- 在鎖內快速複製所有需要的狀態值 ---
         with self.state.lock:
-            self.status_labels['mode'].set_text(f"模式: {self.state.control_mode}")
-            self.status_labels['input_mode'].set_text(f"輸入: {self.state.input_mode}")
-            self.status_labels['sim_time'].set_text(f"時間: {self.state.sim.data.time:.2f}s" if self.state.sim else "時間: N/A")
-            self.status_labels['serial_status'].set_text('序列埠: Connected' if self.state.serial_is_connected else '序列埠: Disconnected')
-            self.status_labels['gamepad_status'].set_text('搖桿: Connected' if self.state.gamepad_is_connected else '搖桿: Disconnected')
-            if self.state.control_mode == 'HARDWARE_MODE':
-                self.status_labels['hardware_ai'].set_text('硬體AI: Active' if self.state.hardware_ai_is_active else '硬體AI: Disabled')
-            else:
-                self.status_labels['hardware_ai'].set_text('硬體AI: N/A')
-            cmd = self.state.command
-            self.status_labels['command'].set_text(f"vy: {cmd[0]:.2f}, vx: {cmd[1]:.2f}, wz: {cmd[2]:.2f}")
-            pos = self.state.latest_pos
-            self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
-            # 若處於關節相關模式，更新面板顯示
-            if self.state.control_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
-                self._update_joint_control_display()
+            mode = self.state.control_mode
+            input_mode = self.state.input_mode
+            sim_time = self.state.sim.data.time if self.state.sim else None
+            serial_connected = self.state.serial_is_connected
+            gamepad_connected = self.state.gamepad_is_connected
+            hw_ai_active = self.state.hardware_ai_is_active
+            command = self.state.command.copy()
+            pos = self.state.latest_pos.copy()
+
             pm = self.policy_manager
-            if pm.is_transitioning:
-                alpha_percent = pm.transition_alpha * 100
-                policy_text = f"策略: Blending {pm.source_policy_name} -> {pm.target_policy_name} ({alpha_percent:.0f}%)"
+            transitioning = pm.is_transitioning
+            alpha = pm.transition_alpha
+            src_policy = pm.source_policy_name
+            tgt_policy = pm.target_policy_name
+            primary_policy = pm.primary_policy_name
+
+            terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
+
+            joint_info = None
+            if mode == "JOINT_TEST":
+                idx = self.state.joint_test_index
+                tgt = self.state.joint_test_offsets[idx]
+                actual = self.state.latest_joint_positions[idx] - self.state.sim.default_pose[idx]
+                joint_info = ("offset", tgt, actual)
+            elif mode == "MANUAL_CTRL":
+                idx = self.state.manual_ctrl_index
+                tgt = self.state.manual_final_ctrl[idx]
+                actual = self.state.latest_joint_positions[idx]
+                joint_info = ("absolute", tgt, actual)
+
+        # --- 在鎖外更新 UI 元件 ---
+        self.status_labels['mode'].set_text(f"模式: {mode}")
+        self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
+        if sim_time is not None:
+            self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s")
+        else:
+            self.status_labels['sim_time'].set_text("時間: N/A")
+        self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
+        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Disconnected')
+        if mode == 'HARDWARE_MODE':
+            self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled')
+        else:
+            self.status_labels['hardware_ai'].set_text('硬體AI: N/A')
+        self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
+        self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
+
+        if transitioning:
+            policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)"
+        else:
+            policy_text = f"策略: {primary_policy}"
+        self.status_labels['policy_status'].set_text(policy_text)
+        self.status_labels['policy_selector'].set_value(primary_policy)
+
+        # 更新地形下拉選單狀態
+        if self.ui_terrain_selection != terrain_name:
+            self.ui_terrain_selection = terrain_name
+
+        # 更新關節控制資訊
+        if joint_info and self.joint_control_slider is not None:
+            mode_type, tgt, actual = joint_info
+            self.joint_control_slider.set_value(tgt)
+            if mode_type == "offset":
+                text = f"模式: 偏移 | 目標: {tgt:.2f} | 實際: {actual:.2f}"
             else:
-                policy_text = f"策略: {pm.primary_policy_name}"
-            self.status_labels['policy_status'].set_text(policy_text)
-            self.status_labels['policy_selector'].set_value(pm.primary_policy_name)
+                text = f"模式: 絕對 | 目標: {tgt:.2f} | 實際: {actual:.2f}"
+            self.status_labels['joint_info'].set_text(text)
 
-            # 從後端狀態更新本地地形選擇值，但不直接 set_value
-            current_terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
-            if self.ui_terrain_selection != current_terrain_name:
-                self.ui_terrain_selection = current_terrain_name
-
-            self._update_onnx_labels()
+        # 更新 ONNX 標籤與日誌
+        self._update_onnx_labels()
         log_content = "\n".join(log_queue)
         self.log_area.set_value(log_content)
 
@@ -312,28 +352,6 @@ class UIController:
         self.state.clear_command()
         self.state.toggle_input_mode("KEYBOARD")
 
-    def _update_joint_control_display(self):
-        """根據當前模式更新滑桿與資訊標籤顯示。"""
-        if self.joint_control_slider is None:
-            return
-        with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
-                idx = self.state.joint_test_index
-                target = self.state.joint_test_offsets[idx]
-                # 從共享狀態讀取最新關節位置，避免直接存取 sim.data
-                actual = self.state.latest_joint_positions[idx] - self.state.sim.default_pose[idx]
-                self.joint_control_slider.set_value(target)
-                text = f"模式: 偏移 | 目標: {target:.2f} | 實際: {actual:.2f}"
-            elif self.state.control_mode == "MANUAL_CTRL":
-                idx = self.state.manual_ctrl_index
-                target = self.state.manual_final_ctrl[idx]
-                # 從共享狀態讀取最新關節位置
-                actual = self.state.latest_joint_positions[idx]
-                self.joint_control_slider.set_value(target)
-                text = f"模式: 絕對 | 目標: {target:.2f} | 實際: {actual:.2f}"
-            else:
-                text = ""
-        self.status_labels['joint_info'].set_text(text)
 
     def _on_terrain_change(self, event):
         """當地形下拉選單改變時，更新後端狀態並生成新的地形。"""
