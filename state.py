@@ -36,7 +36,6 @@ class SimulationState:
     tuning_params: TuningParams = field(init=False)
     
     hard_reset_requested: bool = False # 硬重置請求旗標
-    next_reset_z_offset: float | None = None  # 下一次硬重置時要使用的高度偏移，由 UI 控制
     soft_reset_requested: bool = False # 軟重置請求旗標
 
     control_timer: float = 0.0 # 控制迴圈的計時器

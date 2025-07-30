@@ -130,12 +130,10 @@ class SimulationController:
             pending_mode = self.state.control_mode_pending
             hard_reset = self.state.hard_reset_requested
             soft_reset = self.state.soft_reset_requested
-            reset_offset = self.state.next_reset_z_offset
             if pending_mode:
                 self.state.control_mode_pending = None
             if hard_reset:
                 self.state.hard_reset_requested = False
-                self.state.next_reset_z_offset = None
             if soft_reset:
                 self.state.soft_reset_requested = False
 
@@ -145,10 +143,7 @@ class SimulationController:
         # 無頭模式下沒有真實模擬，跳過重置流程
         if not isinstance(self.sim, MockSimulation):
             if hard_reset:
-                if reset_offset is not None:
-                    self.hard_reset(start_z_offset=reset_offset)
-                else:
-                    self.hard_reset()
+                self.hard_reset()
             if soft_reset:
                 self.soft_reset()
 
@@ -244,12 +239,16 @@ class SimulationController:
             self.thread.join(timeout=1)
 
     # ------------------------------------------------------------------
-    def hard_reset(self, start_z_offset: float = 0.3) -> None:
-        """Perform a full robot reset at a given height offset.
+    def hard_reset(self) -> None:
+        """根據目前地形自動決定適當高度並執行硬重置。"""
+        with self.state.lock:
+            # 取得當前地形名稱以判斷重置高度
+            terrain_name = self.terrain_manager.get_current_terrain_name_simple(self.state)
 
-        :param start_z_offset: 放置機器人時離地面的高度偏移值，預設 0.3 公尺
-        """
-        print(f"\n--- 正在執行機器人硬重置 (起始高度偏移: {start_z_offset}m) ---")
+        difficult = ["Pyramid", "Stepped Pyramid"]
+        start_z_offset = 1.0 if terrain_name in difficult else 0.3
+
+        print(f"\n--- 正在執行機器人硬重置 (地形: {terrain_name}, 高度偏移: {start_z_offset}m) ---")
         # 【核心修正】硬重置僅重置機器人狀態，不再重置地形
 
         with self.state.lock:
