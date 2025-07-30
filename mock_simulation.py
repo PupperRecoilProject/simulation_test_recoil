@@ -68,6 +68,8 @@ class MockTerrainManager:
     def __init__(self, *args, **kwargs):
         print("TerrainManager disabled in mock mode")
         self.is_functional = False
+        # 在無頭模式下提供空的地形列表以供 UI 使用
+        self.single_terrain_names = []
     def get_current_terrain_name_simple(self, state):
         return "N/A"
     def update(self, *args, **kwargs):
