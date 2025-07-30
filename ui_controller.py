@@ -123,9 +123,15 @@ class UIController:
                 0: 'FR_Abduction', 1: 'FR_Hip', 2: 'FR_Knee', 3: 'FL_Abduction', 4: 'FL_Hip', 5: 'FL_Knee',
                 6: 'RR_Abduction', 7: 'RR_Hip', 8: 'RR_Knee', 9: 'RL_Abduction', 10: 'RL_Hip', 11: 'RL_Knee'
             }
-            ui.select(joint_names, label='選擇關節', on_change=lambda e: self._set_joint_index(int(e.value)))
+            # 保存選擇框以便之後更新數值
+            self.joint_selector = ui.select(
+                joint_names,
+                label='選擇關節',
+                on_change=lambda e: self._set_joint_index(int(e.value))
+            )
+
             self.status_labels['joint_info'] = ui.label('')
-            # 可以精確拖曳的滑桿
+            # 滑桿在使用者拖動時會觸發回呼，其值將在 update_ui_elements 中同步
             self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01, on_change=self._on_joint_slider_change).props('label-always')
             with ui.row():
                 ui.button('-0.1', on_click=lambda: self._adjust_joint_value(-0.1)).props('dense')
@@ -235,7 +241,11 @@ class UIController:
         # 更新關節控制資訊
         if joint_info and self.joint_control_slider is not None:
             mode_type, tgt, actual = joint_info
-            self.joint_control_slider.set_value(tgt)
+            # 依據模式選擇正確的索引
+            self.joint_selector.set_value(self.state.joint_test_index if mode_type == "offset" else self.state.manual_ctrl_index)
+            # 若滑桿值與目標值差異較大，再更新以避免回圈觸發
+            if abs(self.joint_control_slider.value - tgt) > 1e-3:
+                self.joint_control_slider.set_value(tgt)
             if mode_type == "offset":
                 text = f"模式: 偏移 | 目標: {tgt:.2f} | 實際: {actual:.2f}"
             else:
@@ -328,13 +338,7 @@ class UIController:
                 else:
                     self.state.manual_final_ctrl[idx] += value
 
-        # 更新滑桿顯示值
-        if self.joint_control_slider is not None:
-            with self.state.lock:
-                if self.state.control_mode == "JOINT_TEST":
-                    self.joint_control_slider.set_value(self.state.joint_test_offsets[self.state.joint_test_index])
-                elif self.state.control_mode == "MANUAL_CTRL":
-                    self.joint_control_slider.set_value(self.state.manual_final_ctrl[self.state.manual_ctrl_index])
+        # 滑桿的實際更新由 update_ui_elements 進行，避免鎖重複取得
 
     def _update_command_from_joystick(self, event):
         """虛擬搖桿移動時的回呼函式，根據 x、y 更新指令。"""
