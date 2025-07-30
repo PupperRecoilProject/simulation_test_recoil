@@ -176,7 +176,10 @@ class UIController:
             ui.label('系統日誌與序列埠控制台').classes('text-lg')
             self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
             with ui.row().classes('w-full items-center'):
-                self.serial_command_buffer = ui.input(label='Serial Command').props('outlined dense').classes('flex-grow')
+                # 輸入框綁定 Enter 鍵事件，按下 Enter 即送出指令
+                self.serial_command_buffer = ui.input(label='Serial Command')\
+                    .props('outlined dense').classes('flex-grow')\
+                    .on('keydown.enter', self._send_serial_command)
                 ui.button('Send', on_click=self._send_serial_command)
 
     def update_ui_elements(self):
