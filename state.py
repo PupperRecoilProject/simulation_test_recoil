@@ -91,6 +91,8 @@ class SimulationState:
     single_step_mode: bool = False # 標記是否處於單步模擬模式
     execute_one_step: bool = False # 在單步模式下，請求執行下一步的旗標
 
+    shutdown_requested: bool = False  # 新增：UI 請求程式結束
+
     def __post_init__(self):
         """在初始化後，根據設定檔設定初始值。"""
         self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__) # 從設定檔初始化調校參數

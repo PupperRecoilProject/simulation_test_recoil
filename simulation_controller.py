@@ -9,6 +9,7 @@ from logger import log
 
 import mujoco
 import numpy as np
+import glfw  # 用於程式化關閉視窗
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from state import SimulationState
@@ -56,7 +57,12 @@ class SimulationController:
         self._initialize_simulation_state()
 
         while self._running.is_set():
-            if self.sim.should_close():
+            with self.state.lock:
+                shutdown_req = self.state.shutdown_requested
+            if self.sim.should_close() or shutdown_req:
+                if shutdown_req and not self.sim.should_close():
+                    log.info("偵測到全域關閉請求，正在關閉模擬視窗...")
+                    glfw.set_window_should_close(self.sim.window, 1)
                 self._running.clear()
                 from nicegui import app
                 app.shutdown()

@@ -75,8 +75,8 @@ class UIController:
             with ui.row():
                 ui.button('軟重置 (X)', on_click=lambda: self._request_flag_change('soft_reset_requested'))
                 ui.button('硬重置 (R)', on_click=lambda: self._request_flag_change('hard_reset_requested'))
-                # 新增退出按鈕，直接呼叫 NiceGUI 的 app.shutdown
-                ui.button('退出程式', on_click=app.shutdown, color='red')
+                # 新增退出按鈕，透過狀態旗標通知模擬執行緒
+                ui.button('退出程式', on_click=self._request_shutdown, color='red')
 
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
@@ -325,6 +325,12 @@ class UIController:
             is_connected = self.xbox_handler.scan_and_connect()
             with self.state.lock:
                 self.state.gamepad_is_connected = is_connected
+
+    def _request_shutdown(self) -> None:
+        """請求關閉程式，由模擬執行緒處理"""
+        log.info("UI 請求關閉程式")
+        with self.state.lock:
+            self.state.shutdown_requested = True
 
     def _set_joint_index(self, index: int):
         """設定目前選中的關節索引。"""
