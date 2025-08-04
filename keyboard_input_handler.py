@@ -1,10 +1,24 @@
-# keyboard_input_handler.py
 try:
     import glfw
-except ImportError:  # 無頭環境可能沒有安裝 glfw
+except ImportError:
     glfw = None
 from state import SimulationState
 from logger import log
+from event_system import (
+    event_bus,
+    EVENT_MODE_CHANGE_REQUESTED,
+    EVENT_SIMULATION_RESET_REQUESTED,
+    EVENT_SHUTDOWN_REQUESTED,
+    EVENT_TUNING_PARAM_ADJUSTED,
+    EVENT_TUNING_PARAM_SELECT_REQUESTED,
+    EVENT_INPUT_MODE_CHANGE_REQUESTED,
+    EVENT_DEVICE_CONNECT_REQUESTED,
+    EVENT_UI_PAGE_CHANGE_REQUESTED,
+    EVENT_POLICY_CHANGE_REQUESTED,
+    EVENT_TERRAIN_CHANGE_REQUESTED,
+    EVENT_COMMAND_UPDATED,
+)
+
 
 class KeyboardInputHandler:
     """處理所有鍵盤輸入事件，並根據當前模式進行分派。"""
@@ -12,8 +26,7 @@ class KeyboardInputHandler:
         """初始化函式，儲存必要的物件參考。"""
         self.state = state # 全域狀態的參考
         self.config = state.config # 設定檔的參考
-        self.serial_comm_ref = state.serial_communicator_ref # 序列埠通訊器的參考
-        self.xbox_handler = xbox_handler # Xbox 搖桿處理器的參考
+        # [修改] 移除不再直接使用的 serial_comm_ref 和 xbox_handler
         self.terrain_manager = terrain_manager # 地形管理器的參考
         self.param_keys = ['kp', 'kd', 'action_scale', 'bias'] # 可調參數的鍵名列表
         self.num_params = len(self.param_keys) # 可調參數的數量
@@ -33,32 +46,38 @@ class KeyboardInputHandler:
             self.state.serial_command_buffer += chr(codepoint)
 
     def key_callback(self, window, key, scancode, action, mods):
-        """【最終重構】處理所有按鍵事件，為所有專用模式建立壁壘。"""
-        # --- 模式壁壘邏輯：根據當前模式，分派給不同的處理函式 ---
-        if self.state.control_mode == "SERIAL_MODE": # 如果是序列埠模式
-            self.handle_serial_mode_keys(key, action) # 交給序列埠模式處理器
-            return # 處理完畢，立即返回
+        """處理所有按鍵事件，為所有專用模式建立壁壘。"""
+        # 根據當前模式，分派給不同的處理函式
+        if self.state.control_mode == "SERIAL_MODE":
+            self.handle_serial_mode_keys(key, action)
+            return
 
-        if self.state.control_mode == "JOINT_TEST": # 如果是關節測試模式
-            self.handle_joint_test_mode_keys(key, action) # 交給關節測試模式處理器
-            return # 處理完畢，立即返回
+        if self.state.control_mode == "JOINT_TEST":
+            self.handle_joint_test_mode_keys(key, action)
+            return
 
-        if self.state.control_mode == "MANUAL_CTRL": # 如果是手動控制模式
-            self.handle_manual_ctrl_mode_keys(key, action) # 交給手動模式處理器
-            return # 處理完畢，立即返回
+        if self.state.control_mode == "MANUAL_CTRL":
+            self.handle_manual_ctrl_mode_keys(key, action)
+            return
         
-        # --- 如果不在任何專用模式中，則執行通用和預設模式的按鍵處理 ---
+        # 如果不在任何專用模式中，則執行通用和預設模式的按鍵處理
+        # [修改] 將 window 參數傳遞下去
         self.handle_global_and_default_keys(window, key, action)
 
     def handle_serial_mode_keys(self, key, action):
         """專門處理序列埠模式下的按鍵。"""
-        if key == glfw.KEY_GRAVE_ACCENT and action == glfw.PRESS:
-            self.state.set_control_mode(self.state.previous_control_mode)
-            return
+        if action == glfw.PRESS:
+            if key == glfw.KEY_GRAVE_ACCENT:
+                # [修改] 發布模式切換請求，目標是返回上一個模式
+                event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode=self.state.previous_control_mode)
+                return
+        
         if action in [glfw.PRESS, glfw.REPEAT]:
             if key == glfw.KEY_ENTER:
-                log.info(f"[UI > Serial]: {self.state.serial_command_buffer}")
-                self.serial_comm_ref.send_command(self.state.serial_command_buffer)
+                # [修改] 發布序列埠指令發送請求
+                # 注意：這裡依然需要直接讀取 serial_command_buffer，因為它是純UI狀態
+                # 更徹底的方案是也將 buffer 內容通過事件傳遞
+                event_bus.publish("request.serial_command_send", command=self.state.serial_command_buffer)
                 self.state.serial_command_buffer = ""
             elif key == glfw.KEY_BACKSPACE:
                 self.state.serial_command_buffer = self.state.serial_command_buffer[:-1]
@@ -100,66 +119,78 @@ class KeyboardInputHandler:
             
     def handle_global_and_default_keys(self, window, key, action):
         """處理所有非專用模式下的全域快捷鍵和預設控制。"""
+        # --- 只在按鍵按下的瞬間觸發一次的事件 ---
         if action == glfw.PRESS:
-            # 【智慧進入】按下 `~` 鍵進入序列埠模式。進入前的模式會被 state.set_control_mode 自動記錄
+            # --- 模式切換 ---
             if key == glfw.KEY_GRAVE_ACCENT:
-                self.state.set_control_mode("SERIAL_MODE")
+                event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="SERIAL_MODE")
                 return
 
-            # --- 全域快捷鍵 ---
-            if key == glfw.KEY_SPACE: self.state.single_step_mode = not self.state.single_step_mode; print(f"\n--- SIMULATION {'PAUSED' if self.state.single_step_mode else 'PLAYING'} ---"); return
-            if self.state.single_step_mode and key == glfw.KEY_N: self.state.execute_one_step = True; return
-            if key == glfw.KEY_ESCAPE: glfw.set_window_should_close(window, 1); return
-            if key == glfw.KEY_R: self.state.hard_reset_requested = True; return
-            if key == glfw.KEY_X: self.state.soft_reset_requested = True; return
+            # --- 全域快捷鍵 (發布事件) ---
+            if key == glfw.KEY_ESCAPE:
+                event_bus.publish(EVENT_SHUTDOWN_REQUESTED)
+                return
+            if key == glfw.KEY_R:
+                event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard")
+                return
+            if key == glfw.KEY_X:
+                event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft")
+                return
             if key == glfw.KEY_Y:
+                # 這個邏輯與 terrain_manager 強耦合，暫時保留直接呼叫，但理想情況也應發布事件
                 if self.state.terrain_mode == "INFINITE":
                     self.terrain_manager.regenerate_terrain_and_adjust_robot(self.state.latest_pos)
                 else:
                     print("⚠️ 'Y'鍵 (重生地形) 只在無限地形模式下有效。")
                 return
-            if key == glfw.KEY_P: self.terrain_manager.save_hfield_to_png(); return
-            if key == glfw.KEY_TAB: self.state.display_page = (self.state.display_page + 1) % self.state.num_display_pages; return
-            if key == glfw.KEY_M: self.state.toggle_input_mode("GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"); return
-            if key == glfw.KEY_U: self.state.serial_is_connected = self.serial_comm_ref.scan_and_connect(); return
-            if key == glfw.KEY_J: self.state.gamepad_is_connected = self.xbox_handler.scan_and_connect(); return
+            if key == glfw.KEY_P:
+                self.terrain_manager.save_hfield_to_png()
+                return
             
-            # 模式切換等功能已移至 GUI，保留鍵盤僅做基礎操作
+            # --- UI/輸入 狀態切換 ---
+            if key == glfw.KEY_TAB:
+                event_bus.publish(EVENT_UI_PAGE_CHANGE_REQUESTED, direction=1)
+                return
+            if key == glfw.KEY_M:
+                new_mode = "GAMEPAD" if self.state.input_mode == "KEYBOARD" else "KEYBOARD"
+                event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode=new_mode)
+                return
+            
+            # --- 設備連接請求 ---
+            if key == glfw.KEY_U:
+                event_bus.publish(EVENT_DEVICE_CONNECT_REQUESTED, device="serial")
+                return
+            if key == glfw.KEY_J:
+                event_bus.publish(EVENT_DEVICE_CONNECT_REQUESTED, device="gamepad")
+                return
 
         # --- 長按事件 (重複觸發) ---
         if action in [glfw.PRESS, glfw.REPEAT]:
-            step = self.config.keyboard_velocity_adjust_step
-            with self.state.lock:
-                if key == glfw.KEY_Q: 
-                    self.state.command[2] += step
-                    return
-                elif key == glfw.KEY_E:
-                    self.state.command[2] -= step
-                    return
-                elif key == glfw.KEY_C:
-                    self.state.clear_command()
-                    return
-
-            if self.state.input_mode != "KEYBOARD":
-                return
-
-            # 參數調整
-            if key == glfw.KEY_LEFT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index - 1) % self.num_params
-            elif key == glfw.KEY_RIGHT_BRACKET: self.state.tuning_param_index = (self.state.tuning_param_index + 1) % self.num_params
-            elif key == glfw.KEY_UP or key == glfw.KEY_DOWN:
-                param_to_adjust = self.param_keys[self.state.tuning_param_index]
-                step = self.config.param_adjust_steps.get(param_to_adjust, 0.1)
-                current_value = getattr(self.state.tuning_params, param_to_adjust)
-                direction = 1 if key == glfw.KEY_UP else -1
-                setattr(self.state.tuning_params, param_to_adjust, current_value + step * direction)
-                self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
-                self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
-                self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
+            # --- 參數調整 ---
+            # 選擇要調整的參數
+            if key == glfw.KEY_LEFT_BRACKET:
+                event_bus.publish(EVENT_TUNING_PARAM_SELECT_REQUESTED, direction=-1)
+            elif key == glfw.KEY_RIGHT_BRACKET:
+                event_bus.publish(EVENT_TUNING_PARAM_SELECT_REQUESTED, direction=1)
+            # 調整選中參數的值
+            elif key == glfw.KEY_UP:
+                event_bus.publish(EVENT_TUNING_PARAM_ADJUSTED, direction=1)
+            elif key == glfw.KEY_DOWN:
+                event_bus.publish(EVENT_TUNING_PARAM_ADJUSTED, direction=-1)
             
-            # 移動指令
+            # --- 移動指令 (直接修改 state.command 是可接受的，因為有專門的 COMMAND_UPDATED 事件) ---
+            # 為了與搖桿的事件驅動方式統一，我們也將其改為發布事件
             step = self.config.keyboard_velocity_adjust_step
-            if key == glfw.KEY_W: self.state.command[1] += step
-            elif key == glfw.KEY_S: self.state.command[1] -= step
-            elif key == glfw.KEY_A: self.state.command[0] += step
-            elif key == glfw.KEY_D: self.state.command[0] -= step
+            cmd = self.state.command.copy() # 取得當前指令作為基礎
+            
+            if key == glfw.KEY_W: cmd[1] += step
+            elif key == glfw.KEY_S: cmd[1] -= step
+            elif key == glfw.KEY_A: cmd[0] += step
+            elif key == glfw.KEY_D: cmd[0] -= step
+            elif key == glfw.KEY_Q: cmd[2] += step
+            elif key == glfw.KEY_E: cmd[2] -= step
+            elif key == glfw.KEY_C: cmd.fill(0.0)
+            
+            # 發布指令更新事件
+            event_bus.publish(EVENT_COMMAND_UPDATED, command=cmd)
             

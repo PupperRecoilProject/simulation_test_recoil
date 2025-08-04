@@ -1,5 +1,3 @@
-"""Run MuJoCo simulation in a background thread."""
-
 from __future__ import annotations
 
 import threading
@@ -10,12 +8,23 @@ from logger import log
 import numpy as np
 from mock_simulation import MockSimulation
 
+from event_system import (
+    event_bus,
+    EVENT_MODE_CHANGE_REQUESTED,
+    EVENT_SIMULATION_RESET_REQUESTED,
+    EVENT_TUNING_PARAM_ADJUSTED,
+    EVENT_TUNING_PARAM_SELECT_REQUESTED,
+    EVENT_INPUT_MODE_CHANGE_REQUESTED,
+    EVENT_DEVICE_CONNECT_REQUESTED,
+    # ... 根據需要導入其他事件
+)
+
 try:
     import mujoco
-except ImportError:  # 無頭環境可能沒有安裝
+except ImportError:
     mujoco = None
 
-if TYPE_CHECKING:  # pragma: no cover - type hints
+if TYPE_CHECKING:
     from state import SimulationState
 
 
@@ -32,14 +41,27 @@ class SimulationController:
         self.floating_controller = state.floating_controller_ref
         self.xbox_handler = state.xbox_handler_ref
         self.hardware_controller = state.hardware_controller_ref
+        self.serial_comm = state.serial_communicator_ref # 直接獲取 serial_communicator 的參考
 
         self._running = threading.Event()
         self.thread: threading.Thread | None = None
 
-        # 追蹤手動模式下懸浮是否已啟用
-        self._manual_float_active = False
+        self._manual_float_active = False        # 追蹤手動模式下懸浮是否已啟用
+        self._subscribe_to_events()        # 訂閱所有來自輸入層的請求事件
 
         # 初始化將在執行緒啟動後進行
+
+    # ============================ 事件訂閱輔助函式 ============================
+    def _subscribe_to_events(self):
+        """將所有事件訂閱邏輯集中到此處。"""
+        event_bus.subscribe(EVENT_MODE_CHANGE_REQUESTED, self.on_mode_change_requested)
+        event_bus.subscribe(EVENT_SIMULATION_RESET_REQUESTED, self.on_simulation_reset_requested)
+        event_bus.subscribe(EVENT_TUNING_PARAM_ADJUSTED, self.on_tuning_param_adjusted)
+        event_bus.subscribe(EVENT_TUNING_PARAM_SELECT_REQUESTED, self.on_tuning_param_select_requested)
+        event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested)
+        event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested)
+        # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
+        log.info("SimulationController 已訂閱所有核心請求事件。")
 
     # ------------------------------------------------------------------
     def _initialize_simulation_state(self) -> None:
@@ -62,6 +84,7 @@ class SimulationController:
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
+    # ============================ 主要運行 ============================
     def run(self) -> None:
         """執行緒進入點：負責處理所有請求並運行模擬。"""
         is_headless = isinstance(self.sim, MockSimulation)
@@ -89,7 +112,7 @@ class SimulationController:
                 continue
 
             # 1) 先處理所有待辦請求
-            self.process_requests()
+            self.process_pending_mode_change()
 
             # 2) 讀取必要狀態
             with self.state.lock:
@@ -124,28 +147,79 @@ class SimulationController:
 
         print("模擬執行緒已停止。")
 
-    def process_requests(self) -> None:
-        """檢查並處理所有待處理的狀態變更請求。"""
+    # ============================ 事件回呼處理函式 ============================
+    def on_mode_change_requested(self, mode: str):
+        """處理模式切換請求。"""
+        log.info(f"接收到模式切換請求: {mode}")
+        with self.state.lock:
+            # 使用 pending 標誌來確保模式切換在主模擬執行緒中安全地進行
+            self.state.control_mode_pending = mode
+            
+    def on_simulation_reset_requested(self, type: str):
+        """處理模擬重置請求。"""
+        log.info(f"接收到 '{type}' 重置請求。")
+        # 直接在事件回呼中執行重置，因為它們被設計為可以在模擬迴圈的任何點安全呼叫
+        if type == "hard":
+            self.hard_reset()
+        elif type == "soft":
+            self.soft_reset()
+
+    def on_tuning_param_select_requested(self, direction: int):
+        """處理切換當前調校參數的請求。"""
+        with self.state.lock:
+            num_params = len(self.state.policy_manager_ref.param_keys)
+            self.state.tuning_param_index = (self.state.tuning_param_index + direction) % num_params
+            log.debug(f"調校參數索引已切換至: {self.state.tuning_param_index}")
+            
+    def on_tuning_param_adjusted(self, direction: int, value: float = None, param_name: str = None):
+        """處理調整參數值的請求。"""
+        with self.state.lock:
+            if param_name is None:
+                param_keys = self.state.policy_manager_ref.param_keys
+                param_name = param_keys[self.state.tuning_param_index]
+
+            if value is not None: # 來自UI滑桿的絕對值設定
+                setattr(self.state.tuning_params, param_name, value)
+            elif direction is not None: # 來自鍵盤/搖桿的步進調整
+                step = self.config.param_adjust_steps.get(param_name, 0.1)
+                current_value = getattr(self.state.tuning_params, param_name)
+                new_value = current_value + step * direction
+                setattr(self.state.tuning_params, param_name, new_value)
+            
+            # 確保參數值在合理範圍內
+            self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
+            self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
+            self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
+            log.info(f"參數 '{param_name}' 已調整為: {getattr(self.state.tuning_params, param_name):.2f}")
+
+    def on_input_mode_change_requested(self, mode: str):
+        """處理輸入模式切換請求。"""
+        self.state.toggle_input_mode(mode)
+
+    def on_device_connect_requested(self, device: str):
+        """處理設備連接請求。"""
+        log.info(f"接收到連接 '{device}' 的請求...")
+        if device == "serial" and self.serial_comm:
+            is_connected = self.serial_comm.scan_and_connect()
+            with self.state.lock:
+                self.state.serial_is_connected = is_connected
+        elif device == "gamepad" and self.xbox_handler:
+            is_connected = self.xbox_handler.scan_and_connect()
+            with self.state.lock:
+                self.state.gamepad_is_connected = is_connected
+    # =========================================================================
+
+
+    def process_pending_mode_change(self) -> None:
+        """只處理待處理的模式切換請求。"""
         with self.state.lock:
             pending_mode = self.state.control_mode_pending
-            hard_reset = self.state.hard_reset_requested
-            soft_reset = self.state.soft_reset_requested
             if pending_mode:
                 self.state.control_mode_pending = None
-            if hard_reset:
-                self.state.hard_reset_requested = False
-            if soft_reset:
-                self.state.soft_reset_requested = False
 
         if pending_mode:
             self.handle_mode_change(self.state.control_mode, pending_mode)
 
-        # 無頭模式下沒有真實模擬，跳過重置流程
-        if not isinstance(self.sim, MockSimulation):
-            if hard_reset:
-                self.hard_reset()
-            if soft_reset:
-                self.soft_reset()
 
     def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
         """執行模式切換並處理硬體控制執行緒與模擬狀態。"""
@@ -178,6 +252,7 @@ class SimulationController:
             if self.hardware_controller.is_running:
                 log.info("派生執行緒以停止硬體控制器...")
                 threading.Thread(target=self.hardware_controller.stop_controller_threads, daemon=True).start()
+
 
     def update_derived_states_and_render(self, pos, terrain_mode) -> None:
         """更新衍生狀態並渲染場景。"""
@@ -232,11 +307,13 @@ class SimulationController:
                 break
             mujoco.mj_step(self.sim.model, self.sim.data)
 
+
     # ------------------------------------------------------------------
     def stop(self) -> None:
         self._running.clear()
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1)
+
 
     # ------------------------------------------------------------------
     def hard_reset(self) -> None:

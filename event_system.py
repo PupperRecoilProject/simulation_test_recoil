@@ -24,6 +24,18 @@ EVENT_SIMULATION_RESET_REQUESTED = "request.simulation_reset" # (包含 hard 和
 EVENT_SHUTDOWN_REQUESTED = "request.shutdown"
 EVENT_COMMAND_UPDATED = "request.command_updated"
 
+# 擴充的 UI/輸入 請求事件，用於取代直接修改 state 的舊有邏輯
+EVENT_TUNING_PARAM_ADJUSTED = "request.tuning_param_adjusted"  # 參數調校請求 {param_name: str, value?: float, direction?: int}
+EVENT_INPUT_MODE_CHANGE_REQUESTED = "request.input_mode_change" # 輸入模式切換請求 {mode: str}
+EVENT_DEVICE_CONNECT_REQUESTED = "request.device_connect"       # 設備連接請求 {device: str} (e.g., 'serial', 'gamepad')
+EVENT_UI_PAGE_CHANGE_REQUESTED = "request.ui_page_change"         # UI 顯示頁面切換請求 {direction: int}
+EVENT_TUNING_PARAM_SELECT_REQUESTED = "request.tuning_param_select" # 選擇下一個要調整的參數 {direction: int}
+EVENT_POLICY_CHANGE_REQUESTED = "request.policy_change"         # AI 策略模型切換請求 {policy_name: str}
+EVENT_TERRAIN_CHANGE_REQUESTED = "request.terrain_change"        # 地形模式/類型切換請求 {mode?: str, name?: str, index?: int}
+EVENT_MANUAL_FLOAT_TOGGLED = "request.manual_float_toggled"    # 手動模式下的懸浮開關請求 {is_floating: bool}
+EVENT_JOINT_SELECT_REQUESTED = "request.joint_select"           # 關節測試/手動模式下的關節選擇請求 {index: int}
+EVENT_JOINT_VALUE_ADJUSTED = "request.joint_value_adjusted"     # 關節測試/手動模式下的關節值調整請求 {value?: float, direction?: float, clear?: bool}
+
 
 # --- 通知事件 (Notification Events) ---
 # 由核心邏輯在完成某個動作後發出，用來通知UI或其他模組狀態已變更。
