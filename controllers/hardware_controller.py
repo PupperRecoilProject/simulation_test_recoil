@@ -145,29 +145,36 @@ class HardwareController:
             self._partial_line = parts
             return
         if len(parts) > EXPECTED_CSV_FIELDS:
-            with open("bad_lines.log", "a") as f:
+            # 使用 UTF-8 寫入，以避免 Windows 環境編碼錯誤
+            with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(f"LONG_LINE: {line}\n")
             parts = parts[:EXPECTED_CSV_FIELDS]
         try:
             crc_from_teensy = int(parts[-1]) & 0xFF
             float_values = [float(p) for p in parts[:-1]]
         except ValueError as e:
-            with open("bad_lines.log", "a") as f:
+            with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(f"PARSE_ERROR: {line} | {e}\n")
             with self.global_state.lock:
                 self.global_state.hardware.status_text = "Parse Error!"
             return
         if len(float_values) != 34:
-            with open("bad_lines.log", "a") as f:
+            with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(f"DIM_MISMATCH: {line}\n")
             with self.global_state.lock:
                 self.global_state.hardware.status_text = "Data dim mismatch!"
             return
         float_bytes = struct.pack('<' + 'f'*34, *float_values)
-        if _crc8(float_bytes) != crc_from_teensy:
+        calculated_crc = _crc8(float_bytes)
+        if calculated_crc != crc_from_teensy:
             with self.global_state.lock:
                 self.global_state.hardware.status_text = (
-                    f"CRC Error! PC:{_crc8(float_bytes)} != Teensy:{crc_from_teensy}")
+                    f"CRC Error! PC:{calculated_crc} != Teensy:{crc_from_teensy}")
+            # 紀錄 CRC 錯誤詳細資訊
+            with open("bad_lines.log", "a", encoding='utf-8') as f:
+                f.write(
+                    f"CRC_ERROR: {line} | PC_CRC:{calculated_crc} | TEENSY_CRC:{crc_from_teensy}\n"
+                )
             return
         data_vec = np.frombuffer(float_bytes, dtype=np.float32)
         with self._lock:
@@ -177,6 +184,7 @@ class HardwareController:
             self._raw_pitch = data_vec[9]
             self._raw_joint_positions[:] = data_vec[10:22]
             self._raw_joint_velocities[:] = data_vec[22:34]
+            # 成功通過 CRC 後才更新時間戳
             self._last_update_time = time.time()
             with self.global_state.lock:
                 self.global_state.hardware.status_text = "OK"
