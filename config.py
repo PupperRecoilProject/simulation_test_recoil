@@ -39,7 +39,7 @@ class AppConfig:
     keyboard_velocity_adjust_step: float
     gamepad_sensitivity: Dict[str, float]
     param_adjust_steps: Dict[str, float]
-
+    default_pose: List[float]  # 【新增】預設站姿
     initial_tuning_params: TuningParamsConfig
     floating_controller: FloatingControllerConfig
 
@@ -74,7 +74,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
         gamepad_sensitivity=config_data['gamepad_sensitivity'],
         param_adjust_steps=config_data['param_adjust_steps'],
-        
+
+        default_pose=config_data['default_pose'],  # 新增欄位
         initial_tuning_params=tuning_params,
         floating_controller=floating_config
     )

@@ -87,7 +87,6 @@ class SimulationState:
     
     hardware_is_connected: bool = False # 標記硬體控制器是否已成功啟動
     hardware_ai_is_active: bool = False # 標記硬體模式下的 AI 是否已啟用
-    hardware_status_text: str = "Not Connected" # 用於在 UI 上顯示的硬體狀態文字
 
     single_step_mode: bool = False # 標記是否處於單步模擬模式
     execute_one_step: bool = False # 在單步模式下，請求執行下一步的旗標
@@ -141,8 +140,8 @@ class SimulationState:
             if new_mode == "JOINT_TEST":
                 self.joint_test_offsets.fill(0.0)
             elif new_mode == "MANUAL_CTRL":
-                initial_pose = self.sim.default_pose.copy() if hasattr(self.sim, 'default_pose') else np.zeros(self.config.num_motors)
-                self.manual_final_ctrl[:] = initial_pose
+                # 直接從設定檔載入預設站姿
+                self.manual_final_ctrl[:] = np.array(self.config.default_pose)
 
             # 若從手動模式回到 AI 模式，重置 AI 狀態
             is_entering_ai = new_mode in ["WALKING", "FLOATING"]

@@ -42,7 +42,7 @@ def main():
     
     xbox_handler = XboxInputHandler(state)
 
-    obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, config)
     # 在無 GUI 版本中仍建立 DebugOverlay 以顯示文字資訊
     overlay = DebugOverlay()
 
@@ -133,19 +133,11 @@ def main():
             terrain_manager.update(state.latest_pos, state.terrain_mode)
 
         if state.control_mode == "HARDWARE_MODE":
-            if hw_controller.is_running:
-                with hw_controller.lock:
-                    t_since_update = time.time() - hw_controller.hw_state.last_update_time
-                    conn_status = f"Data Delay: {t_since_update:.2f}s" if t_since_update < 1.0 else "Data Timeout!"
-                    state.hardware_status_text = f"Connection Status: {conn_status}\n"
-                    state.hardware_status_text += f"LinVel: {np.array2string(hw_controller.hw_state.lin_vel_local, precision=2)}\n"
-                    state.hardware_status_text += f"Gyro: {np.array2string(hw_controller.hw_state.imu_gyro_radps, precision=2)}"
-            else:
-                state.hardware_status_text = "Hardware controller not running."
-        
+            # 硬體模式下，模擬器僅負責渲染，控制邏輯在硬體控制器執行緒中
+            pass
         elif state.control_mode == "SERIAL_MODE":
             pass
-        else: # 模擬模式 (WALKING, FLOATING, etc.)
+        else:  # 模擬模式 (WALKING, FLOATING, etc.)
             if state.single_step_mode: print("\n" + "="*20 + f" STEP AT TIME {sim.data.time:.4f} " + "="*20)
 
             onnx_input, action_final = policy_manager.get_action(state.command)
@@ -171,7 +163,7 @@ def main():
         sim.render(state)
 
     # --- 7. 程式結束，清理資源 ---
-    hw_controller.stop()
+    hw_controller.stop_controller_threads()
     sim.close()
     xbox_handler.close()
     serial_comm.close()
