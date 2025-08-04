@@ -6,10 +6,10 @@ from enum import Enum, auto
 import threading
 from typing import TYPE_CHECKING
 
+from utils.config import AppConfig
 from utils.logger import log
 
 if TYPE_CHECKING:
-    from utils.config import AppConfig
     from core.simulation import Simulation
 
 # ========================
@@ -85,6 +85,10 @@ class SimulationState:
     command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
     input_mode: str = "KEYBOARD"
+
+    # 地形相關設定 Terrain
+    terrain_mode: str = "INFINITE"            # 地形模式: 無限或單一
+    single_terrain_index: int = 0              # 單一地形索引
 
     # 手動控制相關
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
