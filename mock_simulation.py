@@ -30,7 +30,7 @@ class MockSimulation:
         self.torso_id = 1
         self._last_render_time = time.perf_counter()
 
-    def initialize_window_and_context(self):
+    def initialize_window_and_context(self, state=None):
         print("[MOCK] initialize_window_and_context() called. Doing nothing.")
 
     def register_callbacks(self, keyboard_handler):

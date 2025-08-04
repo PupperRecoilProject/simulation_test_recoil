@@ -44,7 +44,7 @@ def main():
 
     obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
     # 在無 GUI 版本中仍建立 DebugOverlay 以顯示文字資訊
-    overlay = DebugOverlay()
+    overlay = DebugOverlay(state)
 
     policy_manager = PolicyManager(config, obs_builder, overlay)
     state.policy_manager_ref = policy_manager
@@ -59,7 +59,7 @@ def main():
     # 先註冊回呼，待初始化視窗後會正式生效
     sim.register_callbacks(keyboard_handler)
     # 初始化 GLFW 視窗與渲染上下文
-    sim.initialize_window_and_context()
+    sim.initialize_window_and_context(state)
 
     # --- 4. 定義重置函式 ---
     def hard_reset():

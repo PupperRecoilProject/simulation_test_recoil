@@ -79,7 +79,7 @@ class SimulationState:
     sim_latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
     sim_latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     sim_latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    sim_latest_quat: np.ndarray = field(default_factory=lambda: np.array([1.,0.,0.,0.]))
+    sim_latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.], dtype=np.float32))
     sim_latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
 
     # 使用者命令與調校參數

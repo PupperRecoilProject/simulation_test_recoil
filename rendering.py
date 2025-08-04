@@ -9,19 +9,18 @@ if TYPE_CHECKING:
     from core.simulation import Simulation
 
 class DebugOverlay:
-    """
-    負責在 MuJoCo 視窗上渲染所有文字除錯資訊。
-    """
-    def __init__(self):
+    """負責在 MuJoCo 視窗上渲染文字除錯資訊。"""
+
+    def __init__(self, state: SimulationState):
         self.recipe: List[str] = []
         self.component_dims: Dict[str, int] = {}
-        
+
         self.display_pages_content = [
             ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'],
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
-        state_class_ref = SimulationState
-        state_class_ref.num_display_pages = len(self.display_pages_content)
+        # [修正] 直接設定實例的頁面數，避免僅更新類別屬性造成 1/1 顯示
+        state.num_display_pages = len(self.display_pages_content)
 
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要顯示的觀察配方。"""

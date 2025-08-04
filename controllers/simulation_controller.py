@@ -68,7 +68,7 @@ class SimulationController:
     def run(self) -> None:
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
-            self.sim.initialize_window_and_context()
+            self.sim.initialize_window_and_context(self.state)
             self._initialize_simulation_state()
 
         while self._running.is_set():

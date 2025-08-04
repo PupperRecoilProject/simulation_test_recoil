@@ -46,6 +46,7 @@ class XboxInputHandler:
 
             with self.state.lock:
                 if self.state.input_mode == "GAMEPAD":
+                    # 指令順序為 [vy, vx, wz]
                     self.state.command[0] = current_input['left_analog_x'] * self.config.gamepad_sensitivity['vy']
                     self.state.command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1
                     self.state.command[2] = current_input['right_analog_x'] * self.config.gamepad_sensitivity['wz']

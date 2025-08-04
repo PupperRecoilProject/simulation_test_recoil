@@ -42,6 +42,11 @@ class PolicyManager:
                 print(f"    ⚠️ 警告: 模型 '{name}' 缺少 'path' 或 'observation_recipe'，已跳過。")
                 continue
 
+            # 若需求配方包含 accelerometer 但模型中不存在，則跳過以避免維度錯誤
+            if 'accelerometer' in recipe and getattr(self.obs_builder, 'accelerometer_id', -1) == -1:
+                print(f"    ⚠️ 模型 '{name}' 需要 'accelerometer' 感測器，但在 XML 中找不到，已跳過。")
+                continue
+
             print(f"  - 載入模型 '{name}' 從: {path}")
             try:
                 # --- ONNX Runtime 優化與載入 ---
@@ -153,9 +158,12 @@ class PolicyManager:
             
             # 將歷史觀察拼接成 ONNX 的最終輸入
             onnx_input = np.concatenate(list(self.obs_histories[name])).astype(np.float32).reshape(1, -1)
-            
+
             # 檢查維度是否匹配，以防萬一
-            if onnx_input.shape[1] != session.get_inputs()[0].shape[1]:
+            expected_dim = session.get_inputs()[0].shape[1]
+            actual_dim = onnx_input.shape[1]
+            if actual_dim != expected_dim:
+                print(f"⚠️ 模型 '{name}' ONNX 輸入維度不符: expected {expected_dim}, got {actual_dim}")
                 action_raw = np.zeros(self.config.num_motors, dtype=np.float32)
             else:
                 input_name = session.get_inputs()[0].name
@@ -206,8 +214,11 @@ class PolicyManager:
             self.obs_histories[name].append(observation)
             
             onnx_input = np.concatenate(list(self.obs_histories[name])).astype(np.float32).reshape(1, -1)
-            
-            if onnx_input.shape[1] != session.get_inputs()[0].shape[1]:
+
+            expected_dim = session.get_inputs()[0].shape[1]
+            actual_dim = onnx_input.shape[1]
+            if actual_dim != expected_dim:
+                print(f"⚠️ 模型 '{name}' ONNX 輸入維度不符: expected {expected_dim}, got {actual_dim}")
                 action_raw = np.zeros(self.config.num_motors, dtype=np.float32)
             else:
                 input_name = session.get_inputs()[0].name

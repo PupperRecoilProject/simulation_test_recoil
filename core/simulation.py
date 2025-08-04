@@ -55,7 +55,7 @@ class Simulation:
 
         # 視窗與渲染上下文將在模擬執行緒中初始化
 
-    def initialize_window_and_context(self):
+    def initialize_window_and_context(self, state: SimulationState):
         """在當前執行緒中初始化 GLFW 與渲染上下文。"""
         if not glfw.init():
             sys.exit("❌ 錯誤: GLFW 初始化失敗。")
@@ -73,7 +73,7 @@ class Simulation:
 
         self.cam = mujoco.MjvCamera()
         self.opt = mujoco.MjvOption()
-        self.overlay = DebugOverlay()
+        self.overlay = DebugOverlay(state)
         mujoco.mjv_defaultCamera(self.cam)
         mujoco.mjv_defaultOption(self.opt)
         self.cam.distance, self.cam.elevation, self.cam.azimuth = 2.5, -20, 90
