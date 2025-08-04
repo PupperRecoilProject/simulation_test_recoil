@@ -1,12 +1,9 @@
-from nicegui import ui, app
+from nicegui import ui
 import numpy as np
-import threading
-from typing import TYPE_CHECKING, List
 
 from utils.logger import log, log_queue
 
-if TYPE_CHECKING:
-    from state import SimulationState
+from state import SimulationState, OperatingMode, ControlSubMode
 
 class UIController:
     """管理 NiceGUI 介面與互動邏輯。"""
@@ -76,12 +73,13 @@ class UIController:
         with ui.card():
             ui.label('模式控制 (Control Mode)').classes('text-lg')
             with ui.row():
-                ui.button('走路 (Walking)', on_click=lambda: self._request_mode_change("WALKING"))
-                ui.button('懸浮 (Floating)', on_click=lambda: self._request_mode_change("FLOATING"))
-                ui.button('硬體 (Hardware)', on_click=lambda: self._request_mode_change("HARDWARE_MODE"))
+                # 使用新的子模式切換函式
+                ui.button('走路 (Walking)', on_click=lambda: self.state.request_sub_mode_change(ControlSubMode.WALKING))
+                ui.button('懸浮 (Floating)', on_click=lambda: self.state.request_sub_mode_change(ControlSubMode.FLOATING))
+                ui.button('硬體 (Hardware)', on_click=self._toggle_operating_mode)
             with ui.row():
-                ui.button('關節測試 (Joint Test)', on_click=lambda: self._request_mode_change("JOINT_TEST"))
-                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self._request_mode_change("MANUAL_CTRL"))
+                ui.button('關節測試 (Joint Test)', on_click=lambda: self.state.request_sub_mode_change(ControlSubMode.JOINT_TEST))
+                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self.state.request_sub_mode_change(ControlSubMode.MANUAL_CTRL))
 
             ui.separator()
             ui.label('模擬播放 (Playback)').classes('text-lg')
@@ -134,7 +132,7 @@ class UIController:
         with ui.card():
             ui.label('硬體 AI 控制').classes('text-lg')
             ui.button('啟用/停用 AI (K)', on_click=self._toggle_hardware_ai).bind_enabled_from(
-                self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
+                self.state, 'operating_mode', lambda m: m == OperatingMode.HARDWARE)
 
             ui.separator()
             ui.label('設備連接').classes('text-lg')
@@ -159,7 +157,7 @@ class UIController:
 
     def _create_joint_control_panel(self):
         """在 JOINT_TEST 或 MANUAL_CTRL 模式下顯示的關節微調面板。"""
-        with ui.card().bind_visibility_from(self.state, 'control_mode', lambda m: m in ["JOINT_TEST", "MANUAL_CTRL"]).classes('w-full'):
+        with ui.card().bind_visibility_from(self.state, 'control_sub_mode', lambda m: m in [ControlSubMode.JOINT_TEST, ControlSubMode.MANUAL_CTRL]).classes('w-full'):
             ui.label('關節微調 (Joint Fine-Tuning)').classes('text-lg')
             # 懸浮開關，適用於手動相關模式
             with ui.row().classes('items-center'):
@@ -230,14 +228,21 @@ class UIController:
         """更新所有 UI 元件，先鎖定狀態取得資料，再在鎖外更新。"""
         # --- 在鎖內快速複製所有需要的狀態值 ---
         with self.state.lock:
-            mode = self.state.control_mode
+            op_mode = self.state.operating_mode
+            sub_mode = self.state.control_sub_mode
             input_mode = self.state.input_mode
             sim_time = self.state.sim.data.time if self.state.sim else None
             serial_connected = self.state.serial_is_connected
             gamepad_connected = self.state.gamepad_is_connected
             hw_ai_active = self.state.hardware.ai_is_active
             command = self.state.command.copy()
-            pos = self.state.latest_pos.copy()
+
+            if op_mode == OperatingMode.SIMULATION:
+                pos = self.state.sim_latest_pos.copy()
+                joint_positions = self.state.sim_latest_joint_positions.copy()
+            else:
+                pos = np.zeros(3)
+                joint_positions = self.state.hardware.joint_positions_rad.copy()
 
             pm = self.policy_manager
             transitioning = pm.is_transitioning
@@ -249,12 +254,12 @@ class UIController:
             terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
 
             joint_info = None
-            if mode == "JOINT_TEST":
+            if sub_mode == ControlSubMode.JOINT_TEST:
                 idx = self.state.joint_test_index
                 offset = self.state.joint_test_offsets[idx]
                 default_pos = self.state.sim.default_pose[idx]
                 target_abs = default_pos + offset
-                actual_abs = self.state.latest_joint_positions[idx]
+                actual_abs = joint_positions[idx]
                 joint_info = {
                     "mode": "offset",
                     "index": idx,
@@ -262,10 +267,10 @@ class UIController:
                     "actual_abs": actual_abs,
                     "offset": offset,
                 }
-            elif mode == "MANUAL_CTRL":
+            elif sub_mode == ControlSubMode.MANUAL_CTRL:
                 idx = self.state.manual_ctrl_index
                 target_abs = self.state.manual_final_ctrl[idx]
-                actual_abs = self.state.latest_joint_positions[idx]
+                actual_abs = joint_positions[idx]
                 joint_info = {
                     "mode": "absolute",
                     "index": idx,
@@ -274,7 +279,8 @@ class UIController:
                 }
 
         # --- 在鎖外更新 UI 元件 ---
-        self.status_labels['mode'].set_text(f"模式: {mode}")
+        mode_text = f"{op_mode.name}/{sub_mode.name}"
+        self.status_labels['mode'].set_text(f"模式: {mode_text}")
         self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
         if sim_time is not None:
             self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s")
@@ -282,7 +288,7 @@ class UIController:
             self.status_labels['sim_time'].set_text("時間: N/A")
         self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
         self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Disconnected')
-        if mode == 'HARDWARE_MODE':
+        if op_mode == OperatingMode.HARDWARE:
             self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled')
         else:
             self.status_labels['hardware_ai'].set_text('硬體AI: N/A')
@@ -325,10 +331,14 @@ class UIController:
         self.log_area.set_value(log_content)
 
     def _update_onnx_labels(self):
-        if self.state.latest_onnx_input.size == 0 or not self.policy_manager.get_active_recipe():
+        """依據目前模式更新 ONNX 輸入顯示"""
+        if self.state.operating_mode == OperatingMode.SIMULATION:
+            obs_vec = self.state.sim_latest_onnx_input
+        else:
+            obs_vec = self.state.hardware.latest_onnx_input
+        if obs_vec.size == 0 or not self.policy_manager.get_active_recipe():
             return
         recipe = self.policy_manager.get_active_recipe()
-        obs_vec = self.state.latest_onnx_input
         current_idx = 0
         # 從已註冊的 policy_manager 取得各觀察元件的維度
         component_dims = self.policy_manager.obs_builder.component_dims
@@ -341,12 +351,6 @@ class UIController:
                     vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
                     self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
                 current_idx = end_idx
-
-    def _request_mode_change(self, mode: str) -> None:
-        """【新增】僅設定待切換模式，由模擬執行緒在下個循環處理。"""
-        with self.state.lock:
-            self.state.control_mode_pending = mode
-        log.info(f"UI 請求切換模式至 {mode}")
 
     # 【新增】「暫停/播放」按鈕的回呼函式
     def _toggle_pause(self):
@@ -363,12 +367,24 @@ class UIController:
             if self.state.single_step_mode:
                 self.state.execute_one_step = True
 
+    def _toggle_operating_mode(self) -> None:
+        """在模擬與硬體模式間切換"""
+        with self.state.lock:
+            current_op = self.state.operating_mode
+
+        if current_op == OperatingMode.SIMULATION:
+            self.state.request_mode_change(OperatingMode.HARDWARE, ControlSubMode.IDLE)
+        else:
+            self.state.request_mode_change(OperatingMode.SIMULATION, ControlSubMode.WALKING)
+
     def _toggle_hardware_ai(self):
-        if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':
-            if self.state.hardware.ai_is_active:
-                self.hardware_controller.disable_ai()
-            else:
-                self.hardware_controller.enable_ai()
+        """切換硬體端 AI 的啟用狀態"""
+        if self.state.operating_mode != OperatingMode.HARDWARE:
+            return
+        if self.state.hardware.ai_is_active:
+            self.state.request_sub_mode_change(ControlSubMode.IDLE)
+        else:
+            self.state.request_sub_mode_change(ControlSubMode.WALKING)
 
     def _request_flag_change(self, flag_name: str):
         """非阻塞地請求一次性操作，如重置。"""
@@ -397,33 +413,33 @@ class UIController:
     def _set_joint_index(self, index: int):
         """設定目前選中的關節索引。"""
         with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
+            if self.state.control_sub_mode == ControlSubMode.JOINT_TEST:
                 self.state.joint_test_index = index
-            elif self.state.control_mode == "MANUAL_CTRL":
+            elif self.state.control_sub_mode == ControlSubMode.MANUAL_CTRL:
                 self.state.manual_ctrl_index = index
 
     def _on_joint_slider_change(self, event):
         """滑桿改變時即時更新目標值。"""
         value = event.value
         with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
+            if self.state.control_sub_mode == ControlSubMode.JOINT_TEST:
                 idx = self.state.joint_test_index
                 # 滑桿給的是絕對角度，轉成偏移量存回 state
                 self.state.joint_test_offsets[idx] = value - self.state.sim.default_pose[idx]
-            elif self.state.control_mode == "MANUAL_CTRL":
+            elif self.state.control_sub_mode == ControlSubMode.MANUAL_CTRL:
                 idx = self.state.manual_ctrl_index
                 self.state.manual_final_ctrl[idx] = value
 
     def _adjust_joint_value(self, value: float, clear: bool = False):
         """依目前模式調整關節值或歸零。"""
         with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
+            if self.state.control_sub_mode == ControlSubMode.JOINT_TEST:
                 idx = self.state.joint_test_index
                 if clear:
                     self.state.joint_test_offsets[idx] = 0.0
                 else:
                     self.state.joint_test_offsets[idx] += value
-            elif self.state.control_mode == "MANUAL_CTRL":
+            elif self.state.control_sub_mode == ControlSubMode.MANUAL_CTRL:
                 idx = self.state.manual_ctrl_index
                 if clear:
                     self.state.manual_final_ctrl[idx] = 0.0

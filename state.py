@@ -4,7 +4,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum, auto
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from utils.config import AppConfig
 from utils.logger import log
@@ -94,6 +94,8 @@ class SimulationState:
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     manual_mode_is_floating: bool = False
+    joint_test_index: int = 0               # 目前選中的關節索引
+    manual_ctrl_index: int = 0              # 手動控制模式下的關節索引
 
     # UI 旗標
     hard_reset_requested: bool = False
@@ -101,20 +103,118 @@ class SimulationState:
     single_step_mode: bool = False
     execute_one_step: bool = False
     shutdown_requested: bool = False
+    serial_is_connected: bool = False      # 序列埠是否已連接
+    gamepad_is_connected: bool = False     # 搖桿是否已連接
+    serial_command_buffer: str = ""        # 序列埠輸入緩衝
+    tuning_param_index: int = 0            # 目前調整參數索引
+    display_page: int = 0                  # 目前顯示頁面
+    num_display_pages: int = 1             # 顯示頁面數量
+    previous_control_mode: str = "WALKING"  # 追蹤前一個模式 (相容舊介面)
+    control_mode_pending: str | None = None # 待切換模式 (相容舊介面)
 
-    # 其他參考
+    # 外部模組參考 (References)
     sim: Simulation | None = None
+    policy_manager_ref: Any = None
+    hardware_controller_ref: Any = None
+    serial_communicator_ref: Any = None
+    xbox_handler_ref: Any = None
+    terrain_manager_ref: Any = None
+    floating_controller_ref: Any = None
 
     def __post_init__(self) -> None:
+        """初始化後設置調校參數"""
         self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__)
-        log.info("✅ 重構版 SimulationState 初始化完成。")
+        log.info("✅ 重構版 SimulationState 初始化完成 (含便利方法)。")
 
     # =============
-    # Mode change
+    # Convenience Methods 便利方法
     # =============
+    def clear_command(self) -> None:
+        """清除使用者輸入的運動指令"""
+        with self.lock:
+            self.command.fill(0.0)
+        log.info("運動指令已清除。")
+
+    def toggle_input_mode(self, new_mode: str, clear_cmd: bool = True) -> None:
+        """切換輸入模式，可選擇是否清除指令"""
+        with self.lock:
+            if self.input_mode != new_mode:
+                self.input_mode = new_mode
+                if clear_cmd:
+                    self.command.fill(0.0)
+                log.info(f"輸入模式已切換至: {self.input_mode}")
+
     def request_mode_change(self, new_op: OperatingMode, new_sub: ControlSubMode) -> None:
         """統一的模式切換接口"""
         with self.lock:
             self.operating_mode = new_op
             self.control_sub_mode = new_sub
         log.info(f"模式已切換至: {new_op.name}/{new_sub.name}")
+
+    def request_sub_mode_change(self, new_sub: ControlSubMode) -> None:
+        """僅改變控制子模式的便捷函式"""
+        with self.lock:
+            self.control_sub_mode = new_sub
+        log.info(f"控制子模式已請求切換至: {new_sub.name}")
+
+    # ---- Legacy compatibility methods ----
+    def get_control_mode_string(self) -> str:
+        """以舊字串格式回傳目前模式"""
+        if self.operating_mode == OperatingMode.HARDWARE:
+            return "HARDWARE_MODE"
+        return self.control_sub_mode.name
+
+    def set_control_mode(self, mode: str) -> None:
+        """相容舊介面的模式設定函式"""
+        mapping = {
+            "WALKING": (OperatingMode.SIMULATION, ControlSubMode.WALKING),
+            "FLOATING": (OperatingMode.SIMULATION, ControlSubMode.FLOATING),
+            "JOINT_TEST": (OperatingMode.SIMULATION, ControlSubMode.JOINT_TEST),
+            "MANUAL_CTRL": (OperatingMode.SIMULATION, ControlSubMode.MANUAL_CTRL),
+            "HARDWARE_MODE": (OperatingMode.HARDWARE, ControlSubMode.IDLE),
+        }
+        with self.lock:
+            self.previous_control_mode = self.get_control_mode_string()
+        op, sub = mapping.get(mode, (self.operating_mode, self.control_sub_mode))
+        self.request_mode_change(op, sub)
+
+    # Legacy alias properties for backward compatibility -----------------
+    @property
+    def latest_pos(self) -> np.ndarray:
+        return self.sim_latest_pos
+
+    @latest_pos.setter
+    def latest_pos(self, value: np.ndarray) -> None:
+        self.sim_latest_pos = value
+
+    @property
+    def latest_joint_positions(self) -> np.ndarray:
+        return self.sim_latest_joint_positions
+
+    @latest_joint_positions.setter
+    def latest_joint_positions(self, value: np.ndarray) -> None:
+        self.sim_latest_joint_positions = value
+
+    @property
+    def latest_onnx_input(self) -> np.ndarray:
+        return self.sim_latest_onnx_input
+
+    @latest_onnx_input.setter
+    def latest_onnx_input(self, value: np.ndarray) -> None:
+        self.sim_latest_onnx_input = value
+
+    @property
+    def latest_action_raw(self) -> np.ndarray:
+        return self.sim_latest_action_raw
+
+    @latest_action_raw.setter
+    def latest_action_raw(self, value: np.ndarray) -> None:
+        self.sim_latest_action_raw = value
+
+    @property
+    def latest_final_ctrl(self) -> np.ndarray:
+        return self.sim_latest_final_ctrl
+
+    @latest_final_ctrl.setter
+    def latest_final_ctrl(self, value: np.ndarray) -> None:
+        self.sim_latest_final_ctrl = value
