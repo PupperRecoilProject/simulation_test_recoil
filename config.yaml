@@ -67,6 +67,7 @@ policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
 
 # 核心參數 (Core Parameters)
 num_motors: 12
+default_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 【新增】預設站姿
 physics_timestep: 0.004 # <-- 建議修改：提高模擬精度以增強穩定性
 control_freq: 50.0
 warmup_duration: 0.0

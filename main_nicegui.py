@@ -28,7 +28,7 @@ def create_simulation_components(use_sim: bool, config):
         sim = Simulation(config)
         terrain = TerrainManager(sim.model, sim.data)
         floating = FloatingController(config, sim.model, sim.data, terrain)
-        obs = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+        obs = ObservationBuilder(sim.data, sim.model, sim.torso_id, config)
         return sim, obs, terrain, floating
     else:
         log.info("🚫 Simulation disabled, using mock components.")

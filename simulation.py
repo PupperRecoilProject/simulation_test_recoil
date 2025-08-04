@@ -47,11 +47,14 @@ class Simulation:
             sys.exit("❌ 錯誤: 在 XML 中找不到名為 'torso' 的 body。")
         
         home_key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, 'home')
+        xml_pose = None
         if home_key_id != -1:
-            self.default_pose = self.model.key_qpos[home_key_id][7:].copy()
+            xml_pose = self.model.key_qpos[home_key_id][7:].copy()
         else:
-            self.default_pose = np.zeros(config.num_motors)
-            print("⚠️ 警告: 在 XML 中未找到名為 'home' 的 keyframe，將使用零作為預設姿態。")
+            print("⚠️ 警告: 在 XML 中未找到名為 'home' 的 keyframe。")
+        self.default_pose = np.array(config.default_pose, dtype=np.float32)
+        if xml_pose is not None and not np.allclose(xml_pose, self.default_pose, atol=1e-4):
+            print("⚠️ 警告: config.yaml 的 default_pose 與 XML 中的 'home' 姿態不一致。以設定檔為主。")
 
         # 視窗與渲染上下文將在模擬執行緒中初始化
 

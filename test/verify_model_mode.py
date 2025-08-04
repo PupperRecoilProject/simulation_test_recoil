@@ -99,7 +99,8 @@ def verify():
         recipe = config.observation_recipes[obs_dim]
              
         # 【核心】我們在這裡實例化的 obs_builder 會使用您修改後的 absolute mode 版本
-        obs_builder = ObservationBuilder(recipe, data, model, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'torso'), default_pose_from_key, config)
+        obs_builder = ObservationBuilder(data, model, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, 'torso'), config)
+        obs_builder.set_recipe(recipe)
         base_obs_dim = len(obs_builder.get_observation(np.zeros(3), np.zeros(config.num_motors)))
         
         policy_config = config

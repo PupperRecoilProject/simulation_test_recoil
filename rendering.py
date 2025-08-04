@@ -73,7 +73,7 @@ class DebugOverlay:
             self.render_simulation_overlay(viewport, context, state, sim)
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
-        """渲染硬體控制模式的專用介面，使用 MjrRect 進行精確排版。"""
+        """【修復】渲染硬體控制模式的專用介面，顯示正確的感測器數據。"""
         padding = 10
         panel_width = int(viewport.width * 0.45)
         panel_height = int(viewport.height * 0.6)
@@ -95,20 +95,29 @@ class DebugOverlay:
             else:
                 policy_text = f"Active Policy: {pm.primary_policy_name}"
 
-        status_text = f"--- Real-time Hardware Status ---\n{state.hardware_status_text}"
         sensor_text = ""
         hw_ctrl = state.hardware_controller_ref
         if hw_ctrl and hw_ctrl.is_running:
             with hw_ctrl.lock:
-                imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True)
-                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
+                t_since_update = time.time() - hw_ctrl.hw_state.last_update_time
+                conn_status = f"Data Delay: {t_since_update:.2f}s" if t_since_update < 1.0 else "Data Timeout!"
+
+                acc_str = np.array2string(hw_ctrl.hw_state.accelerometer_ms2, precision=2)
+                gyro_str = np.array2string(hw_ctrl.hw_state.angular_velocity_radps, precision=2)
+                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, max_line_width=80)
+
                 sensor_text = (
-                    f"\n\n--- Sensor Readings (from Robot) ---\n"
-                    f"IMU Acc (g): {imu_acc_str}\n"
+                    f"--- Real-time Hardware Status ---\n"
+                    f"Connection: {conn_status}\n\n"
+                    f"--- Sensor Readings (from Robot) ---\n"
+                    f"Accelerometer (m/s^2): {acc_str}\n"
+                    f"Gyro (rad/s):          {gyro_str}\n"
                     f"Joint Pos (rad):\n{joint_pos_str}"
                 )
-        
-        full_text = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{status_text}{sensor_text}"
+        else:
+            sensor_text = "Hardware controller not running."
+
+        full_text = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{sensor_text}"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_left_rect, full_text, " ", context)
 
         cmd_panel_height = int(viewport.height * 0.1)

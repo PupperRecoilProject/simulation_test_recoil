@@ -39,6 +39,14 @@ class SimulationController:
         # 追蹤手動模式下懸浮是否已啟用
         self._manual_float_active = False
 
+        # 控制模式分派表，策略模式
+        self.control_dispatch = {
+            "WALKING": self._ctrl_from_ai,
+            "FLOATING": self._ctrl_from_ai,
+            "JOINT_TEST": self._ctrl_from_joint_test,
+            "MANUAL_CTRL": self._ctrl_from_manual,
+        }
+
         # 初始化將在執行緒啟動後進行
 
     # ------------------------------------------------------------------
@@ -208,16 +216,8 @@ class SimulationController:
             control_mode = self.state.control_mode
             tuning_params = self.state.tuning_params
 
-        onnx_input, action_final = self.policy_manager.get_action(command)
-
-        if control_mode == "MANUAL_CTRL":
-            with self.state.lock:
-                final_ctrl = self.state.manual_final_ctrl.copy()
-        elif control_mode == "JOINT_TEST":
-            with self.state.lock:
-                final_ctrl = self.sim.default_pose + self.state.joint_test_offsets
-        else:
-            final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
+        handler = self.control_dispatch.get(control_mode, self._ctrl_from_ai)
+        final_ctrl, onnx_input, action_final = handler(command, tuning_params)
 
         self.sim.apply_position_control(final_ctrl, tuning_params)
 
@@ -231,6 +231,25 @@ class SimulationController:
             if not self._running.is_set():
                 break
             mujoco.mj_step(self.sim.model, self.sim.data)
+
+    def _ctrl_from_ai(self, command, tuning_params):
+        """AI 控制模式處理函式。"""
+        onnx_input, action_final = self.policy_manager.get_action(command)
+        final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
+        return final_ctrl, onnx_input, action_final
+
+    def _ctrl_from_joint_test(self, command, tuning_params):
+        """關節測試模式處理函式。"""
+        with self.state.lock:
+            offsets = self.state.joint_test_offsets.copy()
+        final_ctrl = self.sim.default_pose + offsets
+        return final_ctrl, np.array([]), np.zeros(self.config.num_motors)
+
+    def _ctrl_from_manual(self, command, tuning_params):
+        """手動控制模式處理函式。"""
+        with self.state.lock:
+            manual_ctrl = self.state.manual_final_ctrl.copy()
+        return manual_ctrl, np.array([]), np.zeros(self.config.num_motors)
 
     # ------------------------------------------------------------------
     def stop(self) -> None:

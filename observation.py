@@ -2,17 +2,19 @@
 import numpy as np
 import mujoco
 from typing import TYPE_CHECKING, List, Dict
+from utils.observation_utils import calculate_relative_joint_positions
 
 if TYPE_CHECKING:
     from config import AppConfig
 
 class ObservationBuilder:
-    def __init__(self, data, model, torso_id, default_pose, config: 'AppConfig'):
+    def __init__(self, data, model, torso_id, config: 'AppConfig'):
         self.recipe = []  # 初始化為空，將由外部設定
         self.data = data
         self.model = model
         self.torso_id = torso_id
-        self.default_pose = default_pose
+        # 【新增】從設定檔獲得預設站姿
+        self.default_pose = np.array(config.default_pose, dtype=np.float32)
         self.config = config
 
         try:
@@ -101,7 +103,8 @@ class ObservationBuilder:
         return command * np.array(self.config.command_scaling_factors) 
 
     def _get_joint_positions(self, **kwargs):
-        return self.data.qpos[7:] - self.default_pose
+        # 使用共用工具函式計算相對關節角度
+        return calculate_relative_joint_positions(self.data.qpos[7:], self.default_pose)
 
     def _get_joint_velocities(self, **kwargs):
         return self.data.qvel[6:].copy()
