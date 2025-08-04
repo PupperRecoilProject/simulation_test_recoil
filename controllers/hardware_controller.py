@@ -219,6 +219,8 @@ class HardwareController:
         default_pose = self.global_state.sim.default_pose if self.global_state.sim else np.zeros(12)
         while self._is_running.is_set():
             loop_start = time.perf_counter()
+
+            # 先同步最新感測值到全域狀態，並抓取目前的控制子模式
             with self._lock, self.global_state.lock:
                 state = self.global_state
                 state.hardware.angular_velocity_radps = self._raw_angular_velocity.copy()
@@ -232,27 +234,35 @@ class HardwareController:
                 state.hardware.ai_is_active = (
                     sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING)
                 )
-            onnx_input = np.array([])
+
+            # --- 無論 AI 是否啟動，都先建構 ONNX 觀察向量 ---
+            obs_components = {
+                'angular_velocity': self._raw_angular_velocity,
+                'gravity_vector': self._raw_gravity_vector,
+                'linear_velocity': self._raw_linear_velocity,
+                'accelerometer': self._raw_accelerometer,
+                'joint_positions': self._raw_joint_positions,
+                'joint_velocities': self._raw_joint_velocities,
+                'last_action': self._last_action,
+                # commands 仍需納入，以確保維度一致
+                'commands': state.command * self.config.command_scaling_factors,
+            }
+            recipe = self.policy.get_active_recipe()
+            try:
+                obs_list = [obs_components[key] for key in recipe]
+                onnx_input = np.concatenate(obs_list).astype(np.float32)
+            except KeyError as e:
+                log.error(f"硬體觀察向量構建失敗: 缺少 '{e}'")
+                onnx_input = np.array([])
+
             action_raw = np.zeros(12)
             final_cmd = np.zeros(12)
             command_to_send = None
+
             if sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING):
-                obs_components = {
-                    'angular_velocity': self._raw_angular_velocity,
-                    'gravity_vector': self._raw_gravity_vector,
-                    'linear_velocity': self._raw_linear_velocity,
-                    'accelerometer': self._raw_accelerometer,
-                    'joint_positions': self._raw_joint_positions,
-                    'joint_velocities': self._raw_joint_velocities,
-                    'last_action': self._last_action,
-                    'commands': state.command * self.config.command_scaling_factors,
-                }
-                recipe = self.policy.get_active_recipe()
-                try:
-                    obs_list = [obs_components[key] for key in recipe]
-                    onnx_input = np.concatenate(obs_list).astype(np.float32)
-                except KeyError as e:
-                    log.error(f"硬體觀察向量構建失敗: 缺少 '{e}'")
+                # 只有在 AI 模式下才進行 ONNX 推論
+                if onnx_input.size == 0:
+                    time.sleep(0.02)
                     continue
                 _, action_raw = self.policy.get_action_for_hardware(onnx_input)
                 self._last_action[:] = action_raw
@@ -264,18 +274,25 @@ class HardwareController:
             elif sub_mode == ControlSubMode.IDLE:
                 command_to_send = "stop\n"
                 final_cmd = default_pose
+
+            # 若尚未決定指令字串，則根據 final_cmd 產生 move 指令
             if command_to_send is None:
                 action_str = ' '.join(f"{v:.4f}" for v in final_cmd)
                 command_to_send = f"move all {action_str}\n"
+
+            # 實際寫入序列埠
             if self.ser and self.ser.is_open:
                 try:
                     self.ser.write(command_to_send.encode('utf-8'))
                 except serial.SerialException:
                     self.stop()
+
+            # 更新全域狀態，供 UI 即時顯示
             with self.global_state.lock:
                 state.hardware.latest_onnx_input = onnx_input.copy()
                 state.hardware.latest_action_raw = action_raw.copy()
                 state.hardware.latest_final_ctrl = final_cmd.copy()
+
             loop_duration = time.perf_counter() - loop_start
             sleep_time = (1.0 / self.config.control_freq) - loop_duration
             if sleep_time > 0:

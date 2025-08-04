@@ -228,6 +228,7 @@ class SimulationController:
         self.sim.data.qpos[7:] = self.sim.default_pose
         self.sim.data.qvel[:] = 0
         self.sim.data.ctrl[:] = self.sim.default_pose
+        # 先步進數個小步，讓姿態與速度回到穩定狀態，避免初始化雜訊
         for _ in range(10):
             mujoco.mj_step(self.sim.model, self.sim.data)
         self.policy_manager.reset()
