@@ -29,6 +29,8 @@ from event_system import (
     EVENT_JOINT_SELECT_REQUESTED,
     EVENT_JOINT_VALUE_ADJUSTED,
     EVENT_COMMAND_UPDATED, # 用於虛擬搖桿
+    EVENT_INPUT_MODE_CHANGE_REQUESTED,
+    EVENT_SERIAL_COMMAND_SEND,
 )
 
 if TYPE_CHECKING:
@@ -182,20 +184,27 @@ class UIController:
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
             ui.label('手動駕駛 (Manual Driving)').classes('text-lg')
-            # [修改] on_move 和 on_end 回呼現在發布 EVENT_COMMAND_UPDATED 事件
+            
+            # [修改] on_move 和 on_end 的 lambda 函式現在包含了輸入模式切換的邏輯
+            # 並且使用了正確的事件參數 e.x 和 e.y
             ui.joystick(
                 color='blue', 
                 size=100, 
+                on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
                 on_move=lambda e: event_bus.publish(
                     EVENT_COMMAND_UPDATED, 
                     command=np.array([
-                        e.data.vector.x * self.state.config.gamepad_sensitivity['vy'],
-                        -e.data.vector.y * self.state.config.gamepad_sensitivity['vx'],
+                        e.x * self.state.config.gamepad_sensitivity['vy'], # 使用 e.x
+                        -e.y * self.state.config.gamepad_sensitivity['vx'], # 使用 e.y
                         0.0
                     ])
                 ),
-                on_end=lambda e: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3))
+                on_end=lambda e: (
+                    event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3)),
+                    event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD") # 釋放後切回鍵盤模式
+                )
             ).props('throttle')
+            
             ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3))).props('outline')
 
 

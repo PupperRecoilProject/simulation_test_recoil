@@ -173,21 +173,36 @@ class SimulationController:
             self.state.tuning_param_index = (self.state.tuning_param_index + direction) % num_params
             log.debug(f"調校參數索引已切換至: {self.state.tuning_param_index}")
             
-    def on_tuning_param_adjusted(self, direction: int, value: float = None, param_name: str = None):
-        """處理調整參數值的請求。"""
+    def on_tuning_param_adjusted(self, param_name: str = None, value: float = None, direction: int = None):
+        """
+        [v3.1.1] 處理調整參數值的請求。
+        此版本修正了參數來源和默認值的問題。
+        """
         with self.state.lock:
+            # 如果事件沒有提供 param_name (來自鍵盤/搖桿的步進調整)，
+            # 我們從 state 中獲取當前選中的參數。
             if param_name is None:
-                param_keys = self.state.policy_manager_ref.param_keys
-                param_name = param_keys[self.state.tuning_param_index]
+                # [修正] 參數的鍵名列表應直接從 config 或 state 本身獲取，而不是 policy_manager
+                # 我們可以將它定義在 SimulationState 或 Config 中，為簡潔起見，這裡暫時硬編碼
+                param_keys = ['kp', 'kd', 'action_scale', 'bias']
+                if 0 <= self.state.tuning_param_index < len(param_keys):
+                    param_name = param_keys[self.state.tuning_param_index]
+                else:
+                    log.error(f"無效的調校參數索引: {self.state.tuning_param_index}")
+                    return
 
-            if value is not None: # 來自UI滑桿的絕對值設定
+            # 根據事件提供的參數類型執行操作
+            if value is not None:  # 來自UI滑桿的絕對值設定
                 setattr(self.state.tuning_params, param_name, value)
-            elif direction is not None: # 來自鍵盤/搖桿的步進調整
+            elif direction is not None:  # 來自鍵盤/搖桿的步進調整
                 step = self.config.param_adjust_steps.get(param_name, 0.1)
                 current_value = getattr(self.state.tuning_params, param_name)
                 new_value = current_value + step * direction
                 setattr(self.state.tuning_params, param_name, new_value)
-            
+            else:
+                log.warning(f"接收到無效的參數調整請求: param_name={param_name}, value={value}, direction={direction}")
+                return
+
             # 確保參數值在合理範圍內
             self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
             self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
@@ -196,7 +211,9 @@ class SimulationController:
 
     def on_input_mode_change_requested(self, mode: str):
         """處理輸入模式切換請求。"""
-        self.state.toggle_input_mode(mode)
+        # [修改] 增加一個選項，避免在切換到 VJOY 時清除指令
+        clear_cmd = mode != "VJOY"
+        self.state.toggle_input_mode(mode, clear_cmd=clear_cmd)
 
     def on_device_connect_requested(self, device: str):
         """處理設備連接請求。"""
