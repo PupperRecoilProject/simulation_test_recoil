@@ -1,28 +1,29 @@
-"""Hardware controller service for Teensy."""
 import serial
 import threading
 import time
 import numpy as np
-import re
 import struct
+import re
 from typing import TYPE_CHECKING
-
-# 固定欄位數與 CSV 分隔正則 (42 欄: 40 data + CRC + \n)
-EXPECTED_CSV_FIELDS = 42
-_CSV_REGEX = re.compile(r"[,\s]+")
 
 from utils.logger import log
 from state import OperatingMode, ControlSubMode
 
-if TYPE_CHECKING:  # 型別提示避免循環匯入
+if TYPE_CHECKING:  # 型別提示，避免循環匯入
     from utils.config import AppConfig
     from core.policy import PolicyManager
     from state import SimulationState
     from serial_communicator import SerialCommunicator
 
+# -------------------------------------------------------------
+# 常數：Teensy 實際傳送 34 個浮點數 + 1 個 CRC 欄位
+# -------------------------------------------------------------
+EXPECTED_CSV_FIELDS = 35  # 34 floats + CRC
+_CSV_REGEX = re.compile(r"[,\s]+")
+
 
 def _crc8(data: bytes) -> int:
-    """計算簡易 CRC-8 (poly=0x07)"""  # 使用 x^8+x^2+x+1 多項式
+    """計算簡易 CRC‑8: poly = x^8 + x^2 + x + 1 (0x07)"""
     crc = 0
     for b in data:
         crc ^= b
@@ -33,7 +34,7 @@ def _crc8(data: bytes) -> int:
 
 
 class HardwareController:
-    """重構版硬體控制器，負責與 Teensy 溝通。"""
+    """重構版硬體控制器，已適配 34 維數據流。"""
 
     def __init__(self, config: 'AppConfig', policy: 'PolicyManager',
                  global_state: 'SimulationState', serial_comm: 'SerialCommunicator'):
@@ -47,32 +48,28 @@ class HardwareController:
         self._read_thread: threading.Thread | None = None
         self._control_thread: threading.Thread | None = None
         self._lock = threading.Lock()
-
-        # --- 健壯解析狀態 ---
         self._partial_line: list[str] = []  # 斷包暫存
-        self._bad_crc_count = 0            # CRC 錯誤計數
-        self._mismatch_count = 0           # 欄位錯誤計數
 
-        # 最新感測資料緩衝
+        # --- 最新感測資料緩衝 (符合 34 維定義) ---
         self._raw_angular_velocity = np.zeros(3)
         self._raw_gravity_vector = np.zeros(3)
-        self._raw_lin_vel = np.zeros(3)
-        self._raw_accel = np.zeros(3)
-        self._raw_joint_pos = np.zeros(12)
-        self._raw_joint_vel = np.zeros(12)
+        self._raw_accelerometer = np.zeros(3)
+        self._raw_pitch = 0.0
+        self._raw_joint_positions = np.zeros(12)
+        self._raw_joint_velocities = np.zeros(12)
         self._last_action = np.zeros(12)
         self._last_update_time = 0.0
 
-        log.info("✅ 重構版硬體控制器已初始化。")
+        log.info("✅ 重構版硬體控制器已初始化 (34-dim stream)。")
 
     @property
     def is_running(self) -> bool:
         """公開查詢是否運行中的屬性"""
         return self._is_running.is_set()
 
-    # ----------------------
+    # -------------------------------------------------------------
     # lifecycle 生命週期
-    # ----------------------
+    # -------------------------------------------------------------
     def attach_serial(self, ser: serial.Serial | None) -> None:
         """由 SerialCommunicator 呼叫，將已連線的序列埠交給硬體控制器。"""
         self.ser = ser
@@ -94,12 +91,12 @@ class HardwareController:
             return False
         self.serial_comm.attach_serial(self.ser)
         try:
-            log.info("-> 切換 Teensy 至 CSV_42 串流模式...")
-            self.ser.write(b"monitor csv42\n")
+            log.info("-> 正在命令 Teensy 切換至 POLICY_STREAM 模式...")
+            self.ser.write(b"monitor p\n")
             time.sleep(0.1)
             self.ser.reset_input_buffer()
         except serial.SerialException as e:
-            log.error(f"❌ 無法切換模式: {e}")
+            log.error(f"❌ 發送模式切換指令失敗: {e}")
             self.serial_comm.is_managed_by_hardware_controller = False
             return False
         self._is_running.set()
@@ -135,54 +132,54 @@ class HardwareController:
             self.global_state.hardware.ai_is_active = False
         log.info("硬體控制器已完全停止。")
 
-    # ----------------------
+    # -------------------------------------------------------------
     # internal helpers
-    # ----------------------
+    # -------------------------------------------------------------
     def _parse_policy_stream(self, line: str) -> None:
-        """解析固定 42 欄 CSV 並驗證 CRC"""
+        """解析來自 Teensy 的 34+1 維 CSV 並驗證 CRC"""
         parts = _CSV_REGEX.split(line.strip())
-
-        # 若上一輪有殘包，先合併
         if self._partial_line:
             parts = self._partial_line + parts
             self._partial_line = []
-
-        # 欄位不足，暫存待補
         if len(parts) < EXPECTED_CSV_FIELDS:
             self._partial_line = parts
             return
-
-        # 超長的資料，截斷至預期欄位
         if len(parts) > EXPECTED_CSV_FIELDS:
+            with open("bad_lines.log", "a") as f:
+                f.write(f"LONG_LINE: {line}\n")
             parts = parts[:EXPECTED_CSV_FIELDS]
-
-        # 解析 CRC
         try:
             crc_from_teensy = int(parts[-1]) & 0xFF
-        except ValueError:
-            self._bad_crc_count += 1
+            float_values = [float(p) for p in parts[:-1]]
+        except ValueError as e:
+            with open("bad_lines.log", "a") as f:
+                f.write(f"PARSE_ERROR: {line} | {e}\n")
+            with self.global_state.lock:
+                self.global_state.hardware.status_text = "Parse Error!"
             return
-
-        try:
-            float_bytes = struct.pack('<' + 'f' * (EXPECTED_CSV_FIELDS - 2), *map(float, parts[:-2]))
-        except ValueError:
-            self._mismatch_count += 1
+        if len(float_values) != 34:
+            with open("bad_lines.log", "a") as f:
+                f.write(f"DIM_MISMATCH: {line}\n")
+            with self.global_state.lock:
+                self.global_state.hardware.status_text = "Data dim mismatch!"
             return
-
+        float_bytes = struct.pack('<' + 'f'*34, *float_values)
         if _crc8(float_bytes) != crc_from_teensy:
-            self._bad_crc_count += 1
+            with self.global_state.lock:
+                self.global_state.hardware.status_text = (
+                    f"CRC Error! PC:{_crc8(float_bytes)} != Teensy:{crc_from_teensy}")
             return
-
         data_vec = np.frombuffer(float_bytes, dtype=np.float32)
-
         with self._lock:
             self._raw_angular_velocity[:] = data_vec[0:3]
             self._raw_gravity_vector[:] = data_vec[3:6]
-            self._raw_lin_vel[:] = data_vec[6:9]
-            self._raw_accel[:] = data_vec[9:12]
-            self._raw_joint_pos[:] = data_vec[12:24]
-            self._raw_joint_vel[:] = data_vec[24:36]
+            self._raw_accelerometer[:] = data_vec[6:9]
+            self._raw_pitch = data_vec[9]
+            self._raw_joint_positions[:] = data_vec[10:22]
+            self._raw_joint_velocities[:] = data_vec[22:34]
             self._last_update_time = time.time()
+            with self.global_state.lock:
+                self.global_state.hardware.status_text = "OK"
 
     def _read_loop(self) -> None:
         while self._is_running.is_set():
@@ -206,39 +203,34 @@ class HardwareController:
                 state = self.global_state
                 state.hardware.angular_velocity_radps = self._raw_angular_velocity.copy()
                 state.hardware.gravity_vector = self._raw_gravity_vector.copy()
-                state.hardware.linear_velocity = self._raw_lin_vel.copy()
-                state.hardware.accelerometer = self._raw_accel.copy()
-                state.hardware.joint_positions_rad = self._raw_joint_pos.copy()
-                state.hardware.joint_velocities_radps = self._raw_joint_vel.copy()
+                state.hardware.accelerometer = self._raw_accelerometer.copy()
+                state.hardware.joint_positions_rad = self._raw_joint_positions.copy()
+                state.hardware.joint_velocities_radps = self._raw_joint_velocities.copy()
                 state.hardware.last_update_time = self._last_update_time
-                state.hardware.crc_error_count = self._bad_crc_count
-                state.hardware.mismatch_count = self._mismatch_count
                 sub_mode = state.control_sub_mode
-                ai_active = sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING)
-                state.hardware.ai_is_active = ai_active
-
+                state.hardware.ai_is_active = (sub_mode == ControlSubMode.WALKING)
             onnx_input = np.array([])
             action_raw = np.zeros(12)
             final_cmd = np.zeros(12)
             command_to_send = None
-
-            if sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING):
+            if sub_mode == ControlSubMode.WALKING:
                 obs_components = {
                     'angular_velocity': self._raw_angular_velocity,
                     'gravity_vector': self._raw_gravity_vector,
-                    'linear_velocity': self._raw_lin_vel,
-                    'accelerometer': self._raw_accel,
-                    'joint_positions': self._raw_joint_pos,
-                    'joint_velocities': self._raw_joint_vel,
+                    'accelerometer': self._raw_accelerometer,
+                    'pitch': np.array([self._raw_pitch]),
+                    'joint_positions': self._raw_joint_positions,
+                    'joint_velocities': self._raw_joint_velocities,
                     'last_action': self._last_action,
                     'commands': state.command * self.config.command_scaling_factors,
+                    'linear_velocity': np.zeros(3),  # Teensy 未提供，先補零
                 }
                 recipe = self.policy.get_active_recipe()
                 try:
                     obs_list = [obs_components[key] for key in recipe]
                     onnx_input = np.concatenate(obs_list).astype(np.float32)
                 except KeyError as e:
-                    log.error(f"硬體觀察向量構建失敗: 缺少 {e}")
+                    log.error(f"硬體觀察向量構建失敗: 缺少 '{e}'")
                     continue
                 _, action_raw = self.policy.get_action_for_hardware(onnx_input)
                 self._last_action[:] = action_raw
@@ -250,31 +242,24 @@ class HardwareController:
             elif sub_mode == ControlSubMode.IDLE:
                 command_to_send = "stop\n"
                 final_cmd = default_pose
-
             if command_to_send is None:
-                self._send_ctrl_to_teensy(final_cmd)
-            elif self.ser and self.ser.is_open:
-                try:
-                    self.ser.write(command_to_send.encode('utf-8'))
-                except serial.SerialException:
-                    self.stop()
-
+                action_str = ','.join(f"{v:.4f}" for v in final_cmd) + '\n'
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.write(action_str.encode('utf-8'))
+                    except serial.SerialException:
+                        self.stop()
+            else:
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.write(command_to_send.encode('utf-8'))
+                    except serial.SerialException:
+                        self.stop()
             with self.global_state.lock:
                 state.hardware.latest_onnx_input = onnx_input.copy()
                 state.hardware.latest_action_raw = action_raw.copy()
                 state.hardware.latest_final_ctrl = final_cmd.copy()
-
             loop_duration = time.perf_counter() - loop_start
             sleep_time = (1.0 / self.config.control_freq) - loop_duration
             if sleep_time > 0:
                 time.sleep(sleep_time)
-
-    # 將最終控制命令轉成 CSV 寫回 Teensy
-    def _send_ctrl_to_teensy(self, ctrl: np.ndarray) -> None:
-        if not self.ser or not self.ser.is_open:
-            return
-        buf = ','.join(f"{v:.4f}" for v in ctrl) + '\n'
-        try:
-            self.ser.write(buf.encode('utf-8'))
-        except serial.SerialException:
-            self.stop()
