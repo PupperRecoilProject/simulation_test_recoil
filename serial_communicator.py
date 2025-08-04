@@ -4,9 +4,9 @@ import time
 import sys
 import threading
 import serial.tools.list_ports
-from serial_utils import select_serial_port
+from utils.serial_utils import select_serial_port
 from collections import deque
-from logger import log
+from utils.logger import log
 
 class SerialCommunicator:
     """

@@ -4,26 +4,26 @@ import sys
 import argparse
 from nicegui import ui, app
 
-from config import load_config
+from utils.config import load_config
 from state import SimulationState
-from policy import PolicyManager
-from hardware_controller import HardwareController
+from core.policy import PolicyManager
+from controllers.hardware_controller import HardwareController
 from serial_communicator import SerialCommunicator
-from xbox_input_handler import XboxInputHandler
+from inputs.xbox_input_handler import XboxInputHandler
 from ui_controller import UIController
-from simulation_controller import SimulationController
-from keyboard_input_handler import KeyboardInputHandler
-from logger import log
+from controllers.simulation_controller import SimulationController
+from inputs.keyboard_input_handler import KeyboardInputHandler
+from utils.logger import log
 
 
 def create_simulation_components(use_sim: bool, config):
     """根據是否使用模擬，建立對應的模組實例。"""
     if use_sim:
         log.info("✅ Simulation mode enabled.")
-        from simulation import Simulation
-        from observation import ObservationBuilder
-        from terrain_manager import TerrainManager
-        from floating_controller import FloatingController
+        from core.simulation import Simulation
+        from core.observation import ObservationBuilder
+        from core.terrain_manager import TerrainManager
+        from controllers.floating_controller import FloatingController
 
         sim = Simulation(config)
         terrain = TerrainManager(sim.model, sim.data)
@@ -98,7 +98,7 @@ def main() -> None:
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
         simulation_controller.stop()
-        hw_controller.stop_controller_threads()
+        hw_controller.stop()
         serial_comm.close()
         xbox_handler.close()
         sim.close()

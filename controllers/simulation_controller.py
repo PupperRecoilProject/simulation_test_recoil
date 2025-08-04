@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import TYPE_CHECKING
-from logger import log
+from utils.logger import log
 
 import numpy as np
 from mock_simulation import MockSimulation
@@ -173,11 +173,11 @@ class SimulationController:
 
         if new_mode == "HARDWARE_MODE" and not self.hardware_controller.is_running:
             log.info("派生執行緒以啟動硬體控制器...")
-            threading.Thread(target=self.hardware_controller.start_controller_threads, daemon=True).start()
+            threading.Thread(target=self.hardware_controller.start, daemon=True).start()
         elif old_mode == "HARDWARE_MODE" and new_mode != "HARDWARE_MODE":
             if self.hardware_controller.is_running:
                 log.info("派生執行緒以停止硬體控制器...")
-                threading.Thread(target=self.hardware_controller.stop_controller_threads, daemon=True).start()
+                threading.Thread(target=self.hardware_controller.stop, daemon=True).start()
 
     def update_derived_states_and_render(self, pos, terrain_mode) -> None:
         """更新衍生狀態並渲染場景。"""

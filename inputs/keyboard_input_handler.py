@@ -4,7 +4,7 @@ try:
 except ImportError:  # 無頭環境可能沒有安裝 glfw
     glfw = None
 from state import SimulationState
-from logger import log
+from utils.logger import log
 
 class KeyboardInputHandler:
     """處理所有鍵盤輸入事件，並根據當前模式進行分派。"""

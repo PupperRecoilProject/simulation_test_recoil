@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, List, Dict
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
-    from config import AppConfig
-    from observation import ObservationBuilder
+    from utils.config import AppConfig
+    from core.observation import ObservationBuilder
     from rendering import DebugOverlay
 
 class PolicyManager:

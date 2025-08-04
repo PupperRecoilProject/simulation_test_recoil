@@ -3,7 +3,7 @@ import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
 
-from logger import log, log_queue
+from utils.logger import log, log_queue
 
 if TYPE_CHECKING:
     from state import SimulationState
@@ -235,7 +235,7 @@ class UIController:
             sim_time = self.state.sim.data.time if self.state.sim else None
             serial_connected = self.state.serial_is_connected
             gamepad_connected = self.state.gamepad_is_connected
-            hw_ai_active = self.state.hardware_ai_is_active
+            hw_ai_active = self.state.hardware.ai_is_active
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
 
@@ -365,7 +365,7 @@ class UIController:
 
     def _toggle_hardware_ai(self):
         if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':
-            if self.state.hardware_ai_is_active:
+            if self.state.hardware.ai_is_active:
                 self.hardware_controller.disable_ai()
             else:
                 self.hardware_controller.enable_ai()

@@ -4,7 +4,7 @@ import serial
 import time
 import sys
 import threading  # 使用執行緒避免阻塞式讀取
-from serial_utils import select_serial_port
+from utils.serial_utils import select_serial_port
 
 # 全域旗標，用於在主執行緒與讀取執行緒間傳遞退出訊號
 exit_signal = threading.Event()

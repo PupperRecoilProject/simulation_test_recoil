@@ -1,6 +1,6 @@
 # xbox_input_handler.py
 from state import SimulationState
-from xbox_controller import XboxController
+from .xbox_controller import XboxController
 import threading
 import time
 

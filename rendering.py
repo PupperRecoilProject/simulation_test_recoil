@@ -6,7 +6,7 @@ from state import SimulationState
 from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
-    from simulation import Simulation
+    from core.simulation import Simulation
 
 class DebugOverlay:
     """
@@ -80,7 +80,7 @@ class DebugOverlay:
         top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height)
         mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8)
 
-        ai_status = "Enabled" if state.hardware_ai_is_active else "Disabled"
+        ai_status = "Enabled" if state.hardware.ai_is_active else "Disabled"
         title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
         help_text = "Press 'H' to exit | 'K': Toggle AI | 'G': Joint Test | 1..: Select Policy"
 
@@ -95,7 +95,7 @@ class DebugOverlay:
             else:
                 policy_text = f"Active Policy: {pm.primary_policy_name}"
 
-        status_text = f"--- Real-time Hardware Status ---\n{state.hardware_status_text}"
+        status_text = f"--- Real-time Hardware Status ---\n{state.hardware.status_text}"
         sensor_text = ""
         hw_ctrl = state.hardware_controller_ref
         if hw_ctrl and hw_ctrl.is_running:
@@ -133,7 +133,7 @@ class DebugOverlay:
         title = "--- SERIAL CONSOLE MODE (Press ~ to exit) ---"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
         
-        from logger import log_queue
+        from utils.logger import log_queue
         log_text = "\n".join(list(log_queue)[-50:])
         log_rect = mujoco.MjrRect(console_rect.left + 10, console_rect.bottom, console_rect.width - 20, console_rect.height - 50)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, log_rect, "\n\n" + log_text, " ", context)

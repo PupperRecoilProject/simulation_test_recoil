@@ -6,12 +6,12 @@ import numpy as np
 import time  # 新增: 提供初始化延遲
 from typing import TYPE_CHECKING, Optional
 
-from config import AppConfig
+from utils.config import AppConfig
 from state import SimulationState, TuningParams
 from rendering import DebugOverlay
 
 if TYPE_CHECKING:
-    from keyboard_input_handler import KeyboardInputHandler
+    from inputs.keyboard_input_handler import KeyboardInputHandler
 
 class Simulation:
     """
