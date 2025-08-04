@@ -232,17 +232,22 @@ class UIController:
             sub_mode = self.state.control_sub_mode
             input_mode = self.state.input_mode
             sim_time = self.state.sim.data.time if self.state.sim else None
-            serial_connected = self.state.serial_is_connected
-            gamepad_connected = self.state.gamepad_is_connected
+
+            # 使用實際物件狀態，避免資訊延遲
+            serial_connected = self.serial_comm.is_connected if self.serial_comm else False
+            gamepad_connected = (
+                self.state.xbox_handler_ref.controller.is_connected()
+                if self.state.xbox_handler_ref else False
+            )
+
             hw_ai_active = self.state.hardware.ai_is_active
             command = self.state.command.copy()
 
+            # 根據操作模式決定位置資料來源
             if op_mode == OperatingMode.SIMULATION:
                 pos = self.state.sim_latest_pos.copy()
-                joint_positions = self.state.sim_latest_joint_positions.copy()
-            else:
+            else:  # HARDWARE 模式下無全域位置資訊
                 pos = np.zeros(3)
-                joint_positions = self.state.hardware.joint_positions_rad.copy()
 
             pm = self.policy_manager
             transitioning = pm.is_transitioning
@@ -254,76 +259,111 @@ class UIController:
             terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
 
             joint_info = None
-            if sub_mode == ControlSubMode.JOINT_TEST:
-                idx = self.state.joint_test_index
-                offset = self.state.joint_test_offsets[idx]
-                default_pos = self.state.sim.default_pose[idx]
-                target_abs = default_pos + offset
-                actual_abs = joint_positions[idx]
-                joint_info = {
-                    "mode": "offset",
-                    "index": idx,
-                    "target_abs": target_abs,
-                    "actual_abs": actual_abs,
-                    "offset": offset,
-                }
-            elif sub_mode == ControlSubMode.MANUAL_CTRL:
-                idx = self.state.manual_ctrl_index
-                target_abs = self.state.manual_final_ctrl[idx]
-                actual_abs = joint_positions[idx]
-                joint_info = {
-                    "mode": "absolute",
-                    "index": idx,
-                    "target_abs": target_abs,
-                    "actual_abs": actual_abs,
-                }
+            # 只有在關節測試或手動模式下才需要關節資訊
+            if sub_mode in [ControlSubMode.JOINT_TEST, ControlSubMode.MANUAL_CTRL]:
+                if op_mode == OperatingMode.SIMULATION:
+                    actual_joint_positions = self.state.sim_latest_joint_positions
+                else:
+                    actual_joint_positions = self.state.hardware.joint_positions_rad
+
+                if sub_mode == ControlSubMode.JOINT_TEST:
+                    idx = self.state.joint_test_index
+                    offset = self.state.joint_test_offsets[idx]
+                    default_pos = self.state.sim.default_pose[idx]
+                    target_abs = default_pos + offset
+                    actual_abs = actual_joint_positions[idx]
+                    joint_info = {
+                        "mode": "offset",
+                        "index": idx,
+                        "target_abs": target_abs,
+                        "actual_abs": actual_abs,
+                        "offset": offset,
+                    }
+                elif sub_mode == ControlSubMode.MANUAL_CTRL:
+                    idx = self.state.manual_ctrl_index
+                    target_abs = self.state.manual_final_ctrl[idx]
+                    actual_abs = actual_joint_positions[idx]
+                    joint_info = {
+                        "mode": "absolute",
+                        "index": idx,
+                        "target_abs": target_abs,
+                        "actual_abs": actual_abs,
+                    }
 
         # --- 在鎖外更新 UI 元件 ---
-        mode_text = f"{op_mode.name}/{sub_mode.name}"
-        self.status_labels['mode'].set_text(f"模式: {mode_text}")
+        self.status_labels['mode'].set_text(f"模式: {op_mode.name} / {sub_mode.name}")
         self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
         if sim_time is not None:
             self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s")
         else:
             self.status_labels['sim_time'].set_text("時間: N/A")
-        self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
-        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Disconnected')
+
+        self.status_labels['serial_status'].set_text(
+            '序列埠: Connected' if serial_connected else '序列埠: Disconnected'
+        )
+        self.status_labels['gamepad_status'].set_text(
+            '搖桿: Connected' if gamepad_connected else '搖桿: Disconnected'
+        )
+
         if op_mode == OperatingMode.HARDWARE:
-            self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled')
+            self.status_labels['hardware_ai'].set_text(
+                '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
+            )
         else:
             self.status_labels['hardware_ai'].set_text('硬體AI: N/A')
-        self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
-        self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
+
+        self.status_labels['command'].set_text(
+            f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}"
+        )
+        self.status_labels['robot_pos'].set_text(
+            f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]"
+        )
 
         if transitioning:
-            policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)"
+            policy_text = (
+                f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)"
+            )
         else:
             policy_text = f"策略: {primary_policy}"
         self.status_labels['policy_status'].set_text(policy_text)
-        self.status_labels['policy_selector'].set_value(primary_policy)
+        if self.status_labels['policy_selector'].value != primary_policy:
+            self.status_labels['policy_selector'].set_value(primary_policy)
 
-        # 更新地形下拉選單狀態
         if self.ui_terrain_selection != terrain_name:
-            self.ui_terrain_selection = terrain_name
+            self.terrain_selector.set_value(terrain_name)
 
-        # 更新關節控制資訊
-        if joint_info and self.joint_control_slider is not None:
+        # --- 關節控制資訊的安全更新 ---
+        if joint_info:
             idx = joint_info['index']
-            self.joint_selector.set_value(idx)
+            if self.joint_selector.value != idx:
+                self.joint_selector.set_value(idx)
 
             target_abs = joint_info['target_abs']
             actual_abs = joint_info['actual_abs']
 
-            if abs(self.joint_control_slider.value - target_abs) > 1e-3:
+            if (
+                self.joint_control_slider is not None
+                and self.joint_control_slider.value is not None
+                and abs(self.joint_control_slider.value - target_abs) > 1e-3
+            ):
                 self.joint_control_slider.set_value(target_abs)
 
             error = target_abs - actual_abs
             if joint_info['mode'] == 'offset':
                 offset = joint_info['offset']
-                text = f"模式: 偏移 | Offset={offset:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
+                text = (
+                    f"模式: 偏移 | Offset={offset:+.2f} | Target={target_abs:+.2f} | "
+                    f"Actual={actual_abs:+.2f} | Err={error:+.2f}"
+                )
             else:
-                text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
+                text = (
+                    f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | "
+                    f"Err={error:+.2f}"
+                )
             self.status_labels['joint_info'].set_text(text)
+        else:
+            # 非相關模式清空標籤內容
+            self.status_labels['joint_info'].set_text('')
 
         # 更新 ONNX 標籤與日誌
         self._update_onnx_labels()
