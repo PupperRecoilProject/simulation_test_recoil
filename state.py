@@ -41,6 +41,8 @@ class HardwareState:
     # Teensy 端的感測值
     angular_velocity_radps: np.ndarray = field(default_factory=lambda: np.zeros(3))
     gravity_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    linear_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
     joint_positions_rad: np.ndarray = field(default_factory=lambda: np.zeros(12))
     joint_velocities_radps: np.ndarray = field(default_factory=lambda: np.zeros(12))
 

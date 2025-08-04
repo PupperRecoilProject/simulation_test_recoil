@@ -30,8 +30,11 @@ class HardwareController:
         self._lock = threading.Lock()
 
         # 儲存最新的感測資料
+        # 最新的感測資料緩衝 (Teensy 原始回傳)
         self._raw_angular_velocity = np.zeros(3)
         self._raw_gravity_vector = np.zeros(3)
+        self._raw_linear_velocity = np.zeros(3)  # 線性速度 linear_velocity
+        self._raw_accel = np.zeros(3)            # 加速度計 accelerometer
         self._raw_joint_positions = np.zeros(12)
         self._raw_joint_velocities = np.zeros(12)
         self._last_action = np.zeros(12)
@@ -47,6 +50,13 @@ class HardwareController:
     # ----------------------
     # lifecycle 生命週期
     # ----------------------
+    def attach_serial(self, ser: serial.Serial | None) -> None:
+        """由 SerialCommunicator 呼叫，將已連線的序列埠交給硬體控制器。"""
+        self.ser = ser
+        if ser is not None:
+            # 標記 SerialCommunicator 讓出控制權
+            self.serial_comm.is_managed_by_hardware_controller = True
+
     def start(self) -> bool:
         """啟動背景執行緒並接管序列埠。"""
         if self._is_running.is_set():
@@ -55,10 +65,13 @@ class HardwareController:
         if not self.serial_comm.is_connected:
             log.error("❌ 硬體模式錯誤：請先連接序列埠。")
             return False
-        self.ser = self.serial_comm.get_serial_connection()
+        # 若未事先附加序列埠，從 SerialCommunicator 取得
+        if not self.ser:
+            self.ser = self.serial_comm.get_serial_connection()
         if not self.ser:
             log.error("❌ 無法取得有效序列埠連接。")
             return False
+        # 再次標記已由硬體控制器管理
         self.serial_comm.is_managed_by_hardware_controller = True
         try:
             log.info("-> 切換 Teensy 至 POLICY_STREAM 模式...")
@@ -106,18 +119,25 @@ class HardwareController:
     # internal helpers
     # ----------------------
     def _parse_policy_stream(self, line: str) -> None:
+        """解析 Teensy 傳回的 csv 字串。"""
         try:
             parts = line.split(',')
-            if len(parts) != 34:
+            if len(parts) != 40:
+                # 長度不符時給出警告，方便追蹤
+                log.warning(f"CSV length mismatch: {len(parts)}")
                 return
             data_vec = np.array(parts, dtype=np.float32)
             with self._lock:
+                # 根據協議欄位索引寫入暫存
                 self._raw_angular_velocity[:] = data_vec[0:3]
                 self._raw_gravity_vector[:] = data_vec[3:6]
-                self._raw_joint_positions[:] = data_vec[10:22]
-                self._raw_joint_velocities[:] = data_vec[22:34]
+                self._raw_linear_velocity[:] = data_vec[6:9]
+                self._raw_accel[:] = data_vec[9:12]
+                self._raw_joint_positions[:] = data_vec[12:24]
+                self._raw_joint_velocities[:] = data_vec[24:36]
                 self._last_update_time = time.time()
         except (ValueError, IndexError):
+            # 資料格式錯誤時靜默忽略
             pass
 
     def _read_loop(self) -> None:
@@ -140,8 +160,11 @@ class HardwareController:
             loop_start = time.perf_counter()
             with self._lock, self.global_state.lock:
                 state = self.global_state
+                # 將解析後的感測值複製到全域狀態中，供 UI 顯示
                 state.hardware.angular_velocity_radps = self._raw_angular_velocity.copy()
                 state.hardware.gravity_vector = self._raw_gravity_vector.copy()
+                state.hardware.linear_velocity = self._raw_linear_velocity.copy()
+                state.hardware.accelerometer = self._raw_accel.copy()
                 state.hardware.joint_positions_rad = self._raw_joint_positions.copy()
                 state.hardware.joint_velocities_radps = self._raw_joint_velocities.copy()
                 sub_mode = state.control_sub_mode
@@ -152,14 +175,16 @@ class HardwareController:
             action_raw = np.zeros(12)
             final_cmd = np.zeros(12)
             if sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING):
+                # 組裝 ONNX 觀測向量各欄位
                 obs_components = {
                     'angular_velocity': self._raw_angular_velocity,
                     'gravity_vector': self._raw_gravity_vector,
+                    'linear_velocity': self._raw_linear_velocity,
+                    'accelerometer': self._raw_accel,
                     'joint_positions': self._raw_joint_positions,
                     'joint_velocities': self._raw_joint_velocities,
                     'last_action': self._last_action,
                     'commands': state.command * self.config.command_scaling_factors,
-                    'linear_velocity': np.zeros(3),
                 }
                 recipe = self.policy.get_active_recipe()
                 try:

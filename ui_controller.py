@@ -435,6 +435,10 @@ class UIController:
     def _connect_serial(self):
         if self.serial_comm:
             is_connected = self.serial_comm.scan_and_connect()
+            if is_connected and self.hardware_controller:
+                # 取得序列埠並交給硬體控制器管理
+                ser = self.serial_comm.get_serial_connection()
+                self.hardware_controller.attach_serial(ser)
             with self.state.lock:
                 self.state.serial_is_connected = is_connected
 
