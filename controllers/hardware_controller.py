@@ -16,10 +16,11 @@ if TYPE_CHECKING:  # 型別提示，避免循環匯入
     from serial_communicator import SerialCommunicator
 
 # -------------------------------------------------------------
-# 常數：Teensy 實際傳送 34 個浮點數 + 1 個 CRC 欄位
+# 常數：Teensy 實際傳送 40 個浮點數 + 1 個 CRC 欄位
 # -------------------------------------------------------------
-EXPECTED_CSV_FIELDS = 35  # 34 floats + CRC
-_CSV_REGEX = re.compile(r"[,\s]+")
+EXPECTED_FLOATS = 40                              # 資料欄位數 (不含 CRC)
+EXPECTED_CSV_FIELDS = EXPECTED_FLOATS + 1         # 40 floats + CRC
+_CSV_REGEX = re.compile(r"[,\s]+")              # 允許逗號或空白分隔
 
 
 def _crc8(data: bytes) -> int:
@@ -34,7 +35,7 @@ def _crc8(data: bytes) -> int:
 
 
 class HardwareController:
-    """重構版硬體控制器，已適配 34 維數據流。"""
+    """重構版硬體控制器，已適配 40 維數據流並具有 CRC 驗證。"""
 
     def __init__(self, config: 'AppConfig', policy: 'PolicyManager',
                  global_state: 'SimulationState', serial_comm: 'SerialCommunicator'):
@@ -50,17 +51,17 @@ class HardwareController:
         self._lock = threading.Lock()
         self._partial_line: list[str] = []  # 斷包暫存
 
-        # --- 最新感測資料緩衝 (符合 34 維定義) ---
+        # --- 最新感測資料緩衝 (符合 40 維定義) ---
         self._raw_angular_velocity = np.zeros(3)
         self._raw_gravity_vector = np.zeros(3)
+        self._raw_linear_velocity = np.zeros(3)
         self._raw_accelerometer = np.zeros(3)
-        self._raw_pitch = 0.0
         self._raw_joint_positions = np.zeros(12)
         self._raw_joint_velocities = np.zeros(12)
         self._last_action = np.zeros(12)
         self._last_update_time = 0.0
 
-        log.info("✅ 重構版硬體控制器已初始化 (34-dim stream)。")
+        log.info("✅ 重構版硬體控制器已初始化 (40-dim stream)。")
 
     @property
     def is_running(self) -> bool:
@@ -136,56 +137,67 @@ class HardwareController:
     # internal helpers
     # -------------------------------------------------------------
     def _parse_policy_stream(self, line: str) -> None:
-        """解析來自 Teensy 的 34+1 維 CSV 並驗證 CRC"""
+        """解析來自 Teensy 的 CSV 資料並進行 CRC 驗證"""
         parts = _CSV_REGEX.split(line.strip())
+
+        # 1) 若上輪有殘包，先拼接
         if self._partial_line:
             parts = self._partial_line + parts
             self._partial_line = []
+
+        # 2) 欄位不足：暫存待補
         if len(parts) < EXPECTED_CSV_FIELDS:
             self._partial_line = parts
             return
+
+        # 3) 欄位過多：截斷並記錄
         if len(parts) > EXPECTED_CSV_FIELDS:
-            # 使用 UTF-8 寫入，以避免 Windows 環境編碼錯誤
             with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(f"LONG_LINE: {line}\n")
             parts = parts[:EXPECTED_CSV_FIELDS]
+
         try:
-            crc_from_teensy = int(parts[-1]) & 0xFF
-            float_values = [float(p) for p in parts[:-1]]
+            float_values = [float(p) for p in parts[:-1]]  # 先解析所有浮點數
+            crc_from_teensy = int(parts[-1]) & 0xFF        # 最後一欄為 CRC
         except ValueError as e:
             with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(f"PARSE_ERROR: {line} | {e}\n")
             with self.global_state.lock:
+                self.global_state.hardware.mismatch_count += 1
                 self.global_state.hardware.status_text = "Parse Error!"
             return
-        if len(float_values) != 34:
+
+        if len(float_values) != EXPECTED_FLOATS:
             with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(f"DIM_MISMATCH: {line}\n")
             with self.global_state.lock:
+                self.global_state.hardware.mismatch_count += 1
                 self.global_state.hardware.status_text = "Data dim mismatch!"
             return
-        float_bytes = struct.pack('<' + 'f'*34, *float_values)
+
+        float_bytes = struct.pack('<' + 'f'*EXPECTED_FLOATS, *float_values)
         calculated_crc = _crc8(float_bytes)
         if calculated_crc != crc_from_teensy:
             with self.global_state.lock:
+                self.global_state.hardware.crc_error_count += 1
                 self.global_state.hardware.status_text = (
                     f"CRC Error! PC:{calculated_crc} != Teensy:{crc_from_teensy}")
-            # 紀錄 CRC 錯誤詳細資訊
             with open("bad_lines.log", "a", encoding='utf-8') as f:
                 f.write(
                     f"CRC_ERROR: {line} | PC_CRC:{calculated_crc} | TEENSY_CRC:{crc_from_teensy}\n"
                 )
             return
+
         data_vec = np.frombuffer(float_bytes, dtype=np.float32)
         with self._lock:
             self._raw_angular_velocity[:] = data_vec[0:3]
             self._raw_gravity_vector[:] = data_vec[3:6]
-            self._raw_accelerometer[:] = data_vec[6:9]
-            self._raw_pitch = data_vec[9]
-            self._raw_joint_positions[:] = data_vec[10:22]
-            self._raw_joint_velocities[:] = data_vec[22:34]
-            # 成功通過 CRC 後才更新時間戳
-            self._last_update_time = time.time()
+            self._raw_linear_velocity[:] = data_vec[6:9]
+            self._raw_accelerometer[:] = data_vec[9:12]
+            self._raw_joint_positions[:] = data_vec[12:24]
+            self._raw_joint_velocities[:] = data_vec[24:36]
+            # 36~39 為保留欄位，目前忽略
+            self._last_update_time = time.time()  # 只有 CRC 成功才更新時間
             with self.global_state.lock:
                 self.global_state.hardware.status_text = "OK"
 
@@ -211,27 +223,29 @@ class HardwareController:
                 state = self.global_state
                 state.hardware.angular_velocity_radps = self._raw_angular_velocity.copy()
                 state.hardware.gravity_vector = self._raw_gravity_vector.copy()
+                state.hardware.linear_velocity = self._raw_linear_velocity.copy()
                 state.hardware.accelerometer = self._raw_accelerometer.copy()
                 state.hardware.joint_positions_rad = self._raw_joint_positions.copy()
                 state.hardware.joint_velocities_radps = self._raw_joint_velocities.copy()
                 state.hardware.last_update_time = self._last_update_time
                 sub_mode = state.control_sub_mode
-                state.hardware.ai_is_active = (sub_mode == ControlSubMode.WALKING)
+                state.hardware.ai_is_active = (
+                    sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING)
+                )
             onnx_input = np.array([])
             action_raw = np.zeros(12)
             final_cmd = np.zeros(12)
             command_to_send = None
-            if sub_mode == ControlSubMode.WALKING:
+            if sub_mode in (ControlSubMode.WALKING, ControlSubMode.FLOATING):
                 obs_components = {
                     'angular_velocity': self._raw_angular_velocity,
                     'gravity_vector': self._raw_gravity_vector,
+                    'linear_velocity': self._raw_linear_velocity,
                     'accelerometer': self._raw_accelerometer,
-                    'pitch': np.array([self._raw_pitch]),
                     'joint_positions': self._raw_joint_positions,
                     'joint_velocities': self._raw_joint_velocities,
                     'last_action': self._last_action,
                     'commands': state.command * self.config.command_scaling_factors,
-                    'linear_velocity': np.zeros(3),  # Teensy 未提供，先補零
                 }
                 recipe = self.policy.get_active_recipe()
                 try:
@@ -251,18 +265,13 @@ class HardwareController:
                 command_to_send = "stop\n"
                 final_cmd = default_pose
             if command_to_send is None:
-                action_str = ','.join(f"{v:.4f}" for v in final_cmd) + '\n'
-                if self.ser and self.ser.is_open:
-                    try:
-                        self.ser.write(action_str.encode('utf-8'))
-                    except serial.SerialException:
-                        self.stop()
-            else:
-                if self.ser and self.ser.is_open:
-                    try:
-                        self.ser.write(command_to_send.encode('utf-8'))
-                    except serial.SerialException:
-                        self.stop()
+                action_str = ' '.join(f"{v:.4f}" for v in final_cmd)
+                command_to_send = f"move all {action_str}\n"
+            if self.ser and self.ser.is_open:
+                try:
+                    self.ser.write(command_to_send.encode('utf-8'))
+                except serial.SerialException:
+                    self.stop()
             with self.global_state.lock:
                 state.hardware.latest_onnx_input = onnx_input.copy()
                 state.hardware.latest_action_raw = action_raw.copy()
