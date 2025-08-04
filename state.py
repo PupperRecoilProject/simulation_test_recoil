@@ -178,6 +178,15 @@ class SimulationState:
         op, sub = mapping.get(mode, (self.operating_mode, self.control_sub_mode))
         self.request_mode_change(op, sub)
 
+    # 提供舊屬性接口，避免舊模組存取失敗
+    @property
+    def control_mode(self) -> str:  # 讀取時回傳舊格式字串
+        return self.get_control_mode_string()
+
+    @control_mode.setter
+    def control_mode(self, mode: str) -> None:  # 寫入時自動映射到新枚舉
+        self.set_control_mode(mode)
+
     # Legacy alias properties for backward compatibility -----------------
     @property
     def latest_pos(self) -> np.ndarray:
