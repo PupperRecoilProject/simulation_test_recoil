@@ -1,8 +1,15 @@
-"""簡易 CRC-8 驗證工具 (CRC-8/ATM, poly=0x07)\n
-This script outputs the CRC-8 for a fixed float array so that\nTeensy firmware can cross-check its implementation.\n"""
+"""簡易 CRC-8 驗證工具 (CRC-8/ATM, poly=0x07)
+This script outputs the CRC-8 for a fixed float array so that
+Teensy firmware can cross-check its implementation.
+"""
 
+import os
+import sys
 import struct
 import numpy as np
+
+# 將專案根目錄加入搜尋路徑, 確保可匯入 controllers 模組
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from controllers.hardware_controller import _crc8
 
