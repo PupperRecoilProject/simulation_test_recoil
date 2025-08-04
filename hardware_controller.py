@@ -274,8 +274,14 @@ class HardwareController:
                     # 【保留】更新 last_action
                     self.hw_state.last_action[:] = action_raw
                 
-                # 【保留】生成發送給Teensy的文字指令
-                final_command = default_pose_hardware + action_raw * self.global_state.tuning_params.action_scale
+                # 【修改】根據模型設定決定最終控制模式
+                model_cfg = self.policy.get_active_model_config()  # 取得當前策略的設定
+                if model_cfg.get('output_mode') == 'absolute':
+                    # 若模型直接輸出絕對角度，則不加上 default pose
+                    final_command = action_raw * self.global_state.tuning_params.action_scale
+                else:
+                    # 預設為偏移量模式，需要加上 default pose
+                    final_command = default_pose_hardware + action_raw * self.global_state.tuning_params.action_scale
                 action_str = ' '.join(f"{a:.4f}" for a in final_command)
                 command_to_send = f"move all {action_str}\n"
 
