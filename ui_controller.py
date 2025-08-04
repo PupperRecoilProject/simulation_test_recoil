@@ -1,5 +1,6 @@
 from nicegui import ui
 import numpy as np
+import time
 
 from utils.logger import log, log_queue
 
@@ -198,6 +199,8 @@ class UIController:
             self.status_labels['command'] = ui.label('vy: 0.00, vx: 0.00, wz: 0.00')
             ui.label('機器人狀態 (Robot State)').classes('font-bold')
             self.status_labels['robot_pos'] = ui.label('位置: [0.0, 0.0, 0.0]')
+            # 顯示硬體延遲與 CRC 錯誤數
+            self.status_badge = ui.badge('Delay -- | CRC 0')
             self.status_labels['robot_vel'] = ui.label('速度: [0.0, 0.0, 0.0]')
 
     def _create_onnx_display(self):
@@ -369,6 +372,14 @@ class UIController:
         self._update_onnx_labels()
         log_content = "\n".join(log_queue)
         self.log_area.set_value(log_content)
+
+        # 顯示 CRC 與延遲資訊
+        if self.state.operating_mode == OperatingMode.HARDWARE:
+            delay = time.time() - self.state.hardware.last_update_time
+            crc_err = self.state.hardware.crc_error_count
+            self.status_badge.set_text(f"Delay {delay:.2f}s | CRC {crc_err}")
+        else:
+            self.status_badge.set_text('')
 
     def _update_onnx_labels(self):
         """依據目前模式更新 ONNX 輸入顯示"""
