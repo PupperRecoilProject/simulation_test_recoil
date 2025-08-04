@@ -164,7 +164,8 @@ def main():
             
             state.latest_final_ctrl = final_ctrl
             
-            target_time = sim.data.time + config.control_dt
+            # 使用 state.control_dt 來避免固定 dt
+            target_time = sim.data.time + state.control_dt
             while sim.data.time < target_time:
                 mujoco.mj_step(sim.model, sim.data)
 

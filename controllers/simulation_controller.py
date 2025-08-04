@@ -204,7 +204,8 @@ class SimulationController:
             self.state.sim_latest_action_raw = action_final
             self.state.sim_latest_final_ctrl = final_ctrl
 
-        target_time = self.sim.data.time + self.config.control_dt
+        # 使用 state.control_dt 以支援動態控制頻率
+        target_time = self.sim.data.time + self.state.control_dt
         while self.sim.data.time < target_time:
             if not self._running.is_set():
                 break

@@ -58,6 +58,7 @@ class TuningParams:
     kd: float
     action_scale: float
     bias: float
+    bias_enabled: bool = False  # 是否啟用偏壓力矩, 預設關閉以更安全
 
 # ========================
 # Simulation State  主狀態容器
@@ -112,6 +113,9 @@ class SimulationState:
     previous_control_mode: str = "WALKING"  # 追蹤前一個模式 (相容舊介面)
     control_mode_pending: str | None = None # 待切換模式 (相容舊介面)
 
+    # 內部變數: 控制頻率，可動態調整
+    _control_freq: float = field(init=False)
+
     # 外部模組參考 (References)
     sim: Simulation | None = None
     policy_manager_ref: Any = None
@@ -122,9 +126,10 @@ class SimulationState:
     floating_controller_ref: Any = None
 
     def __post_init__(self) -> None:
-        """初始化後設置調校參數"""
+        """初始化後設置調校參數與控制頻率"""
         self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__)
-        log.info("✅ 重構版 SimulationState 初始化完成 (含便利方法)。")
+        self._control_freq = self.config.control_freq
+        log.info("✅ 重構版 SimulationState 初始化完成 (含便利方法與動態控制頻率)。")
 
     # =============
     # Convenience Methods 便利方法
@@ -156,6 +161,28 @@ class SimulationState:
         with self.lock:
             self.control_sub_mode = new_sub
         log.info(f"控制子模式已請求切換至: {new_sub.name}")
+
+    # -------- 動態控制頻率與週期 --------
+    @property
+    def control_freq(self) -> float:
+        """取得目前控制頻率 Hz"""
+        with self.lock:
+            return self._control_freq
+
+    @control_freq.setter
+    def control_freq(self, value: float) -> None:
+        """更新控制頻率, 會同步改變 control_dt"""
+        if value <= 0:
+            return
+        with self.lock:
+            self._control_freq = value
+        log.info(f"控制頻率已更新為 {value} Hz (dt={self.control_dt:.4f}s)")
+
+    @property
+    def control_dt(self) -> float:
+        """根據控制頻率計算控制週期秒數"""
+        with self.lock:
+            return 1.0 / self._control_freq if self._control_freq > 0 else float('inf')
 
     # ---- Legacy compatibility methods ----
     def get_control_mode_string(self) -> str:

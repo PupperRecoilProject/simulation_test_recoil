@@ -144,8 +144,12 @@ class Simulation:
         self.model.actuator_biasprm[:, 1] = -params.kp
         self.model.actuator_biasprm[:, 2] = -params.kd
         self.data.ctrl[:] = target_pos
-        force_bias = np.full(self.config.num_motors, params.bias)
-        self.data.qfrc_applied[6:] = force_bias
+        # 若啟用 bias，才施加額外力矩，否則清零
+        if params.bias_enabled:
+            force_bias = np.full(self.config.num_motors, params.bias)
+            self.data.qfrc_applied[6:] = force_bias
+        else:
+            self.data.qfrc_applied[6:] = 0.0
 
     def step(self, state: SimulationState):
         while self.data.time < state.control_timer:

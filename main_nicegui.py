@@ -67,22 +67,28 @@ def main() -> None:
 
     sim, obs_builder, terrain_manager, floating_controller = create_simulation_components(use_sim, config)
 
-    state.sim = sim
-    state.terrain_manager_ref = terrain_manager
-    state.floating_controller_ref = floating_controller
+    # 使用 lock 確保設定參考時的執行緒安全
+    with state.lock:
+        state.sim = sim
+        state.terrain_manager_ref = terrain_manager
+        state.floating_controller_ref = floating_controller
 
     serial_comm = SerialCommunicator()
-    state.serial_communicator_ref = serial_comm
+    with state.lock:
+        state.serial_communicator_ref = serial_comm
 
     xbox_handler = XboxInputHandler(state)
-    state.xbox_handler_ref = xbox_handler
+    with state.lock:
+        state.xbox_handler_ref = xbox_handler
 
     policy_manager = PolicyManager(config, obs_builder, None)
-    state.policy_manager_ref = policy_manager
-    state.available_policies = policy_manager.model_names
+    with state.lock:
+        state.policy_manager_ref = policy_manager
+        state.available_policies = policy_manager.model_names
 
     hw_controller = HardwareController(config, policy_manager, state, serial_comm)
-    state.hardware_controller_ref = hw_controller
+    with state.lock:
+        state.hardware_controller_ref = hw_controller
 
     keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
     sim.register_callbacks(keyboard_handler)
