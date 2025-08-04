@@ -3,6 +3,8 @@ from state import SimulationState
 from xbox_controller import XboxController
 import threading
 import time
+# [新增] 導入事件系統
+from event_system import event_bus, EVENT_COMMAND_UPDATED
 
 class XboxInputHandler:
     """在背景執行緒中同步搖桿狀態至 SimulationState。"""
@@ -26,8 +28,9 @@ class XboxInputHandler:
         self.thread.start()
         print("✅ Xbox 輸入處理執行緒已啟動。")
 
+    # 【重構】_update_loop 函式
     def _update_loop(self) -> None:
-        """持續從搖桿讀取數據並更新 SimulationState。"""
+        """【修改後】持續從搖桿讀取數據，並將其作為事件發布，而不是直接修改全域狀態。"""
         param_keys = ['kp', 'kd', 'action_scale', 'bias']
         num_params = len(param_keys)
         last_input_state = {}
@@ -43,13 +46,24 @@ class XboxInputHandler:
                 continue
 
             current_input = self.controller.get_input()
+            
+            # --- 核心修改：從直接寫入 state 改為計算並發布事件 ---
+            # 1. 計算新的指令向量
+            new_command = np.zeros(3)
+            # 只有在 GAMEPAD 模式下才計算指令，避免干擾鍵盤模式
+            if self.state.input_mode == "GAMEPAD":
+                new_command[0] = current_input['left_analog_x'] * self.config.gamepad_sensitivity['vy']
+                new_command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1
+                new_command[2] = current_input['right_analog_x'] * self.config.gamepad_sensitivity['wz']
 
+            # 2. 發布指令更新事件
+            # 即使指令是[0,0,0]，我們也發布，讓State Manager知道最新的用戶意圖。
+            event_bus.publish(EVENT_COMMAND_UPDATED, command=new_command)
+
+            # 3. 處理按鍵事件 (例如重置、參數調整)
+            # 這些目前仍然是通過寫入請求旗標來實現，我們可以後續將它們也改為事件。
+            # (為了分步進行，我們暫時保留這部分邏輯)
             with self.state.lock:
-                if self.state.input_mode == "GAMEPAD":
-                    self.state.command[0] = current_input['left_analog_x'] * self.config.gamepad_sensitivity['vy']
-                    self.state.command[1] = current_input['left_analog_y'] * self.config.gamepad_sensitivity['vx'] * -1
-                    self.state.command[2] = current_input['right_analog_x'] * self.config.gamepad_sensitivity['wz']
-
                 if current_input['button_select'] and not last_input_state.get('button_select', 0):
                     self.state.hard_reset_requested = True
 

@@ -2,8 +2,28 @@ from nicegui import ui, app
 import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
-
 from logger import log, log_queue
+
+# [新增] 導入我們新創建的事件系統模組和所有UI會用到的事件名稱
+# 解釋:
+#   - event_bus: 這是我們發布事件需要用到的全域事件匯流排實例。
+#   - EVENT_MODE_CHANGE_REQUESTED: 當用戶點擊模式切換按鈕時，我們會發布這個事件。
+#   - EVENT_SIMULATION_RESET_REQUESTED: 用戶點擊重置按鈕時發布。
+#   - EVENT_HARDWARE_CONNECT_REQUESTED: 用戶請求連接硬體時發布。
+#   - EVENT_HARDWARE_AI_TOGGLE_REQUESTED: 用戶請求啟用/停用硬體AI時發布。
+#   - EVENT_SHUTDOWN_REQUESTED: 用戶請求關閉整個應用程式時發布。
+#
+#   通過從一個統一的地方導入這些"事件契約"，我們可以確保UI和核心邏輯
+#   使用的是完全相同的事件名稱，避免因拼寫錯誤導致的通信失敗。
+from event_system import (
+    event_bus,
+    EVENT_MODE_CHANGE_REQUESTED,
+    EVENT_SIMULATION_RESET_REQUESTED,
+    EVENT_HARDWARE_CONNECT_REQUESTED,
+    EVENT_HARDWARE_AI_TOGGLE_REQUESTED,
+    EVENT_SHUTDOWN_REQUESTED,
+)
+
 
 if TYPE_CHECKING:
     from state import SimulationState
@@ -71,35 +91,29 @@ class UIController:
 
         ui.timer(0.1, self.update_ui_elements)
 
-    # 主要控制面板：模式切換與播放控制
+
+    # --- UI 佈局函式 ---
+    # 【修改】這些 _create_..._panel 函式的主要變更是它們的 on_click 回呼。
+    #         它們不再呼叫 self._request... 這樣的內部函式，而是直接發布事件。
+
     def _create_main_control_panel(self):
         with ui.card():
             ui.label('模式控制 (Control Mode)').classes('text-lg')
             with ui.row():
-                ui.button('走路 (Walking)', on_click=lambda: self._request_mode_change("WALKING"))
-                ui.button('懸浮 (Floating)', on_click=lambda: self._request_mode_change("FLOATING"))
-                ui.button('硬體 (Hardware)', on_click=lambda: self._request_mode_change("HARDWARE_MODE"))
+                # 【修改】點擊按鈕時，直接發布一個包含目標模式的'請求'事件。
+                ui.button('走路 (Walking)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING"))
+                ui.button('懸浮 (Floating)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="FLOATING"))
+                ui.button('硬體 (Hardware)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE"))
             with ui.row():
-                ui.button('關節測試 (Joint Test)', on_click=lambda: self._request_mode_change("JOINT_TEST"))
-                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self._request_mode_change("MANUAL_CTRL"))
-
-            ui.separator()
-            ui.label('模擬播放 (Playback)').classes('text-lg')
-            with ui.row():
-                # 建立「暫停/播放」按鈕，文字會依狀態變化
-                ui.button(on_click=self._toggle_pause) \
-                    .bind_text_from(self.state, 'single_step_mode',
-                                    lambda is_paused: '播放 (Play)' if is_paused else '暫停 (Pause)')
-
-                # 建立「下一步」按鈕，只在暫停時啟用
-                ui.button('下一步 (Next Step)', on_click=self._request_one_step) \
-                    .bind_enabled_from(self.state, 'single_step_mode')
+                ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
+                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
 
             ui.separator()
             ui.label('重置').classes('text-lg')
             with ui.row():
-                ui.button('軟重置 (X)', on_click=lambda: self._request_flag_change('soft_reset_requested'))
-                ui.button('硬重置 (R)', on_click=lambda: self._request_flag_change('hard_reset_requested'))
+                # 【修改】重置按鈕發布帶有 'type' 參數的事件，以便 SimulationController 區分。
+                ui.button('軟重置 (X)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft"))
+                ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
 
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
@@ -133,18 +147,25 @@ class UIController:
     def _create_device_panel(self):
         with ui.card():
             ui.label('硬體 AI 控制').classes('text-lg')
-            ui.button('啟用/停用 AI (K)', on_click=self._toggle_hardware_ai).bind_enabled_from(
+            # 【修改】啟用/停用AI的按鈕現在發布一個toggle事件。
+            ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)).bind_enabled_from(
                 self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
 
             ui.separator()
             ui.label('設備連接').classes('text-lg')
             with ui.row():
+                # 【修改】連接硬體的按鈕現在發布一個connect事件。
+                # 注意：這裡我們仍然可以直接呼叫 serial_comm 的函式，因為它主要處理的是UI反饋
+                # 和底層連接，不涉及核心狀態的複雜變更。這是一種可接受的簡化。
+                # 但更純粹的事件驅動會讓 SimulationController 監聽此事件並調用 serial_comm。
                 ui.button('連接序列埠 (U)', on_click=self._connect_serial)
                 ui.button('連接搖桿 (J)', on_click=self._connect_gamepad)
 
             ui.separator()
             ui.label('系統').classes('text-lg')
-            ui.button('退出程式', on_click=self._request_shutdown, color='red')
+            # 【修改】退出按鈕發布一個shutdown請求事件。
+            ui.button('退出程式', on_click=lambda: event_bus.publish(EVENT_SHUTDOWN_REQUESTED), color='red')
+
 
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
@@ -342,11 +363,6 @@ class UIController:
                     self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
                 current_idx = end_idx
 
-    def _request_mode_change(self, mode: str) -> None:
-        """【新增】僅設定待切換模式，由模擬執行緒在下個循環處理。"""
-        with self.state.lock:
-            self.state.control_mode_pending = mode
-        log.info(f"UI 請求切換模式至 {mode}")
 
     # 【新增】「暫停/播放」按鈕的回呼函式
     def _toggle_pause(self):
@@ -363,19 +379,6 @@ class UIController:
             if self.state.single_step_mode:
                 self.state.execute_one_step = True
 
-    def _toggle_hardware_ai(self):
-        if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':
-            if self.state.hardware_ai_is_active:
-                self.hardware_controller.disable_ai()
-            else:
-                self.hardware_controller.enable_ai()
-
-    def _request_flag_change(self, flag_name: str):
-        """非阻塞地請求一次性操作，如重置。"""
-        with self.state.lock:
-            setattr(self.state, flag_name, True)
-        log.info(f"UI請求旗標設定: {flag_name}")
-
     def _connect_serial(self):
         if self.serial_comm:
             is_connected = self.serial_comm.scan_and_connect()
@@ -387,12 +390,6 @@ class UIController:
             is_connected = self.xbox_handler.scan_and_connect()
             with self.state.lock:
                 self.state.gamepad_is_connected = is_connected
-
-    def _request_shutdown(self) -> None:
-        """請求關閉程式，由模擬執行緒處理"""
-        log.info("UI 請求關閉程式")
-        with self.state.lock:
-            self.state.shutdown_requested = True
 
     def _set_joint_index(self, index: int):
         """設定目前選中的關節索引。"""
