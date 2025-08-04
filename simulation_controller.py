@@ -16,6 +16,7 @@ from event_system import (
     EVENT_TUNING_PARAM_SELECT_REQUESTED,
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_DEVICE_CONNECT_REQUESTED,
+    EVENT_SERIAL_COMMAND_SEND,
     # ... 根據需要導入其他事件
 )
 
@@ -60,6 +61,7 @@ class SimulationController:
         event_bus.subscribe(EVENT_TUNING_PARAM_SELECT_REQUESTED, self.on_tuning_param_select_requested)
         event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested)
         event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested)
+        event_bus.subscribe(EVENT_SERIAL_COMMAND_SEND, self.on_serial_command_send_requested)
         # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
         log.info("SimulationController 已訂閱所有核心請求事件。")
 
@@ -207,6 +209,22 @@ class SimulationController:
             is_connected = self.xbox_handler.scan_and_connect()
             with self.state.lock:
                 self.state.gamepad_is_connected = is_connected
+
+    def on_serial_command_send_requested(self, command: str):
+        """
+        [v3.0.1] 處理序列埠命令發送請求。
+        將命令安全地傳遞給 SerialCommunicator。
+        """
+        if self.serial_comm and self.serial_comm.is_connected:
+            try:
+                # 這裡調用 serial_comm 的 send_command，它內部會檢查是否被硬件控制器管理
+                self.serial_comm.send_command(command)
+                log.info(f"成功發送序列埠命令: '{command}'")
+            except Exception as e:
+                log.error(f"發送序列埠命令失敗: {e}")
+        else:
+            log.warning("序列埠未連接，無法發送命令。")
+
     # =========================================================================
 
 

@@ -274,6 +274,18 @@ class UIController:
                     .on('keydown.enter', self._send_serial_command)
                 ui.button('Send', on_click=self._send_serial_command)
 
+    def _send_serial_command(self):
+        """
+        [v3.0.1] 從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
+        不再直接調用 serial_comm。
+        """
+        command_text = self.serial_command_buffer.value
+        if command_text:
+            event_bus.publish(EVENT_SERIAL_COMMAND_SEND, command=command_text)
+            self.serial_command_buffer.set_value('') # 清空輸入框
+            log.info(f"> {command_text}")
+
+
     def update_ui_elements(self):
         """
         [v3.0.1] 定期從 SimulationState 讀取最新數據，並更新所有UI元件。

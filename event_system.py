@@ -35,6 +35,7 @@ EVENT_TERRAIN_CHANGE_REQUESTED = "request.terrain_change"        # 地形模式/
 EVENT_MANUAL_FLOAT_TOGGLED = "request.manual_float_toggled"    # 手動模式下的懸浮開關請求 {is_floating: bool}
 EVENT_JOINT_SELECT_REQUESTED = "request.joint_select"           # 關節測試/手動模式下的關節選擇請求 {index: int}
 EVENT_JOINT_VALUE_ADJUSTED = "request.joint_value_adjusted"     # 關節測試/手動模式下的關節值調整請求 {value?: float, direction?: float, clear?: bool}
+EVENT_SERIAL_COMMAND_SEND = "request.serial_command_send"       # 序列埠命令發送請求 {command: str}
 
 
 # --- 通知事件 (Notification Events) ---
