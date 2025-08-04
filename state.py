@@ -37,6 +37,9 @@ class HardwareState:
     is_connected: bool = False
     ai_is_active: bool = False
     status_text: str = "Not Connected"
+    last_update_time: float = 0.0  # 最後一次成功接收資料的時間
+    crc_error_count: int = 0       # CRC 錯誤次數
+    mismatch_count: int = 0        # 欄位長度錯誤次數
 
     # Teensy 端的感測值
     angular_velocity_radps: np.ndarray = field(default_factory=lambda: np.zeros(3))
