@@ -17,6 +17,12 @@ from event_system import (
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_DEVICE_CONNECT_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
+    EVENT_POLICY_CHANGE_REQUESTED,
+    EVENT_TERRAIN_CHANGE_REQUESTED,
+    EVENT_MANUAL_FLOAT_TOGGLED,
+    EVENT_JOINT_SELECT_REQUESTED,
+    EVENT_JOINT_VALUE_ADJUSTED,
+
     # ... 根據需要導入其他事件
 )
 
@@ -62,6 +68,12 @@ class SimulationController:
         event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested)
         event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested)
         event_bus.subscribe(EVENT_SERIAL_COMMAND_SEND, self.on_serial_command_send_requested)
+        event_bus.subscribe(EVENT_POLICY_CHANGE_REQUESTED, self.on_policy_change_requested)
+        event_bus.subscribe(EVENT_TERRAIN_CHANGE_REQUESTED, self.on_terrain_change_requested)
+        event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
+        event_bus.subscribe(EVENT_JOINT_SELECT_REQUESTED, self.on_joint_select_requested)
+        event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted)
+
         # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
         log.info("SimulationController 已訂閱所有核心請求事件。")
 
@@ -100,6 +112,11 @@ class SimulationController:
         while self._running.is_set():
             with self.state.lock:
                 shutdown_req = self.state.shutdown_requested
+                if hard_reset_req:
+                    self.state.hard_reset_requested = False # 讀取後立即清除
+            if hard_reset_req:
+                self.hard_reset() # 在主模擬執行緒中安全地執行硬重置
+
             should_close = shutdown_req
             if not is_headless:
                 should_close = should_close or self.sim.should_close()
@@ -241,6 +258,84 @@ class SimulationController:
                 log.error(f"發送序列埠命令失敗: {e}")
         else:
             log.warning("序列埠未連接，無法發送命令。")
+
+    def on_policy_change_requested(self, policy_name: str):
+        """處理AI策略切換請求。"""
+        if self.policy_manager:
+            log.info(f"接收到切換策略請求: {policy_name}")
+            self.policy_manager.select_target_policy(policy_name)
+
+    def on_terrain_change_requested(self, name: str):
+        """
+        [v3.1.2] 處理地形切換請求。
+        此版本不再直接呼叫 hard_reset，而是設定請求旗標。
+        """
+        if not self.terrain_manager or not self.terrain_manager.is_functional:
+            return
+            
+        log.info(f"接收到切換地形請求: {name}")
+        
+        # 標記是否需要重置
+        needs_reset = False
+        with self.state.lock:
+            if name == 'INFINITE':
+                if self.state.terrain_mode != 'INFINITE':
+                    self.state.terrain_mode = 'INFINITE'
+                    self.terrain_manager.reset()
+                    needs_reset = True
+            else:
+                if name in self.terrain_manager.single_terrain_names:
+                    new_index = self.terrain_manager.single_terrain_names.index(name)
+                    if self.state.terrain_mode != 'SINGLE' or self.state.single_terrain_index != new_index:
+                        self.state.terrain_mode = 'SINGLE'
+                        self.state.single_terrain_index = new_index
+                        self.terrain_manager.set_single_terrain(name)
+                        needs_reset = True
+        
+        # 在鎖外設定請求旗標
+        if needs_reset:
+            log.info("地形已變更，請求硬重置以應用...")
+            with self.state.lock:
+                self.state.hard_reset_requested = True
+
+
+    def on_manual_float_toggled(self, is_floating: bool):
+        """處理手動模式下的懸浮開關請求。"""
+        with self.state.lock:
+            self.state.manual_mode_is_floating = is_floating
+        log.info(f"手動懸浮狀態切換為: {is_floating}")
+
+    def on_joint_select_requested(self, index: int):
+        """處理關節選擇請求。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                self.state.joint_test_index = index
+            elif self.state.control_mode == "MANUAL_CTRL":
+                self.state.manual_ctrl_index = index
+        log.debug(f"當前選中關節索引: {index}")
+
+    def on_joint_value_adjusted(self, value: float = None, direction: float = None, clear: bool = False):
+        """處理關節值調整請求。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                idx = self.state.joint_test_index
+                if clear:
+                    self.state.joint_test_offsets[idx] = 0.0
+                elif value is not None: # 來自滑桿的絕對值
+                    self.state.joint_test_offsets[idx] = value - self.state.sim.default_pose[idx]
+                elif direction is not None: # 來自按鈕的步進
+                    self.state.joint_test_offsets[idx] += direction
+            
+            elif self.state.control_mode == "MANUAL_CTRL":
+                idx = self.state.manual_ctrl_index
+                if clear:
+                    # 在手動模式下，歸零可能意味著回到預設站姿的對應關節角度
+                    self.state.manual_final_ctrl[idx] = self.sim.default_pose[idx]
+                elif value is not None:
+                    self.state.manual_final_ctrl[idx] = value
+                elif direction is not None:
+                    self.state.manual_final_ctrl[idx] += direction
+
 
     # =========================================================================
 
