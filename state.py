@@ -40,33 +40,36 @@ class SimulationState:
 
     control_timer: float = 0.0 # 控制迴圈的計時器
     
+    # 【新增】用於硬重置後物理穩定化的計時器
+    stabilization_end_time: float = -1.0
+    
     sim_mode_text: str = "Initializing" # 舊的模式文字，可能可以移除
     input_mode: str = "KEYBOARD" # 當前的輸入模式 ("KEYBOARD" 或 "GAMEPAD")
+    
+    # 【修改】控制模式現在包含 STABILIZING 狀態
+    # WALKING, FLOATING, HARDWARE_MODE, JOINT_TEST, MANUAL_CTRL, SERIAL_MODE, STABILIZING
     control_mode: str = "WALKING" # 當前的總控制模式 (例如 "WALKING", "HARDWARE_MODE")
-    # 【新增】UI 執行緒若想切換模式，先將欲切換的模式寫入此處，模擬執行緒會在下一迴圈處理
+    
     control_mode_pending: str | None = None
-    previous_control_mode: str = "WALKING" # 【新功能】儲存進入 SERIAL_MODE 前的模式，以便能正確返回
+    previous_control_mode: str = "WALKING"
 
     terrain_mode: str = "INFINITE" # 當前的地形模式 ("INFINITE" 或 "SINGLE")
     single_terrain_index: int = 0 # 在 SINGLE 地形模式下，當前選擇的地形索引
 
-    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([])) # 最新一幀的 ONNX 模型輸入向量
-    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最新一幀的 ONNX 模型原始輸出
-    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最終計算後要傳給致動器的控制指令
-    latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3)) # 機器人軀幹的最新位置
-    latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.])) # 機器人軀幹的最新姿態（四元數）
-    # 新增欄位：安全儲存最新的各關節角度，避免 UI 執行緒直接讀取 sim.data
+    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
+    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
     display_page: int = 0 # 除錯資訊顯示的當前頁碼
     num_display_pages: int = 2 # 除錯資訊的總頁數
 
-    # --- 【序列埠控制台模式相關狀態】 ---
-
     joint_test_index: int = 0 # 在關節測試模式下，當前選中的關節索引
-    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存各關節在測試模式下的偏移量
+    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
 
     manual_ctrl_index: int = 0 # 在手動控制模式下，當前選中的關節索引
-    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存手動控制模式下的最終控制角度
+    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     manual_mode_is_floating: bool = False # 標記手動控制模式下是否啟用懸浮
 
     serial_is_connected: bool = False # 標記序列埠是否已連接
@@ -74,7 +77,6 @@ class SimulationState:
 
     tuning_param_index: int = 0 # 當前選中要調整的參數索引 (Kp, Kd, etc.)
 
-    # --- 【核心修改】將所有主要物件的參考儲存在此，使其成為全域上下文 ---
     sim: 'Simulation' = None # 模擬環境物件的參考
     floating_controller_ref: 'FloatingController' = None # 懸浮控制器物件的參考
     terrain_manager_ref: 'TerrainManager' = None # 地形管理器物件的參考
@@ -133,18 +135,15 @@ class SimulationState:
             if new_mode == "SERIAL_MODE":
                 self.previous_control_mode = old_mode
 
-            # 僅變更模式，不做任何實際硬體或模擬操作
             self.control_mode = new_mode
             log.info(f"控制模式已設定為: {self.control_mode}")
 
-            # 進入新模式時初始化相關狀態
             if new_mode == "JOINT_TEST":
                 self.joint_test_offsets.fill(0.0)
             elif new_mode == "MANUAL_CTRL":
                 initial_pose = self.sim.default_pose.copy() if hasattr(self.sim, 'default_pose') else np.zeros(self.config.num_motors)
                 self.manual_final_ctrl[:] = initial_pose
 
-            # 若從手動模式回到 AI 模式，重置 AI 狀態
             is_entering_ai = new_mode in ["WALKING", "FLOATING"]
             is_leaving_manual = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
             if is_entering_ai and is_leaving_manual:
