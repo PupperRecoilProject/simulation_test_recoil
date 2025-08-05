@@ -65,16 +65,17 @@ class HardwareController:
             log.info("硬體控制器已在運行中。")
             return
 
-        # 所有前置檢查邏輯
+        # 原本的程式碼會在檢查失敗時，強制將模式設回 WALKING。
+        # 我們將其移除，讓 UI 層來決定是否允許用戶進入此模式。
         if not self.serial_comm.is_connected:
             log.error("❌ 硬體模式錯誤：請先連接序列埠。")
-            self.global_state.set_control_mode("WALKING")
+            # self.global_state.set_control_mode("WALKING") # <--【刪除】
             return
 
         self.ser = self.serial_comm.get_serial_connection()
         if not self.ser:
             log.error("❌ 硬體模式錯誤：無法取得有效序列埠連接。")
-            self.global_state.set_control_mode("WALKING")
+            # self.global_state.set_control_mode("WALKING") # <--【刪-除】
             return
 
         # 接管序列埠控制權

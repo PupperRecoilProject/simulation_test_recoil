@@ -22,7 +22,7 @@ from event_system import (
     EVENT_MANUAL_FLOAT_TOGGLED,
     EVENT_JOINT_SELECT_REQUESTED,
     EVENT_JOINT_VALUE_ADJUSTED,
-
+    EVENT_SHUTDOWN_REQUESTED,
     # ... 根據需要導入其他事件
 )
 
@@ -73,6 +73,8 @@ class SimulationController:
         event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
         event_bus.subscribe(EVENT_JOINT_SELECT_REQUESTED, self.on_joint_select_requested)
         event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted)
+        event_bus.subscribe(EVENT_SHUTDOWN_REQUESTED, self.on_shutdown_requested)
+
 
         # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
         log.info("SimulationController 已訂閱所有核心請求事件。")
@@ -360,6 +362,16 @@ class SimulationController:
                     self.state.manual_final_ctrl[idx] = value
                 elif direction is not None:
                     self.state.manual_final_ctrl[idx] += direction
+
+    def on_shutdown_requested(self):
+        """
+        【新增】處理關閉應用程式的請求。
+        此回呼只負責設定旗標，由主迴圈安全地執行關閉流程。
+        """
+        log.info("接收到全域關閉請求，正在設定旗標...")
+        with self.state.lock:
+            self.state.shutdown_requested = True
+
 
 
     # =========================================================================

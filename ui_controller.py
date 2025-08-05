@@ -113,12 +113,19 @@ class UIController:
                 # 【修改】點擊按鈕時，直接發布一個包含目標模式的'請求'事件。
                 ui.button('走路 (Walking)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING"))
                 ui.button('懸浮 (Floating)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="FLOATING"))
-                ui.button('硬體 (Hardware)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE"))
+
+                # 【核心修改】為「硬體」按鈕增加啟用條件綁定
+                # 它現在只會在 self.state.serial_is_connected 為 True 時才可點擊。
+                # 這為使用者提供了清晰的視覺引導：必須先連接序列埠。
+                ui.button('硬體 (Hardware)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE")) \
+                  .bind_enabled_from(self.state, 'serial_is_connected')
+            
             with ui.row():
                 ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
                 ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
 
             ui.separator()
+
             ui.label('重置').classes('text-lg')
             with ui.row():
                 # 【修改】重置按鈕發布帶有 'type' 參數的事件，以便 SimulationController 區分。
