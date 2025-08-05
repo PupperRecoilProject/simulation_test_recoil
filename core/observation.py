@@ -4,7 +4,7 @@ import mujoco
 from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
-    from config import AppConfig
+    from utils.config import AppConfig
 
 class ObservationBuilder:
     def __init__(self, data, model, torso_id, default_pose, config: 'AppConfig'):
@@ -70,11 +70,15 @@ class ObservationBuilder:
         return np.concatenate(obs_list).astype(np.float32)
 
     def _get_torso_inverse_rotation(self):
+        """取得軀幹姿態的逆四元數 (單位化後的共軛)"""
         torso_quat = self.data.xquat[self.torso_id]
-        norm = np.sum(np.square(torso_quat))
-        if norm < 1e-8: torso_quat = np.array([1., 0, 0, 0])
-        torso_quat /= np.sqrt(np.sum(np.square(torso_quat)))
-        return np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / np.sum(np.square(torso_quat))
+        norm_sq = np.sum(torso_quat ** 2)
+        if norm_sq < 1e-8:
+            return np.array([1., 0, 0, 0])
+        torso_quat /= np.sqrt(norm_sq)
+        q_inv = torso_quat.copy()
+        q_inv[1:] *= -1  # 共軛
+        return q_inv
 
     def _rotate_vec_by_quat_inv(self, v, q_inv):
         u, s = q_inv[1:], q_inv[0]

@@ -1,154 +1,261 @@
-# state.py
 from __future__ import annotations
+"""Central state module with clear operating modes."""
 import numpy as np
-
 from dataclasses import dataclass, field
-from config import AppConfig
-from logger import log
-from typing import TYPE_CHECKING
+from enum import Enum, auto
 import threading
+from typing import TYPE_CHECKING, Any
 
-# 為了型別提示，避免循環匯入
+from utils.config import AppConfig
+from utils.logger import log
+
 if TYPE_CHECKING:
-    import mujoco
-    from floating_controller import FloatingController
-    from policy import PolicyManager
-    from hardware_controller import HardwareController
-    from terrain_manager import TerrainManager
-    from serial_communicator import SerialCommunicator
-    from simulation import Simulation
-    from xbox_input_handler import XboxInputHandler
+    from core.simulation import Simulation
 
+# ========================
+# Mode Enumerations  模式列舉
+# ========================
+class OperatingMode(Enum):
+    """頂層操作模式: 模擬 or 真實硬體"""
+    SIMULATION = auto()
+    HARDWARE = auto()
+
+class ControlSubMode(Enum):
+    """控制子模式, both for sim & hardware"""
+    WALKING = auto()       # AI 走路
+    FLOATING = auto()      # AI 懸浮
+    JOINT_TEST = auto()    # 手動關節測試
+    MANUAL_CTRL = auto()   # 手動姿態控制
+    IDLE = auto()          # 待機
+
+# ========================
+# Hardware State  硬體狀態
+# ========================
+@dataclass
+class HardwareState:
+    """即時硬體相關數據"""
+    is_connected: bool = False
+    ai_is_active: bool = False
+    status_text: str = "Not Connected"
+    last_update_time: float = 0.0  # 最後一次成功接收資料的時間
+    crc_error_count: int = 0       # CRC 錯誤次數
+    mismatch_count: int = 0        # 欄位長度錯誤次數
+
+    # Teensy 端的感測值
+    angular_velocity_radps: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    gravity_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    linear_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    joint_positions_rad: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    joint_velocities_radps: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+    # PC 端為硬體準備的資訊 (for UI)
+    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
+    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+# ========================
+# Tuning Params   調校參數
+# ========================
 @dataclass
 class TuningParams:
-    """用於即時調整機器人控制參數的類別。"""
-    kp: float # P gain (Proportional gain)
-    kd: float # D gain (Derivative gain)
-    action_scale: float # 動作縮放比例
-    bias: float # 力矩偏置
+    kp: float
+    kd: float
+    action_scale: float
+    bias: float
+    bias_enabled: bool = False  # 是否啟用偏壓力矩, 預設關閉以更安全
 
+# ========================
+# Simulation State  主狀態容器
+# ========================
 @dataclass
 class SimulationState:
-    """Central state shared across threads."""
     config: AppConfig
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    operating_mode: OperatingMode = OperatingMode.SIMULATION
+    control_sub_mode: ControlSubMode = ControlSubMode.WALKING
+
+    # 專用硬體狀態
+    hardware: HardwareState = field(default_factory=HardwareState)
+
+    # 模擬專用最新資料
+    sim_latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
+    sim_latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    sim_latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    sim_latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    sim_latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.], dtype=np.float32))
+    sim_latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+    # 使用者命令與調校參數
     command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
-    
-    hard_reset_requested: bool = False # 硬重置請求旗標
-    soft_reset_requested: bool = False # 軟重置請求旗標
+    input_mode: str = "KEYBOARD"
 
-    control_timer: float = 0.0 # 控制迴圈的計時器
-    
-    sim_mode_text: str = "Initializing" # 舊的模式文字，可能可以移除
-    input_mode: str = "KEYBOARD" # 當前的輸入模式 ("KEYBOARD" 或 "GAMEPAD")
-    control_mode: str = "WALKING" # 當前的總控制模式 (例如 "WALKING", "HARDWARE_MODE")
-    # 【新增】UI 執行緒若想切換模式，先將欲切換的模式寫入此處，模擬執行緒會在下一迴圈處理
-    control_mode_pending: str | None = None
-    previous_control_mode: str = "WALKING" # 【新功能】儲存進入 SERIAL_MODE 前的模式，以便能正確返回
+    # 地形相關設定 Terrain
+    terrain_mode: str = "INFINITE"            # 地形模式: 無限或單一
+    single_terrain_index: int = 0              # 單一地形索引
 
-    terrain_mode: str = "INFINITE" # 當前的地形模式 ("INFINITE" 或 "SINGLE")
-    single_terrain_index: int = 0 # 在 SINGLE 地形模式下，當前選擇的地形索引
+    # 手動控制相關
+    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    manual_mode_is_floating: bool = False
+    joint_test_index: int = 0               # 目前選中的關節索引
+    manual_ctrl_index: int = 0              # 手動控制模式下的關節索引
 
-    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([])) # 最新一幀的 ONNX 模型輸入向量
-    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最新一幀的 ONNX 模型原始輸出
-    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最終計算後要傳給致動器的控制指令
-    latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3)) # 機器人軀幹的最新位置
-    latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.])) # 機器人軀幹的最新姿態（四元數）
-    # 新增欄位：安全儲存最新的各關節角度，避免 UI 執行緒直接讀取 sim.data
-    latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
-    display_page: int = 0 # 除錯資訊顯示的當前頁碼
-    num_display_pages: int = 2 # 除錯資訊的總頁數
+    # UI 旗標
+    hard_reset_requested: bool = False
+    soft_reset_requested: bool = False
+    single_step_mode: bool = False
+    execute_one_step: bool = False
+    shutdown_requested: bool = False
+    serial_is_connected: bool = False      # 序列埠是否已連接
+    gamepad_is_connected: bool = False     # 搖桿是否已連接
+    serial_command_buffer: str = ""        # 序列埠輸入緩衝
+    tuning_param_index: int = 0            # 目前調整參數索引
+    display_page: int = 0                  # 目前顯示頁面
+    num_display_pages: int = 1             # 顯示頁面數量
+    previous_control_mode: str = "WALKING"  # 追蹤前一個模式 (相容舊介面)
+    control_mode_pending: str | None = None # 待切換模式 (相容舊介面)
 
-    # --- 【序列埠控制台模式相關狀態】 ---
+    # 內部變數: 控制頻率，可動態調整
+    _control_freq: float = field(init=False)
 
-    joint_test_index: int = 0 # 在關節測試模式下，當前選中的關節索引
-    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存各關節在測試模式下的偏移量
+    # 外部模組參考 (References)
+    sim: Simulation | None = None
+    policy_manager_ref: Any = None
+    hardware_controller_ref: Any = None
+    serial_communicator_ref: Any = None
+    xbox_handler_ref: Any = None
+    terrain_manager_ref: Any = None
+    floating_controller_ref: Any = None
 
-    manual_ctrl_index: int = 0 # 在手動控制模式下，當前選中的關節索引
-    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存手動控制模式下的最終控制角度
-    manual_mode_is_floating: bool = False # 標記手動控制模式下是否啟用懸浮
+    def __post_init__(self) -> None:
+        """初始化後設置調校參數與控制頻率"""
+        self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__)
+        self._control_freq = self.config.control_freq
+        log.info("✅ 重構版 SimulationState 初始化完成 (含便利方法與動態控制頻率)。")
 
-    serial_is_connected: bool = False # 標記序列埠是否已連接
-    gamepad_is_connected: bool = False # 標記遊戲搖桿是否已連接
-
-    tuning_param_index: int = 0 # 當前選中要調整的參數索引 (Kp, Kd, etc.)
-
-    # --- 【核心修改】將所有主要物件的參考儲存在此，使其成為全域上下文 ---
-    sim: 'Simulation' = None # 模擬環境物件的參考
-    floating_controller_ref: 'FloatingController' = None # 懸浮控制器物件的參考
-    terrain_manager_ref: 'TerrainManager' = None # 地形管理器物件的參考
-    policy_manager_ref: 'PolicyManager' = None # 策略管理器物件的參考
-    hardware_controller_ref: 'HardwareController' = None # 硬體控制器物件的參考
-    serial_communicator_ref: 'SerialCommunicator' = None # 序列埠通訊器物件的參考
-    xbox_handler_ref: 'XboxInputHandler' = None # Xbox 搖桿處理器的參考
-    
-    available_policies: list = field(default_factory=list) # 所有可用的 ONNX 策略名稱列表
-    
-    hardware_is_connected: bool = False # 標記硬體控制器是否已成功啟動
-    hardware_ai_is_active: bool = False # 標記硬體模式下的 AI 是否已啟用
-    hardware_status_text: str = "Not Connected" # 用於在 UI 上顯示的硬體狀態文字
-
-    single_step_mode: bool = False # 標記是否處於單步模擬模式
-    execute_one_step: bool = False # 在單步模式下，請求執行下一步的旗標
-
-    shutdown_requested: bool = False  # 新增：UI 請求程式結束
-
-    def __post_init__(self):
-        """在初始化後，根據設定檔設定初始值。"""
-        self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__) # 從設定檔初始化調校參數
-        self.latest_action_raw = np.zeros(self.config.num_motors) # 初始化原始動作向量
-        self.latest_final_ctrl = np.zeros(self.config.num_motors) # 初始化最終控制向量
-        self.manual_final_ctrl = np.zeros(self.config.num_motors) # 初始化手動控制向量
-        self.latest_joint_positions = np.zeros(self.config.num_motors) # 初始化關節位置副本
-        log.info("✅ SimulationState 初始化完成 (含執行緒鎖)。")
-
-    def reset_control_state(self, sim_time: float):
-        """重置控制迴圈的計時器。"""
-        self.control_timer = sim_time # 將計時器設定為當前的模擬時間
-        log.info("✅ 控制狀態已重置。")
-
-    def clear_command(self):
-        """清除使用者輸入的運動指令。"""
-        self.command.fill(0.0)  # 將指令向量全部設為 0
+    # =============
+    # Convenience Methods 便利方法
+    # =============
+    def clear_command(self) -> None:
+        """清除使用者輸入的運動指令"""
+        with self.lock:
+            self.command.fill(0.0)
         log.info("運動指令已清除。")
 
-    def toggle_input_mode(self, new_mode: str, clear_cmd: bool = True):
-        """切換輸入模式，可選擇是否清除現有指令。"""
+    def toggle_input_mode(self, new_mode: str, clear_cmd: bool = True) -> None:
+        """切換輸入模式，可選擇是否清除指令"""
         with self.lock:
             if self.input_mode != new_mode:
                 self.input_mode = new_mode
                 if clear_cmd:
-                    self.clear_command()
+                    self.command.fill(0.0)
                 log.info(f"輸入模式已切換至: {self.input_mode}")
-            
-    def set_control_mode(self, new_mode: str):
-        """更新控制模式，此函式僅變更狀態本身。"""
+
+    def request_mode_change(self, new_op: OperatingMode, new_sub: ControlSubMode) -> None:
+        """統一的模式切換接口"""
         with self.lock:
-            if self.control_mode == new_mode:
-                return
+            self.operating_mode = new_op
+            self.control_sub_mode = new_sub
+        log.info(f"模式已切換至: {new_op.name}/{new_sub.name}")
 
-            old_mode = self.control_mode
+    def request_sub_mode_change(self, new_sub: ControlSubMode) -> None:
+        """僅改變控制子模式的便捷函式"""
+        with self.lock:
+            self.control_sub_mode = new_sub
+        log.info(f"控制子模式已請求切換至: {new_sub.name}")
 
-            if new_mode == "SERIAL_MODE":
-                self.previous_control_mode = old_mode
+    # -------- 動態控制頻率與週期 --------
+    @property
+    def control_freq(self) -> float:
+        """取得目前控制頻率 Hz"""
+        with self.lock:
+            return self._control_freq
 
-            # 僅變更模式，不做任何實際硬體或模擬操作
-            self.control_mode = new_mode
-            log.info(f"控制模式已設定為: {self.control_mode}")
+    @control_freq.setter
+    def control_freq(self, value: float) -> None:
+        """更新控制頻率, 會同步改變 control_dt"""
+        if value <= 0:
+            return
+        with self.lock:
+            self._control_freq = value
+        log.info(f"控制頻率已更新為 {value} Hz (dt={self.control_dt:.4f}s)")
 
-            # 進入新模式時初始化相關狀態
-            if new_mode == "JOINT_TEST":
-                self.joint_test_offsets.fill(0.0)
-            elif new_mode == "MANUAL_CTRL":
-                initial_pose = self.sim.default_pose.copy() if hasattr(self.sim, 'default_pose') else np.zeros(self.config.num_motors)
-                self.manual_final_ctrl[:] = initial_pose
+    @property
+    def control_dt(self) -> float:
+        """根據控制頻率計算控制週期秒數"""
+        with self.lock:
+            return 1.0 / self._control_freq if self._control_freq > 0 else float('inf')
 
-            # 若從手動模式回到 AI 模式，重置 AI 狀態
-            is_entering_ai = new_mode in ["WALKING", "FLOATING"]
-            is_leaving_manual = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
-            if is_entering_ai and is_leaving_manual:
-                log.info("從手動模式返回，重置 AI 狀態...")
-                if self.policy_manager_ref:
-                    self.policy_manager_ref.reset()
-                self.clear_command()
+    # ---- Legacy compatibility methods ----
+    def get_control_mode_string(self) -> str:
+        """以舊字串格式回傳目前模式"""
+        if self.operating_mode == OperatingMode.HARDWARE:
+            return "HARDWARE_MODE"
+        return self.control_sub_mode.name
+
+    def set_control_mode(self, mode: str) -> None:
+        """相容舊介面的模式設定函式"""
+        mapping = {
+            "WALKING": (OperatingMode.SIMULATION, ControlSubMode.WALKING),
+            "FLOATING": (OperatingMode.SIMULATION, ControlSubMode.FLOATING),
+            "JOINT_TEST": (OperatingMode.SIMULATION, ControlSubMode.JOINT_TEST),
+            "MANUAL_CTRL": (OperatingMode.SIMULATION, ControlSubMode.MANUAL_CTRL),
+            "HARDWARE_MODE": (OperatingMode.HARDWARE, ControlSubMode.IDLE),
+        }
+        with self.lock:
+            self.previous_control_mode = self.get_control_mode_string()
+        op, sub = mapping.get(mode, (self.operating_mode, self.control_sub_mode))
+        self.request_mode_change(op, sub)
+
+    # 提供舊屬性接口，避免舊模組存取失敗
+    @property
+    def control_mode(self) -> str:  # 讀取時回傳舊格式字串
+        return self.get_control_mode_string()
+
+    @control_mode.setter
+    def control_mode(self, mode: str) -> None:  # 寫入時自動映射到新枚舉
+        self.set_control_mode(mode)
+
+    # Legacy alias properties for backward compatibility -----------------
+    @property
+    def latest_pos(self) -> np.ndarray:
+        return self.sim_latest_pos
+
+    @latest_pos.setter
+    def latest_pos(self, value: np.ndarray) -> None:
+        self.sim_latest_pos = value
+
+    @property
+    def latest_joint_positions(self) -> np.ndarray:
+        return self.sim_latest_joint_positions
+
+    @latest_joint_positions.setter
+    def latest_joint_positions(self, value: np.ndarray) -> None:
+        self.sim_latest_joint_positions = value
+
+    @property
+    def latest_onnx_input(self) -> np.ndarray:
+        return self.sim_latest_onnx_input
+
+    @latest_onnx_input.setter
+    def latest_onnx_input(self, value: np.ndarray) -> None:
+        self.sim_latest_onnx_input = value
+
+    @property
+    def latest_action_raw(self) -> np.ndarray:
+        return self.sim_latest_action_raw
+
+    @latest_action_raw.setter
+    def latest_action_raw(self, value: np.ndarray) -> None:
+        self.sim_latest_action_raw = value
+
+    @property
+    def latest_final_ctrl(self) -> np.ndarray:
+        return self.sim_latest_final_ctrl
+
+    @latest_final_ctrl.setter
+    def latest_final_ctrl(self, value: np.ndarray) -> None:
+        self.sim_latest_final_ctrl = value

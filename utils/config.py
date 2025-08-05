@@ -20,6 +20,14 @@ class FloatingControllerConfig:
     kp_attitude: float
     kd_attitude: float
 
+# [新增] 級聯控制器設定，用於硬體模式 PD 外層控制
+@dataclass
+class CascadeControllerConfig:
+    pos_kp: float
+    vel_kp: float
+    max_target_velocity_rad_s: float
+    torque_limit: float
+
 @dataclass
 class AppConfig:
     """儲存所有應用程式設定的資料類別。"""
@@ -31,8 +39,7 @@ class AppConfig:
     
     num_motors: int
     physics_timestep: float
-    control_freq: float
-    control_dt: float
+    control_freq: float           # 控制頻率 (Hz)
     warmup_duration: float
     command_scaling_factors: List[float]
     
@@ -42,6 +49,7 @@ class AppConfig:
 
     initial_tuning_params: TuningParamsConfig
     floating_controller: FloatingControllerConfig
+    cascade_controller: CascadeControllerConfig
 
 def load_config(path: str = "config.yaml") -> AppConfig:
     """
@@ -57,6 +65,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
     floating_config = FloatingControllerConfig(**config_data['floating_controller'])
+    cascade_config = CascadeControllerConfig(**config_data['cascade_controller'])
     
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
@@ -67,17 +76,17 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         num_motors=config_data['num_motors'],
         physics_timestep=config_data['physics_timestep'],
         control_freq=config_data['control_freq'],
-        control_dt=1.0 / config_data['control_freq'],
         warmup_duration=config_data['warmup_duration'],
         command_scaling_factors=config_data['command_scaling_factors'],
         
         keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
         gamepad_sensitivity=config_data['gamepad_sensitivity'],
         param_adjust_steps=config_data['param_adjust_steps'],
-        
+
         initial_tuning_params=tuning_params,
-        floating_controller=floating_config
+        floating_controller=floating_config,
+        cascade_controller=cascade_config
     )
-    
-    print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")
+
+    print("✅ 設定檔載入成功 (含 Cascade Controller 設定)。")
     return config_obj

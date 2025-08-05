@@ -6,12 +6,12 @@ import numpy as np
 import time  # 新增: 提供初始化延遲
 from typing import TYPE_CHECKING, Optional
 
-from config import AppConfig
+from utils.config import AppConfig
 from state import SimulationState, TuningParams
 from rendering import DebugOverlay
 
 if TYPE_CHECKING:
-    from keyboard_input_handler import KeyboardInputHandler
+    from inputs.keyboard_input_handler import KeyboardInputHandler
 
 class Simulation:
     """
@@ -55,7 +55,7 @@ class Simulation:
 
         # 視窗與渲染上下文將在模擬執行緒中初始化
 
-    def initialize_window_and_context(self):
+    def initialize_window_and_context(self, state: SimulationState):
         """在當前執行緒中初始化 GLFW 與渲染上下文。"""
         if not glfw.init():
             sys.exit("❌ 錯誤: GLFW 初始化失敗。")
@@ -73,7 +73,7 @@ class Simulation:
 
         self.cam = mujoco.MjvCamera()
         self.opt = mujoco.MjvOption()
-        self.overlay = DebugOverlay()
+        self.overlay = DebugOverlay(state)
         mujoco.mjv_defaultCamera(self.cam)
         mujoco.mjv_defaultOption(self.opt)
         self.cam.distance, self.cam.elevation, self.cam.azimuth = 2.5, -20, 90
@@ -144,8 +144,12 @@ class Simulation:
         self.model.actuator_biasprm[:, 1] = -params.kp
         self.model.actuator_biasprm[:, 2] = -params.kd
         self.data.ctrl[:] = target_pos
-        force_bias = np.full(self.config.num_motors, params.bias)
-        self.data.qfrc_applied[6:] = force_bias
+        # 若啟用 bias，才施加額外力矩，否則清零
+        if params.bias_enabled:
+            force_bias = np.full(self.config.num_motors, params.bias)
+            self.data.qfrc_applied[6:] = force_bias
+        else:
+            self.data.qfrc_applied[6:] = 0.0
 
     def step(self, state: SimulationState):
         while self.data.time < state.control_timer:

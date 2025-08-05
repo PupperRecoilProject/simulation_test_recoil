@@ -6,22 +6,21 @@ from state import SimulationState
 from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
-    from simulation import Simulation
+    from core.simulation import Simulation
 
 class DebugOverlay:
-    """
-    負責在 MuJoCo 視窗上渲染所有文字除錯資訊。
-    """
-    def __init__(self):
+    """負責在 MuJoCo 視窗上渲染文字除錯資訊。"""
+
+    def __init__(self, state: SimulationState):
         self.recipe: List[str] = []
         self.component_dims: Dict[str, int] = {}
-        
+
         self.display_pages_content = [
             ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'],
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
-        state_class_ref = SimulationState
-        state_class_ref.num_display_pages = len(self.display_pages_content)
+        # [修正] 直接設定實例的頁面數，避免僅更新類別屬性造成 1/1 顯示
+        state.num_display_pages = len(self.display_pages_content)
 
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要顯示的觀察配方。"""
@@ -80,7 +79,7 @@ class DebugOverlay:
         top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height)
         mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8)
 
-        ai_status = "Enabled" if state.hardware_ai_is_active else "Disabled"
+        ai_status = "Enabled" if state.hardware.ai_is_active else "Disabled"
         title = f"--- HARDWARE CONTROL MODE (AI: {ai_status}) ---"
         help_text = "Press 'H' to exit | 'K': Toggle AI | 'G': Joint Test | 1..: Select Policy"
 
@@ -95,7 +94,7 @@ class DebugOverlay:
             else:
                 policy_text = f"Active Policy: {pm.primary_policy_name}"
 
-        status_text = f"--- Real-time Hardware Status ---\n{state.hardware_status_text}"
+        status_text = f"--- Real-time Hardware Status ---\n{state.hardware.status_text}"
         sensor_text = ""
         hw_ctrl = state.hardware_controller_ref
         if hw_ctrl and hw_ctrl.is_running:
@@ -133,7 +132,7 @@ class DebugOverlay:
         title = "--- SERIAL CONSOLE MODE (Press ~ to exit) ---"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
         
-        from logger import log_queue
+        from utils.logger import log_queue
         log_text = "\n".join(list(log_queue)[-50:])
         log_rect = mujoco.MjrRect(console_rect.left + 10, console_rect.bottom, console_rect.width - 20, console_rect.height - 50)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, log_rect, "\n\n" + log_text, " ", context)

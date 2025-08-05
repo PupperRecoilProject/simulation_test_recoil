@@ -5,7 +5,7 @@ import random
 from typing import Dict, Optional, Callable, Tuple
 from datetime import datetime
 from PIL import Image
-from logger import log
+from utils.logger import log
 
 # 為了型別提示，避免循環匯入
 from typing import TYPE_CHECKING

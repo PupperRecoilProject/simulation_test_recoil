@@ -4,7 +4,7 @@ try:
 except ImportError:  # 無頭環境可能沒有安裝 glfw
     glfw = None
 from state import SimulationState
-from logger import log
+from utils.logger import log
 
 class KeyboardInputHandler:
     """處理所有鍵盤輸入事件，並根據當前模式進行分派。"""
@@ -129,8 +129,9 @@ class KeyboardInputHandler:
         # --- 長按事件 (重複觸發) ---
         if action in [glfw.PRESS, glfw.REPEAT]:
             step = self.config.keyboard_velocity_adjust_step
+            # 指令順序為 [vy, vx, wz]
             with self.state.lock:
-                if key == glfw.KEY_Q: 
+                if key == glfw.KEY_Q:
                     self.state.command[2] += step
                     return
                 elif key == glfw.KEY_E:
@@ -158,8 +159,8 @@ class KeyboardInputHandler:
             
             # 移動指令
             step = self.config.keyboard_velocity_adjust_step
-            if key == glfw.KEY_W: self.state.command[1] += step
-            elif key == glfw.KEY_S: self.state.command[1] -= step
-            elif key == glfw.KEY_A: self.state.command[0] += step
-            elif key == glfw.KEY_D: self.state.command[0] -= step
+            if key == glfw.KEY_W: self.state.command[1] += step  # vx
+            elif key == glfw.KEY_S: self.state.command[1] -= step  # vx
+            elif key == glfw.KEY_A: self.state.command[0] += step  # vy
+            elif key == glfw.KEY_D: self.state.command[0] -= step  # vy
             

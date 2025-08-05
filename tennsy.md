@@ -29,7 +29,7 @@
 
 ---
 
-## 📖 指令參考手冊 (Command Reference - v3.4)
+## 📖 指令參考手冊 (Command Reference - v3.5)
 
 ### 語法提示 (Syntax Legend)
 *   `<variable>` : 表示需要使用者替換的變數
@@ -82,8 +82,10 @@
 *   `status`
     *   描述：打印一次性的完整狀態報告。
 *   `monitor <h|c|d>`
-    *   描述：設定遙測格式 (h:人類, c:CSV, d:儀表板)。
-    *   **注意**: `monitor c` 的 CSV 格式為單行寬格式，專為數據分析設計。
+    *   描述：設定遙測格式 (h:人類, c:舊CSV, d:儀表板)。
+*   `monitor csv42`
+    *   **【推薦】** 啟動 42 欄位 CSV 串流，並在行尾附加 CRC8 校驗碼，供 PC 端 AI 控制使用。
+    *   **格式**：`角速度(3), 重力向量(3), 線速度(3), 加速度(3), 關節位置(12), 關節速度(12), 保留(4), CRC8`
 *   `monitor freq <hz>`
     *   描述：設定遙測數據的更新頻率 (Hz)。
 *   `monitor <pause|resume>`
