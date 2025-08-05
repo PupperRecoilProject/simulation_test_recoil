@@ -23,10 +23,19 @@
   </asset>
 
   <worldbody>
-    <!-- 強化金字塔地形的物理特性，避免腳部陷入 -->
-    <geom name="floor" type="hfield" hfield="terrain" material="groundplane" 
-          condim="3" contype="1" conaffinity="1" 
-          solimp="0.99 0.999 0.001" solref="0.001 1"/>
+    <!-- 
+      【核心修正：平衡物理參數】
+      目標：在解決重置鎖死問題的同時，盡可能保留對困難地形的支撐性。
+
+      1. condim="3":      恢復為標準的3D接觸模型。6D接觸(包含扭轉摩擦)對於行走模擬來說過於嚴格，是鎖死的主要原因之一。
+      2. friction="1.5 0.1 0.1": 保留較高的滑動摩擦力(1.5)，這對於在斜坡上防滑至關重要，且本身較不會引起鎖死。
+      3. 移除 priority="1":   移除接觸優先級。讓求解器自行判斷，避免因強制優先處理地板接觸而導致過度約束。
+      4. solimp="... 0.001": 恢復較有彈性的接觸模型（與舊版一致），這是解決鎖死問題的關鍵。雖然腳可能在極端邊緣稍微陷入，但能保證模擬的穩定性。
+    -->
+    <geom name="floor" type="hfield" hfield="terrain" material="groundplane"
+          condim="3" contype="1" conaffinity="1"
+          solimp="0.99 0.999 0.001" solref="0.001 1"
+          friction="1.5 0.1 0.1"/>
     
     <body name="anchor" pos="0 0 0.35" mocap="true">
       <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>
