@@ -13,8 +13,9 @@ mujoco_model_file: "assets/scene_mjx.xml"
 
 # ONNX 模型庫 (ONNX Model Library)
 onnx_models:
-  stable_walk: 
+  stable_walk:
     path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
+    output_mode: "offset"  # 模型輸出為偏移量
     # 【新】為每個模型指定觀察配方
     observation_recipe:
       - 'linear_velocity'
@@ -25,9 +26,10 @@ onnx_models:
       - 'last_action'
       - 'commands'
   
-  agile_model: 
+  agile_model:
     path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
     # 假設 agile_model 使用與 stable_walk 相同的配方
+    output_mode: "offset"
     observation_recipe:
       - 'linear_velocity'
       - 'angular_velocity'
@@ -37,9 +39,10 @@ onnx_models:
       - 'last_action'
       - 'commands'
 
-  new_high_level: 
+  new_high_level:
     path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
     # 【新】使用新的觀察配方
+    output_mode: "offset"
     observation_recipe:
       - 'angular_velocity'
       - 'gravity_vector'
@@ -49,8 +52,9 @@ onnx_models:
       - 'last_action'
       - 'commands'
 
-  new_e2e: 
+  new_e2e:
     path: "models/pupper_ppo_policy_e2e_203161600.onnx"
+    output_mode: "absolute"  # 此模型直接輸出絕對角度
     # e2e 模型也使用新的觀察配方
     observation_recipe:
       - 'angular_velocity'

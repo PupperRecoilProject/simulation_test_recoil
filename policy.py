@@ -5,7 +5,7 @@ import sys
 import os
 import time
 from collections import deque
-from typing import TYPE_CHECKING, List, Dict
+from typing import TYPE_CHECKING, List, Dict, Any
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
@@ -117,6 +117,10 @@ class PolicyManager:
     def get_active_recipe(self) -> List[str]:
         """一個輔助函式，返回當前主要策略所使用的觀察配方，主要供 HardwareController 使用。"""
         return self.model_recipes.get(self.primary_policy_name, [])
+
+    def get_active_model_config(self) -> Dict[str, Any]:
+        """取得目前主策略的完整設定字典 (包含自訂 output_mode 等資訊)。"""
+        return self.config.onnx_models.get(self.primary_policy_name, {})
 
     def select_target_policy(self, target_name: str):
         """(由鍵盤觸發) 選擇一個目標策略並開始平滑轉換。"""

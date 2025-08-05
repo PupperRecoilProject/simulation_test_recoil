@@ -462,7 +462,14 @@ class SimulationController:
             with self.state.lock:
                 final_ctrl = self.sim.default_pose + self.state.joint_test_offsets
         else:
-            final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
+            # 【修改】根據模型的輸出模式決定是否加上 default pose
+            model_cfg = self.policy_manager.get_active_model_config()
+            if model_cfg.get('output_mode') == 'absolute':
+                # 模型輸出為絕對角度
+                final_ctrl = action_final * tuning_params.action_scale
+            else:
+                # 預設：模型輸出為偏移量
+                final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
 
         self.sim.apply_position_control(final_ctrl, tuning_params)
 
