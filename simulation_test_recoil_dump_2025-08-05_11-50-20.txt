@@ -2740,6 +2740,12 @@ from event_system import (
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_DEVICE_CONNECT_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
+    EVENT_POLICY_CHANGE_REQUESTED,
+    EVENT_TERRAIN_CHANGE_REQUESTED,
+    EVENT_MANUAL_FLOAT_TOGGLED,
+    EVENT_JOINT_SELECT_REQUESTED,
+    EVENT_JOINT_VALUE_ADJUSTED,
+
     # ... 根據需要導入其他事件
 )
 
@@ -2785,6 +2791,12 @@ class SimulationController:
         event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested)
         event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested)
         event_bus.subscribe(EVENT_SERIAL_COMMAND_SEND, self.on_serial_command_send_requested)
+        event_bus.subscribe(EVENT_POLICY_CHANGE_REQUESTED, self.on_policy_change_requested)
+        event_bus.subscribe(EVENT_TERRAIN_CHANGE_REQUESTED, self.on_terrain_change_requested)
+        event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
+        event_bus.subscribe(EVENT_JOINT_SELECT_REQUESTED, self.on_joint_select_requested)
+        event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted)
+
         # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
         log.info("SimulationController 已訂閱所有核心請求事件。")
 
@@ -2811,7 +2823,10 @@ class SimulationController:
 
     # ============================ 主要運行 ============================
     def run(self) -> None:
-        """執行緒進入點：負責處理所有請求並運行模擬。"""
+        """
+        [v3.1.3] 執行緒進入點：負責處理所有請求並運行模擬。
+        此版本統一了請求旗標的處理邏輯，使主迴圈更清晰。
+        """
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
             self.sim.initialize_window_and_context()
@@ -2823,6 +2838,11 @@ class SimulationController:
         while self._running.is_set():
             with self.state.lock:
                 shutdown_req = self.state.shutdown_requested
+                if hard_reset_req:
+                    self.state.hard_reset_requested = False # 讀取後立即清除
+            if hard_reset_req:
+                self.hard_reset() # 在主模擬執行緒中安全地執行硬重置
+
             should_close = shutdown_req
             if not is_headless:
                 should_close = should_close or self.sim.should_close()
@@ -2836,8 +2856,8 @@ class SimulationController:
                 app.shutdown()
                 continue
 
-            # 1) 先處理所有待辦請求
-            self.process_pending_mode_change()
+            # [修改] 將所有需要同步執行的請求處理集中到一個函式中
+            self._process_sync_requests()
 
             # 2) 讀取必要狀態
             with self.state.lock:
@@ -2896,21 +2916,36 @@ class SimulationController:
             self.state.tuning_param_index = (self.state.tuning_param_index + direction) % num_params
             log.debug(f"調校參數索引已切換至: {self.state.tuning_param_index}")
             
-    def on_tuning_param_adjusted(self, direction: int, value: float = None, param_name: str = None):
-        """處理調整參數值的請求。"""
+    def on_tuning_param_adjusted(self, param_name: str = None, value: float = None, direction: int = None):
+        """
+        [v3.1.1] 處理調整參數值的請求。
+        此版本修正了參數來源和默認值的問題。
+        """
         with self.state.lock:
+            # 如果事件沒有提供 param_name (來自鍵盤/搖桿的步進調整)，
+            # 我們從 state 中獲取當前選中的參數。
             if param_name is None:
-                param_keys = self.state.policy_manager_ref.param_keys
-                param_name = param_keys[self.state.tuning_param_index]
+                # [修正] 參數的鍵名列表應直接從 config 或 state 本身獲取，而不是 policy_manager
+                # 我們可以將它定義在 SimulationState 或 Config 中，為簡潔起見，這裡暫時硬編碼
+                param_keys = ['kp', 'kd', 'action_scale', 'bias']
+                if 0 <= self.state.tuning_param_index < len(param_keys):
+                    param_name = param_keys[self.state.tuning_param_index]
+                else:
+                    log.error(f"無效的調校參數索引: {self.state.tuning_param_index}")
+                    return
 
-            if value is not None: # 來自UI滑桿的絕對值設定
+            # 根據事件提供的參數類型執行操作
+            if value is not None:  # 來自UI滑桿的絕對值設定
                 setattr(self.state.tuning_params, param_name, value)
-            elif direction is not None: # 來自鍵盤/搖桿的步進調整
+            elif direction is not None:  # 來自鍵盤/搖桿的步進調整
                 step = self.config.param_adjust_steps.get(param_name, 0.1)
                 current_value = getattr(self.state.tuning_params, param_name)
                 new_value = current_value + step * direction
                 setattr(self.state.tuning_params, param_name, new_value)
-            
+            else:
+                log.warning(f"接收到無效的參數調整請求: param_name={param_name}, value={value}, direction={direction}")
+                return
+
             # 確保參數值在合理範圍內
             self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
             self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
@@ -2919,7 +2954,9 @@ class SimulationController:
 
     def on_input_mode_change_requested(self, mode: str):
         """處理輸入模式切換請求。"""
-        self.state.toggle_input_mode(mode)
+        # [修改] 增加一個選項，避免在切換到 VJOY 時清除指令
+        clear_cmd = mode != "VJOY"
+        self.state.toggle_input_mode(mode, clear_cmd=clear_cmd)
 
     def on_device_connect_requested(self, device: str):
         """處理設備連接請求。"""
@@ -2947,6 +2984,84 @@ class SimulationController:
                 log.error(f"發送序列埠命令失敗: {e}")
         else:
             log.warning("序列埠未連接，無法發送命令。")
+
+    def on_policy_change_requested(self, policy_name: str):
+        """處理AI策略切換請求。"""
+        if self.policy_manager:
+            log.info(f"接收到切換策略請求: {policy_name}")
+            self.policy_manager.select_target_policy(policy_name)
+
+    def on_terrain_change_requested(self, name: str):
+        """
+        [v3.1.2] 處理地形切換請求。
+        此版本不再直接呼叫 hard_reset，而是設定請求旗標。
+        """
+        if not self.terrain_manager or not self.terrain_manager.is_functional:
+            return
+            
+        log.info(f"接收到切換地形請求: {name}")
+        
+        # 標記是否需要重置
+        needs_reset = False
+        with self.state.lock:
+            if name == 'INFINITE':
+                if self.state.terrain_mode != 'INFINITE':
+                    self.state.terrain_mode = 'INFINITE'
+                    self.terrain_manager.reset()
+                    needs_reset = True
+            else:
+                if name in self.terrain_manager.single_terrain_names:
+                    new_index = self.terrain_manager.single_terrain_names.index(name)
+                    if self.state.terrain_mode != 'SINGLE' or self.state.single_terrain_index != new_index:
+                        self.state.terrain_mode = 'SINGLE'
+                        self.state.single_terrain_index = new_index
+                        self.terrain_manager.set_single_terrain(name)
+                        needs_reset = True
+        
+        # 在鎖外設定請求旗標
+        if needs_reset:
+            log.info("地形已變更，請求硬重置以應用...")
+            with self.state.lock:
+                self.state.hard_reset_requested = True
+
+
+    def on_manual_float_toggled(self, is_floating: bool):
+        """處理手動模式下的懸浮開關請求。"""
+        with self.state.lock:
+            self.state.manual_mode_is_floating = is_floating
+        log.info(f"手動懸浮狀態切換為: {is_floating}")
+
+    def on_joint_select_requested(self, index: int):
+        """處理關節選擇請求。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                self.state.joint_test_index = index
+            elif self.state.control_mode == "MANUAL_CTRL":
+                self.state.manual_ctrl_index = index
+        log.debug(f"當前選中關節索引: {index}")
+
+    def on_joint_value_adjusted(self, value: float = None, direction: float = None, clear: bool = False):
+        """處理關節值調整請求。"""
+        with self.state.lock:
+            if self.state.control_mode == "JOINT_TEST":
+                idx = self.state.joint_test_index
+                if clear:
+                    self.state.joint_test_offsets[idx] = 0.0
+                elif value is not None: # 來自滑桿的絕對值
+                    self.state.joint_test_offsets[idx] = value - self.state.sim.default_pose[idx]
+                elif direction is not None: # 來自按鈕的步進
+                    self.state.joint_test_offsets[idx] += direction
+            
+            elif self.state.control_mode == "MANUAL_CTRL":
+                idx = self.state.manual_ctrl_index
+                if clear:
+                    # 在手動模式下，歸零可能意味著回到預設站姿的對應關節角度
+                    self.state.manual_final_ctrl[idx] = self.sim.default_pose[idx]
+                elif value is not None:
+                    self.state.manual_final_ctrl[idx] = value
+                elif direction is not None:
+                    self.state.manual_final_ctrl[idx] += direction
+
 
     # =========================================================================
 
@@ -3992,6 +4107,8 @@ from event_system import (
     EVENT_JOINT_SELECT_REQUESTED,
     EVENT_JOINT_VALUE_ADJUSTED,
     EVENT_COMMAND_UPDATED, # 用於虛擬搖桿
+    EVENT_INPUT_MODE_CHANGE_REQUESTED,
+    EVENT_SERIAL_COMMAND_SEND,
 )
 
 if TYPE_CHECKING:
@@ -4145,20 +4262,27 @@ class UIController:
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
             ui.label('手動駕駛 (Manual Driving)').classes('text-lg')
-            # [修改] on_move 和 on_end 回呼現在發布 EVENT_COMMAND_UPDATED 事件
+            
+            # [修改] on_move 和 on_end 的 lambda 函式現在包含了輸入模式切換的邏輯
+            # 並且使用了正確的事件參數 e.x 和 e.y
             ui.joystick(
                 color='blue', 
                 size=100, 
+                on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
                 on_move=lambda e: event_bus.publish(
                     EVENT_COMMAND_UPDATED, 
                     command=np.array([
-                        e.data.vector.x * self.state.config.gamepad_sensitivity['vy'],
-                        -e.data.vector.y * self.state.config.gamepad_sensitivity['vx'],
+                        e.x * self.state.config.gamepad_sensitivity['vy'], # 使用 e.x
+                        -e.y * self.state.config.gamepad_sensitivity['vx'], # 使用 e.y
                         0.0
                     ])
                 ),
-                on_end=lambda e: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3))
+                on_end=lambda e: (
+                    event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3)),
+                    event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD") # 釋放後切回鍵盤模式
+                )
             ).props('throttle')
+            
             ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3))).props('outline')
 
 

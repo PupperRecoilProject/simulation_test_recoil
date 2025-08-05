@@ -100,44 +100,58 @@ class SimulationController:
 
     # ============================ 主要運行 ============================
     def run(self) -> None:
-        """執行緒進入點：負責處理所有請求並運行模擬。"""
+        """
+        [v3.1.3] 執行緒進入點：負責處理所有請求並運行模擬。
+        此版本統一了請求旗標的處理邏輯，使主迴圈更清晰。
+        """
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
             self.sim.initialize_window_and_context()
             self._initialize_simulation_state()
         else:
-            print("[MOCK] Headless mode, skip window/context init.")
-            # 無頭模式不需要初始化真實模擬狀態
+            log.info("[MOCK] Headless mode, skip window/context init.")
 
         while self._running.is_set():
+            # ======================== 步驟 1: 獲取狀態快照與處理同步請求 ========================
+            # 在一個鎖內，讀取所有本幀需要的旗標和狀態，然後立即釋放鎖。
+            # 這是執行緒安全的標準做法。
             with self.state.lock:
+                # 讀取請求旗標
                 shutdown_req = self.state.shutdown_requested
-                if hard_reset_req:
-                    self.state.hard_reset_requested = False # 讀取後立即清除
-            if hard_reset_req:
-                self.hard_reset() # 在主模擬執行緒中安全地執行硬重置
+                hard_reset_req = self.state.hard_reset_requested
+                soft_reset_req = self.state.soft_reset_requested
+                pending_mode_req = self.state.control_mode_pending
 
-            should_close = shutdown_req
-            if not is_headless:
-                should_close = should_close or self.sim.should_close()
+                # 讀取後立即清除旗標，避免重複執行
+                if hard_reset_req: self.state.hard_reset_requested = False
+                if soft_reset_req: self.state.soft_reset_requested = False
+                if pending_mode_req: self.state.control_mode_pending = None
+            
+            # 在鎖外，安全地處理這些請求
+            if hard_reset_req:
+                self.hard_reset()
+            if soft_reset_req:
+                self.soft_reset()
+            if pending_mode_req:
+                self.handle_mode_change(self.state.control_mode, pending_mode_req)
+
+            # 檢查是否應關閉視窗 (全域關閉請求或視窗被手動關閉)
+            should_close = shutdown_req or (not is_headless and self.sim.should_close())
             if should_close:
-                if shutdown_req and not is_headless and not self.sim.should_close():
+                if not is_headless and not self.sim.should_close():
+                    # 如果是程式邏輯觸發的關閉，而非用戶點擊關閉按鈕
                     log.info("偵測到全域關閉請求，正在關閉模擬視窗...")
                     from glfw import set_window_should_close
                     set_window_should_close(self.sim.window, 1)
                 self._running.clear()
+                # 確保 NiceGUI 也被通知關閉
                 from nicegui import app
                 app.shutdown()
                 continue
-
-            # 1) 先處理所有待辦請求
-            self.process_pending_mode_change()
-
-            # 2) 讀取必要狀態
+            
+            # ================================== 步驟 2: 主邏輯 ==================================
             with self.state.lock:
                 mode = self.state.control_mode
-                terrain_mode = self.state.terrain_mode
-                pos = self.state.latest_pos
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
                 manual_float = self.state.manual_mode_is_floating
@@ -146,6 +160,7 @@ class SimulationController:
                 self.sim.render_from_thread(self.state)
                 time.sleep(0.01)
                 continue
+            
             if execute_one:
                 with self.state.lock:
                     self.state.execute_one_step = False
@@ -161,10 +176,16 @@ class SimulationController:
             elif (not is_manual_mode or not manual_float) and self._manual_float_active:
                 self.floating_controller.disable()
                 self._manual_float_active = False
-
+            
+            # ============================== 步驟 3: 更新與渲染 ==============================
+            # 更新衍生狀態 (如地形) 並渲染場景
+            with self.state.lock:
+                pos = self.state.latest_pos
+                terrain_mode = self.state.terrain_mode
             self.update_derived_states_and_render(pos, terrain_mode)
 
-        print("模擬執行緒已停止。")
+        log.info("模擬執行緒已停止。")
+
 
     # ============================ 事件回呼處理函式 ============================
     def on_mode_change_requested(self, mode: str):
@@ -175,13 +196,17 @@ class SimulationController:
             self.state.control_mode_pending = mode
             
     def on_simulation_reset_requested(self, type: str):
-        """處理模擬重置請求。"""
-        log.info(f"接收到 '{type}' 重置請求。")
-        # 直接在事件回呼中執行重置，因為它們被設計為可以在模擬迴圈的任何點安全呼叫
-        if type == "hard":
-            self.hard_reset()
-        elif type == "soft":
-            self.soft_reset()
+        """
+        【v3.1.3 核心修改】處理模擬重置請求。
+        此函式現在只負責設定請求旗標，而不是直接執行重置操作。
+        實際的重置操作將在主模擬迴圈中安全地執行。
+        """
+        log.info(f"接收到 '{type}' 重置請求，正在設定旗標...")
+        with self.state.lock:
+            if type == "hard":
+                self.state.hard_reset_requested = True
+            elif type == "soft":
+                self.state.soft_reset_requested = True
 
     def on_tuning_param_select_requested(self, direction: int):
         """處理切換當前調校參數的請求。"""
@@ -352,20 +377,23 @@ class SimulationController:
 
 
     def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
-        """執行模式切換並處理硬體控制執行緒與模擬狀態。"""
+        """
+        【v3.1.3 核心修改】執行模式切換並處理相關狀態。
+        此函式現在由 run() 迴圈在安全的時間點呼叫。
+        """
         self.state.set_control_mode(new_mode)
-
         is_headless = isinstance(self.sim, MockSimulation)
 
+        # 離開舊模式時的物理處理
         if not is_headless:
-            # 離開舊模式時的物理處理
             if old_mode == "FLOATING":
                 self.floating_controller.disable()
-            elif old_mode == "MANUAL_CTRL" and self.state.manual_mode_is_floating:
+            elif old_mode in ["JOINT_TEST", "MANUAL_CTRL"] and self._manual_float_active:
                 self.floating_controller.disable()
-                self.state.manual_mode_is_floating = False
+                self._manual_float_active = False # 同步內部旗標
 
-            # 進入新模式時的初始化
+        # 進入新模式時的初始化
+        if not is_headless:
             if new_mode == "FLOATING":
                 self.floating_controller.enable(self.state.latest_pos)
             elif new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
