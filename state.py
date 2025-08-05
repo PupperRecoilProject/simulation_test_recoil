@@ -1,16 +1,30 @@
 # state.py
+
+# 所有現有的 imports
 from __future__ import annotations
 import numpy as np
-
 from dataclasses import dataclass, field
 from config import AppConfig
 from logger import log
 from typing import TYPE_CHECKING
 import threading
 
-# 為了型別提示，避免循環匯入
+# 導入我們新創建的事件系統模組和核心事件
+# 這是讓 SimulationState 能夠監聽系統事件的關鍵
+from event_system import (
+    event_bus,
+    EventSystem,  # 導入 EventSystem 類別以進行類型提示
+    EVENT_SIMULATION_TICK,
+    EVENT_HARDWARE_TICK,
+    EVENT_COMMAND_UPDATED,
+    EVENT_MODE_CHANGED,
+)
+
+
+
+# TYPE_CHECKING 區塊
 if TYPE_CHECKING:
-    import mujoco
+    # 這些導入僅用於類型提示，不會造成循環依賴
     from floating_controller import FloatingController
     from policy import PolicyManager
     from hardware_controller import HardwareController
@@ -19,98 +33,199 @@ if TYPE_CHECKING:
     from simulation import Simulation
     from xbox_input_handler import XboxInputHandler
 
+# TuningParams 資料類別
 @dataclass
 class TuningParams:
     """用於即時調整機器人控制參數的類別。"""
-    kp: float # P gain (Proportional gain)
-    kd: float # D gain (Derivative gain)
-    action_scale: float # 動作縮放比例
-    bias: float # 力矩偏置
+    kp: float
+    kd: float
+    action_scale: float
+    bias: float
 
 @dataclass
 class SimulationState:
-    """Central state shared across threads."""
+    """
+    【修改後 v2.0】中央狀態管理者 (Central State Manager)
+    
+    這個類別是整個應用程式的"單一真相來源 (Single Source of Truth)"。
+    它不再是一個被動的數據容器，而是一個主動的管理者，通過訂閱事件來
+    安全地更新自己的狀態，並為其他模組提供查詢。
+    """
+
+    # --- 核心屬性 ---
+    # config 和 lock 屬性
     config: AppConfig
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    # 持有對事件匯流排的引用
+    # 讓每個 SimulationState 實例都能方便地訪問全域事件匯流排。
+    # repr=False 避免在打印 state 物件時產生過長的循環引用輸出。
+    events: EventSystem = field(default_factory=lambda: event_bus, repr=False)
+    
+    # --- 用戶輸入與指令狀態 ---
+    # 這些狀態現在主要由 on_command_update 事件回呼來更新
     command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
     
-    hard_reset_requested: bool = False # 硬重置請求旗標
-    soft_reset_requested: bool = False # 軟重置請求旗標
-
-    control_timer: float = 0.0 # 控制迴圈的計時器
-    
-    sim_mode_text: str = "Initializing" # 舊的模式文字，可能可以移除
-    input_mode: str = "KEYBOARD" # 當前的輸入模式 ("KEYBOARD" 或 "GAMEPAD")
-    control_mode: str = "WALKING" # 當前的總控制模式 (例如 "WALKING", "HARDWARE_MODE")
-    # 【新增】UI 執行緒若想切換模式，先將欲切換的模式寫入此處，模擬執行緒會在下一迴圈處理
+    # --- 系統控制與模式狀態 ---
+    # 這些屬性由 SimulationController 根據請求事件來管理
+    control_mode: str = "WALKING"
     control_mode_pending: str | None = None
-    previous_control_mode: str = "WALKING" # 【新功能】儲存進入 SERIAL_MODE 前的模式，以便能正確返回
-
-    terrain_mode: str = "INFINITE" # 當前的地形模式 ("INFINITE" 或 "SINGLE")
-    single_terrain_index: int = 0 # 在 SINGLE 地形模式下，當前選擇的地形索引
-
-    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([])) # 最新一幀的 ONNX 模型輸入向量
-    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最新一幀的 ONNX 模型原始輸出
-    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 最終計算後要傳給致動器的控制指令
-    latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3)) # 機器人軀幹的最新位置
-    latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.])) # 機器人軀幹的最新姿態（四元數）
-    # 新增欄位：安全儲存最新的各關節角度，避免 UI 執行緒直接讀取 sim.data
+    previous_control_mode: str = "WALKING"
+    input_mode: str = "KEYBOARD"
+    
+    # --- 運行時高頻數據 (由 TICK 事件更新) ---
+    # 這些屬性是UI顯示的數據源，現在由 on_tick_update 回呼統一更新
+    latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
+    latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    
+    # --- 物理狀態 (由主驅動者直接更新) ---
+    # 這些是物理世界的最直接反映，由擁有 sim.data 的模組 (SimulationController) 直接更新
+    latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
-    display_page: int = 0 # 除錯資訊顯示的當前頁碼
-    num_display_pages: int = 2 # 除錯資訊的總頁數
-
-    # --- 【序列埠控制台模式相關狀態】 ---
-
-    joint_test_index: int = 0 # 在關節測試模式下，當前選中的關節索引
-    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存各關節在測試模式下的偏移量
-
-    manual_ctrl_index: int = 0 # 在手動控制模式下，當前選中的關節索引
-    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12)) # 儲存手動控制模式下的最終控制角度
-    manual_mode_is_floating: bool = False # 標記手動控制模式下是否啟用懸浮
-
-    serial_is_connected: bool = False # 標記序列埠是否已連接
-    gamepad_is_connected: bool = False # 標記遊戲搖桿是否已連接
-
-    tuning_param_index: int = 0 # 當前選中要調整的參數索引 (Kp, Kd, etc.)
-
-    # --- 【核心修改】將所有主要物件的參考儲存在此，使其成為全域上下文 ---
-    sim: 'Simulation' = None # 模擬環境物件的參考
-    floating_controller_ref: 'FloatingController' = None # 懸浮控制器物件的參考
-    terrain_manager_ref: 'TerrainManager' = None # 地形管理器物件的參考
-    policy_manager_ref: 'PolicyManager' = None # 策略管理器物件的參考
-    hardware_controller_ref: 'HardwareController' = None # 硬體控制器物件的參考
-    serial_communicator_ref: 'SerialCommunicator' = None # 序列埠通訊器物件的參考
-    xbox_handler_ref: 'XboxInputHandler' = None # Xbox 搖桿處理器的參考
     
-    available_policies: list = field(default_factory=list) # 所有可用的 ONNX 策略名稱列表
+    # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
+    hard_reset_requested: bool = False
+    soft_reset_requested: bool = False
+    shutdown_requested: bool = False
     
-    hardware_is_connected: bool = False # 標記硬體控制器是否已成功啟動
-    hardware_ai_is_active: bool = False # 標記硬體模式下的 AI 是否已啟用
-    hardware_status_text: str = "Not Connected" # 用於在 UI 上顯示的硬體狀態文字
+    # --- 模擬器特定狀態 ---
+    control_timer: float = 0.0
+    single_step_mode: bool = False
+    execute_one_step: bool = False
+    
+    # --- 地形相關狀態 ---
+    terrain_mode: str = "INFINITE"
+    single_terrain_index: int = 0
+    
+    # --- 手動與測試模式狀態 ---
+    joint_test_index: int = 0
+    joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    manual_ctrl_index: int = 0
+    manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    manual_mode_is_floating: bool = False
+    
+    # --- 設備連接與狀態 ---
+    serial_is_connected: bool = False
+    gamepad_is_connected: bool = False
+    hardware_is_connected: bool = False
+    hardware_ai_is_active: bool = False
+    hardware_status_text: str = "Not Connected"
+    
+    # --- UI 相關狀態 ---
+    display_page: int = 0
+    num_display_pages: int = 2
+    tuning_param_index: int = 0
+    
+    # --- 模組參考 (用於初始化和便捷訪問) ---
+    # 這些參考在應用程式啟動時被賦值
+    sim: 'Simulation' = None
+    floating_controller_ref: 'FloatingController' = None
+    terrain_manager_ref: 'TerrainManager' = None
+    policy_manager_ref: 'PolicyManager' = None
+    hardware_controller_ref: 'HardwareController' = None
+    serial_communicator_ref: 'SerialCommunicator' = None
+    xbox_handler_ref: 'XboxInputHandler' = None
+    available_policies: list = field(default_factory=list)
 
-    single_step_mode: bool = False # 標記是否處於單步模擬模式
-    execute_one_step: bool = False # 在單步模式下，請求執行下一步的旗標
-
-    shutdown_requested: bool = False  # 新增：UI 請求程式結束
 
     def __post_init__(self):
-        """在初始化後，根據設定檔設定初始值。"""
-        self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__) # 從設定檔初始化調校參數
-        self.latest_action_raw = np.zeros(self.config.num_motors) # 初始化原始動作向量
-        self.latest_final_ctrl = np.zeros(self.config.num_motors) # 初始化最終控制向量
-        self.manual_final_ctrl = np.zeros(self.config.num_motors) # 初始化手動控制向量
-        self.latest_joint_positions = np.zeros(self.config.num_motors) # 初始化關節位置副本
-        log.info("✅ SimulationState 初始化完成 (含執行緒鎖)。")
+        """
+        【修改後】初始化函式。
+        除了設置初始值，它的核心職責是將自己註冊為事件的訂閱者，
+        從而成為一個主動的狀態管理者。
+        """
+        # 所有現有的初始化邏輯
+        self.tuning_params = TuningParams(**self.config.initial_tuning_params.__dict__)
+        self.latest_action_raw = np.zeros(self.config.num_motors)
+        self.latest_final_ctrl = np.zeros(self.config.num_motors)
+        self.manual_final_ctrl = np.zeros(self.config.num_motors)
+        self.latest_joint_positions = np.zeros(self.config.num_motors)
 
+        # 讓 SimulationState 自己訂閱核心數據更新事件
+        # 這一步是架構轉變的關鍵：State不再被動地等待被寫入，
+        # 而是主動去監聽系統中發生的數據更新事件。
+        self.events.subscribe(EVENT_SIMULATION_TICK, self.on_tick_update)
+        self.events.subscribe(EVENT_HARDWARE_TICK, self.on_tick_update)
+        self.events.subscribe(EVENT_COMMAND_UPDATED, self.on_command_update)
+        self.events.subscribe(EVENT_MODE_CHANGED, self.on_mode_changed)
+
+        log.info("✅ SimulationState 初始化完成，並已訂閱核心事件。")
+
+    # ------------------- 事件回呼函式區 (Event Callback Section) -------------------
+    # 這些函式是 SimulationState 作為"狀態管理者"的核心職責。
+    # 它們定義了當特定事件發生時，應該如何安全地更新內部狀態。
+
+    def on_tick_update(self, onnx_input: np.ndarray, action_raw: np.ndarray, final_ctrl: np.ndarray):
+        """
+        核心數據鏈的終點：當收到來自任何數據源(模擬或硬體)的TICK事件時，
+        安全地更新所有與AI決策相關的運行時共享狀態。
+        """
+        with self.lock:
+            self.latest_onnx_input = onnx_input
+            self.latest_action_raw = action_raw
+            self.latest_final_ctrl = final_ctrl
+
+    def on_command_update(self, command: np.ndarray):
+        """當收到來自輸入處理器(搖桿/鍵盤)的指令更新事件時，更新指令狀態。"""
+        with self.lock:
+            self.command = command.copy()  # 使用 .copy() 確保數據獨立，避免外部修改影響內部狀態
+
+    def on_mode_changed(self, old_mode: str, new_mode: str):
+        """
+        當控制模式成功切換後 (由 SimulationController 發布通知事件)，
+        執行相關的狀態清理和初始化工作。
+        這個函式取代了舊版本 set_control_mode 內部的大部分副作用邏輯。
+        """
+        with self.lock:
+            # 進入新模式時，初始化該模式特定的狀態
+            if new_mode == "JOINT_TEST":
+                self.joint_test_offsets.fill(0.0)
+            elif new_mode == "MANUAL_CTRL":
+                # 當進入手動模式時，將目標角度初始化為當前的預設站姿
+                initial_pose = self.sim.default_pose.copy() if hasattr(self.sim, 'default_pose') else np.zeros(self.config.num_motors)
+                self.manual_final_ctrl[:] = initial_pose
+
+            # 若從任何手動/調試模式回到AI自動模式，重置AI狀態以確保平滑過渡
+            is_entering_ai_mode = new_mode in ["WALKING", "FLOATING"]
+            is_leaving_manual_mode = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
+            if is_entering_ai_mode and is_leaving_manual_mode:
+                log.info("從手動/序列埠模式返回，正在重置 AI 狀態...")
+                if self.policy_manager_ref:
+                    self.policy_manager_ref.reset()
+                self.clear_command()
+
+    # --------------------------------------------------------------------------------------
+
+    def set_control_mode(self, new_mode: str):
+        """
+        【修改後】此函式職責極度簡化，只負責更新模式相關的核心狀態變數。
+        它由 SimulationController 在處理模式切換請求時呼叫。
+        """
+        with self.lock:
+            if self.control_mode == new_mode:
+                return
+
+            # 記錄切換前的模式，以便能從 SERIAL_MODE 正確返回
+            if new_mode == "SERIAL_MODE":
+                self.previous_control_mode = self.control_mode
+
+            # 只更新 control_mode 本身，不再處理複雜的副作用。
+            # 副作用（如重置關節偏移）已移至 on_mode_changed 事件回呼中。
+            self.control_mode = new_mode
+            log.info(f"控制模式已設定為: {self.control_mode}")
+
+    # 以下所有輔助函式維持不變，它們的職責依然清晰有效。
     def reset_control_state(self, sim_time: float):
         """重置控制迴圈的計時器。"""
-        self.control_timer = sim_time # 將計時器設定為當前的模擬時間
+        self.control_timer = sim_time
         log.info("✅ 控制狀態已重置。")
 
     def clear_command(self):
         """清除使用者輸入的運動指令。"""
-        self.command.fill(0.0)  # 將指令向量全部設為 0
+        self.command.fill(0.0)
         log.info("運動指令已清除。")
 
     def toggle_input_mode(self, new_mode: str, clear_cmd: bool = True):
@@ -121,34 +236,3 @@ class SimulationState:
                 if clear_cmd:
                     self.clear_command()
                 log.info(f"輸入模式已切換至: {self.input_mode}")
-            
-    def set_control_mode(self, new_mode: str):
-        """更新控制模式，此函式僅變更狀態本身。"""
-        with self.lock:
-            if self.control_mode == new_mode:
-                return
-
-            old_mode = self.control_mode
-
-            if new_mode == "SERIAL_MODE":
-                self.previous_control_mode = old_mode
-
-            # 僅變更模式，不做任何實際硬體或模擬操作
-            self.control_mode = new_mode
-            log.info(f"控制模式已設定為: {self.control_mode}")
-
-            # 進入新模式時初始化相關狀態
-            if new_mode == "JOINT_TEST":
-                self.joint_test_offsets.fill(0.0)
-            elif new_mode == "MANUAL_CTRL":
-                initial_pose = self.sim.default_pose.copy() if hasattr(self.sim, 'default_pose') else np.zeros(self.config.num_motors)
-                self.manual_final_ctrl[:] = initial_pose
-
-            # 若從手動模式回到 AI 模式，重置 AI 狀態
-            is_entering_ai = new_mode in ["WALKING", "FLOATING"]
-            is_leaving_manual = old_mode in ["JOINT_TEST", "MANUAL_CTRL", "SERIAL_MODE"]
-            if is_entering_ai and is_leaving_manual:
-                log.info("從手動模式返回，重置 AI 狀態...")
-                if self.policy_manager_ref:
-                    self.policy_manager_ref.reset()
-                self.clear_command()

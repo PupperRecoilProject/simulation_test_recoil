@@ -2,11 +2,41 @@ from nicegui import ui, app
 import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
-
 from logger import log, log_queue
+
+# [新增] 導入我們新創建的事件系統模組和所有UI會用到的事件名稱
+# 解釋:
+#   - event_bus: 這是我們發布事件需要用到的全域事件匯流排實例。
+#   - EVENT_MODE_CHANGE_REQUESTED: 當用戶點擊模式切換按鈕時，我們會發布這個事件。
+#   - EVENT_SIMULATION_RESET_REQUESTED: 用戶點擊重置按鈕時發布。
+#   - EVENT_HARDWARE_CONNECT_REQUESTED: 用戶請求連接硬體時發布。
+#   - EVENT_HARDWARE_AI_TOGGLE_REQUESTED: 用戶請求啟用/停用硬體AI時發布。
+#   - EVENT_SHUTDOWN_REQUESTED: 用戶請求關閉整個應用程式時發布。
+#
+#   通過從一個統一的地方導入這些"事件契約"，我們可以確保UI和核心邏輯
+#   使用的是完全相同的事件名稱，避免因拼寫錯誤導致的通信失敗。
+from event_system import (
+    event_bus,
+    EVENT_MODE_CHANGE_REQUESTED,
+    EVENT_SIMULATION_RESET_REQUESTED,
+    EVENT_HARDWARE_AI_TOGGLE_REQUESTED,
+    EVENT_SHUTDOWN_REQUESTED,
+    EVENT_TUNING_PARAM_ADJUSTED,
+    EVENT_POLICY_CHANGE_REQUESTED,
+    EVENT_TERRAIN_CHANGE_REQUESTED,
+    EVENT_DEVICE_CONNECT_REQUESTED,
+    EVENT_MANUAL_FLOAT_TOGGLED,
+    EVENT_JOINT_SELECT_REQUESTED,
+    EVENT_JOINT_VALUE_ADJUSTED,
+    EVENT_COMMAND_UPDATED, # 用於虛擬搖桿
+    EVENT_INPUT_MODE_CHANGE_REQUESTED,
+    EVENT_SERIAL_COMMAND_SEND,
+)
 
 if TYPE_CHECKING:
     from state import SimulationState
+
+
 
 class UIController:
     """管理 NiceGUI 介面與互動邏輯。"""
@@ -71,118 +101,152 @@ class UIController:
 
         ui.timer(0.1, self.update_ui_elements)
 
-    # 主要控制面板：模式切換與播放控制
+
+    # --- UI 佈局函式 ---
+    # 【修改】這些 _create_..._panel 函式的主要變更是它們的 on_click 回呼。
+    #         它們不再呼叫 self._request... 這樣的內部函式，而是直接發布事件。
+
     def _create_main_control_panel(self):
         with ui.card():
             ui.label('模式控制 (Control Mode)').classes('text-lg')
             with ui.row():
-                ui.button('走路 (Walking)', on_click=lambda: self._request_mode_change("WALKING"))
-                ui.button('懸浮 (Floating)', on_click=lambda: self._request_mode_change("FLOATING"))
-                ui.button('硬體 (Hardware)', on_click=lambda: self._request_mode_change("HARDWARE_MODE"))
+                # 【修改】點擊按鈕時，直接發布一個包含目標模式的'請求'事件。
+                ui.button('走路 (Walking)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING"))
+                ui.button('懸浮 (Floating)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="FLOATING"))
+
+                # 【核心修改】為「硬體」按鈕增加啟用條件綁定
+                # 它現在只會在 self.state.serial_is_connected 為 True 時才可點擊。
+                # 這為使用者提供了清晰的視覺引導：必須先連接序列埠。
+                ui.button('硬體 (Hardware)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE")) \
+                  .bind_enabled_from(self.state, 'serial_is_connected')
+            
             with ui.row():
-                ui.button('關節測試 (Joint Test)', on_click=lambda: self._request_mode_change("JOINT_TEST"))
-                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: self._request_mode_change("MANUAL_CTRL"))
+                ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
+                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
 
             ui.separator()
-            ui.label('模擬播放 (Playback)').classes('text-lg')
-            with ui.row():
-                # 建立「暫停/播放」按鈕，文字會依狀態變化
-                ui.button(on_click=self._toggle_pause) \
-                    .bind_text_from(self.state, 'single_step_mode',
-                                    lambda is_paused: '播放 (Play)' if is_paused else '暫停 (Pause)')
 
-                # 建立「下一步」按鈕，只在暫停時啟用
-                ui.button('下一步 (Next Step)', on_click=self._request_one_step) \
-                    .bind_enabled_from(self.state, 'single_step_mode')
-
-            ui.separator()
             ui.label('重置').classes('text-lg')
             with ui.row():
-                ui.button('軟重置 (X)', on_click=lambda: self._request_flag_change('soft_reset_requested'))
-                ui.button('硬重置 (R)', on_click=lambda: self._request_flag_change('hard_reset_requested'))
+                # 【修改】重置按鈕發布帶有 'type' 參數的事件，以便 SimulationController 區分。
+                ui.button('軟重置 (X)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft"))
+                ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
 
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
             ui.label('參數調整 (Tuning)').classes('text-lg')
             params = self.state.tuning_params
             p_keys = {'kp': (0, 50), 'kd': (0, 5), 'action_scale': (0, 2), 'bias': (-20, 20)}
+            
             for key, (min_val, max_val) in p_keys.items():
                 with ui.row().classes('w-full items-center'):
                     ui.label(key.upper()).classes('w-20')
-                    slider = ui.slider(min=min_val, max=max_val, step=0.01, value=getattr(params, key)).bind_value(params, key).classes('w-48')
+                    # [修改] 滑桿不再直接綁定 state，而是通過 on_change 發布事件
+                    slider = ui.slider(min=min_val, max=max_val, step=0.01, value=getattr(params, key),
+                                       on_change=lambda e, k=key: event_bus.publish(EVENT_TUNING_PARAM_ADJUSTED, param_name=k, value=e.value))
+                    self.param_sliders[key] = slider # 保存滑桿參考以便更新
                     ui.label().bind_text_from(params, key, lambda v: f'{v:.2f}')
 
             ui.separator()
+
         ui.label('策略選擇 (Policy)').classes('text-lg')
+        # [修改] on_change 回呼發布策略變更請求事件
         self.status_labels['policy_selector'] = ui.select(
             options=self.state.available_policies,
             label='Active Policy',
             value=self.policy_manager.primary_policy_name,
-            on_change=lambda e: self.policy_manager.select_target_policy(e.value)
+            on_change=lambda e: event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name=e.value)
         ).classes('w-full')
 
-        # 【核心修正】地形選擇下拉選單，綁定到本地狀態以避免循環觸發
         terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
+        # [修改] on_change 回呼發布地形變更請求事件
         self.terrain_selector = ui.select(
             options=terrain_options,
             label='Terrain Mode',
-            on_change=self._on_terrain_change
+            on_change=lambda e: event_bus.publish(EVENT_TERRAIN_CHANGE_REQUESTED, name=e.value)
         ).bind_value(self, 'ui_terrain_selection').classes('w-full')
+
 
     # 設備與系統相關控制
     def _create_device_panel(self):
         with ui.card():
             ui.label('硬體 AI 控制').classes('text-lg')
-            ui.button('啟用/停用 AI (K)', on_click=self._toggle_hardware_ai).bind_enabled_from(
+            # [保留] AI 切換按鈕已經是發布事件，無需修改
+            ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)).bind_enabled_from(
                 self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
 
             ui.separator()
             ui.label('設備連接').classes('text-lg')
             with ui.row():
-                ui.button('連接序列埠 (U)', on_click=self._connect_serial)
-                ui.button('連接搖桿 (J)', on_click=self._connect_gamepad)
+                # [修改] 連接按鈕發布設備連接請求事件
+                ui.button('連接序列埠 (U)', on_click=lambda: event_bus.publish(EVENT_DEVICE_CONNECT_REQUESTED, device="serial"))
+                ui.button('連接搖桿 (J)', on_click=lambda: event_bus.publish(EVENT_DEVICE_CONNECT_REQUESTED, device="gamepad"))
 
             ui.separator()
             ui.label('系統').classes('text-lg')
-            ui.button('退出程式', on_click=self._request_shutdown, color='red')
+            # [保留] 退出按鈕已經是發布事件，無需修改
+            ui.button('退出程式', on_click=lambda: event_bus.publish(EVENT_SHUTDOWN_REQUESTED), color='red')
+
 
     def _create_joystick_panel(self):
         with ui.card().classes('w-full'):
             ui.label('手動駕駛 (Manual Driving)').classes('text-lg')
+            
+            # [修改] on_move 和 on_end 的 lambda 函式現在包含了輸入模式切換的邏輯
+            # 並且使用了正確的事件參數 e.x 和 e.y
             ui.joystick(
                 color='blue', 
                 size=100, 
-                on_move=self._update_command_from_joystick,  # 直接傳遞回呼函式
-                on_end=self._on_joystick_end
+                on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
+                on_move=lambda e: event_bus.publish(
+                    EVENT_COMMAND_UPDATED, 
+                    command=np.array([
+                        e.x * self.state.config.gamepad_sensitivity['vy'], # 使用 e.x
+                        -e.y * self.state.config.gamepad_sensitivity['vx'], # 使用 e.y
+                        0.0
+                    ])
+                ),
+                on_end=lambda e: (
+                    event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3)),
+                    event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD") # 釋放後切回鍵盤模式
+                )
             ).props('throttle')
-            ui.button('清除命令 (Clear Command)', on_click=self.state.clear_command).props('outline')
+            
+            ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3))).props('outline')
+
 
     def _create_joint_control_panel(self):
-        """在 JOINT_TEST 或 MANUAL_CTRL 模式下顯示的關節微調面板。"""
         with ui.card().bind_visibility_from(self.state, 'control_mode', lambda m: m in ["JOINT_TEST", "MANUAL_CTRL"]).classes('w-full'):
             ui.label('關節微調 (Joint Fine-Tuning)').classes('text-lg')
-            # 懸浮開關，適用於手動相關模式
+            
             with ui.row().classes('items-center'):
                 ui.label('啟用懸浮')
-                ui.switch(on_change=self._on_manual_float_toggle).bind_value(self.state, 'manual_mode_is_floating')
-            joint_names = {
-                0: 'FR_Abduction', 1: 'FR_Hip', 2: 'FR_Knee', 3: 'FL_Abduction', 4: 'FL_Hip', 5: 'FL_Knee',
-                6: 'RR_Abduction', 7: 'RR_Hip', 8: 'RR_Knee', 9: 'RL_Abduction', 10: 'RL_Hip', 11: 'RL_Knee'
-            }
-            # 保存選擇框以便之後更新數值
+                # [修改] 開關 on_change 發布事件
+                ui.switch(on_change=lambda e: event_bus.publish(EVENT_MANUAL_FLOAT_TOGGLED, is_floating=e.value)).bind_value(self.state, 'manual_mode_is_floating')
+            
+            joint_names = {i: name for i, name in enumerate([
+                "FR_Abduction", "FR_Hip", "FR_Knee", "FL_Abduction", "FL_Hip", "FL_Knee",
+                "RR_Abduction", "RR_Hip", "RR_Knee", "RL_Abduction", "RL_Hip", "RL_Knee"
+            ])}
+            
+            # [修改] on_change 發布關節選擇事件
             self.joint_selector = ui.select(
                 joint_names,
                 label='選擇關節',
-                on_change=lambda e: self._set_joint_index(int(e.value))
+                on_change=lambda e: event_bus.publish(EVENT_JOINT_SELECT_REQUESTED, index=int(e.value))
             )
 
             self.status_labels['joint_info'] = ui.label('')
-            # 滑桿在使用者拖動時會觸發回呼，其值將在 update_ui_elements 中同步
-            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01, on_change=self._on_joint_slider_change).props('label-always')
+            # [修改] 滑桿 on_change 發布關節值調整事件
+            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01,
+                                                 on_change=lambda e: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, value=e.value)
+                                                 ).props('label-always')
             with ui.row():
-                ui.button('-0.1', on_click=lambda: self._adjust_joint_value(-0.1)).props('dense')
-                ui.button('+0.1', on_click=lambda: self._adjust_joint_value(0.1)).props('dense')
-                ui.button('歸零 (Clear)', on_click=lambda: self._adjust_joint_value(0, clear=True)).props('dense')
+                # [修改] 按鈕發布關節值調整事件
+                ui.button('-0.1', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, direction=-0.1)).props('dense')
+                ui.button('+0.1', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, direction=0.1)).props('dense')
+                ui.button('歸零 (Clear)', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, clear=True)).props('dense')
+
 
     def _create_status_display(self):
         with ui.card():
@@ -226,10 +290,26 @@ class UIController:
                     .on('keydown.enter', self._send_serial_command)
                 ui.button('Send', on_click=self._send_serial_command)
 
+    def _send_serial_command(self):
+        """
+        [v3.0.1] 從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
+        不再直接調用 serial_comm。
+        """
+        command_text = self.serial_command_buffer.value
+        if command_text:
+            event_bus.publish(EVENT_SERIAL_COMMAND_SEND, command=command_text)
+            self.serial_command_buffer.set_value('') # 清空輸入框
+            log.info(f"> {command_text}")
+
+
     def update_ui_elements(self):
-        """更新所有 UI 元件，先鎖定狀態取得資料，再在鎖外更新。"""
-        # --- 在鎖內快速複製所有需要的狀態值 ---
+        """
+        [v3.0.1] 定期從 SimulationState 讀取最新數據，並更新所有UI元件。
+        這是一個單向的數據流：State -> UI。
+        """
+        # ============================ 步驟 1: 在鎖內快速複製所有需要的狀態值 ============================
         with self.state.lock:
+            # --- 通用狀態 ---
             mode = self.state.control_mode
             input_mode = self.state.input_mode
             sim_time = self.state.sim.data.time if self.state.sim else None
@@ -239,6 +319,7 @@ class UIController:
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
 
+            # --- AI 策略狀態 ---
             pm = self.policy_manager
             transitioning = pm.is_transitioning
             alpha = pm.transition_alpha
@@ -246,83 +327,87 @@ class UIController:
             tgt_policy = pm.target_policy_name
             primary_policy = pm.primary_policy_name
 
+            # --- 地形狀態 ---
             terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
 
-            joint_info = None
-            if mode == "JOINT_TEST":
-                idx = self.state.joint_test_index
-                offset = self.state.joint_test_offsets[idx]
-                default_pos = self.state.sim.default_pose[idx]
-                target_abs = default_pos + offset
-                actual_abs = self.state.latest_joint_positions[idx]
-                joint_info = {
-                    "mode": "offset",
-                    "index": idx,
-                    "target_abs": target_abs,
-                    "actual_abs": actual_abs,
-                    "offset": offset,
-                }
-            elif mode == "MANUAL_CTRL":
-                idx = self.state.manual_ctrl_index
-                target_abs = self.state.manual_final_ctrl[idx]
-                actual_abs = self.state.latest_joint_positions[idx]
-                joint_info = {
-                    "mode": "absolute",
-                    "index": idx,
-                    "target_abs": target_abs,
-                    "actual_abs": actual_abs,
-                }
+            # --- 參數調校狀態 ---
+            tuning_params_copy = {
+                'kp': self.state.tuning_params.kp,
+                'kd': self.state.tuning_params.kd,
+                'action_scale': self.state.tuning_params.action_scale,
+                'bias': self.state.tuning_params.bias
+            }
 
-        # --- 在鎖外更新 UI 元件 ---
+            # --- 關節控制狀態 ---
+            joint_info = None
+            if mode in ["JOINT_TEST", "MANUAL_CTRL"]:
+                if mode == "JOINT_TEST":
+                    idx = self.state.joint_test_index
+                    target_abs = self.state.sim.default_pose[idx] + self.state.joint_test_offsets[idx]
+                    offset = self.state.joint_test_offsets[idx]
+                    joint_info = {"mode": "offset", "index": idx, "target_abs": target_abs, "offset": offset}
+                else: # MANUAL_CTRL
+                    idx = self.state.manual_ctrl_index
+                    target_abs = self.state.manual_final_ctrl[idx]
+                    joint_info = {"mode": "absolute", "index": idx, "target_abs": target_abs}
+                
+                # 共享的資訊
+                joint_info["actual_abs"] = self.state.latest_joint_positions[joint_info['index']]
+
+        # ============================ 步驟 2: 在鎖外安全地更新所有 UI 元件 ============================
+
+        # --- 更新通用狀態標籤 ---
         self.status_labels['mode'].set_text(f"模式: {mode}")
         self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
-        if sim_time is not None:
-            self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s")
-        else:
-            self.status_labels['sim_time'].set_text("時間: N/A")
+        self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s" if sim_time is not None else "時間: N/A")
         self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
-        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Disconnected')
-        if mode == 'HARDWARE_MODE':
-            self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled')
-        else:
-            self.status_labels['hardware_ai'].set_text('硬體AI: N/A')
+        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Connected')
+        self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled' if mode == 'HARDWARE_MODE' else '硬體AI: N/A')
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
 
-        if transitioning:
-            policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)"
-        else:
-            policy_text = f"策略: {primary_policy}"
+        # --- 更新 AI 策略相關 UI ---
+        policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)" if transitioning else f"策略: {primary_policy}"
         self.status_labels['policy_status'].set_text(policy_text)
-        self.status_labels['policy_selector'].set_value(primary_policy)
+        if self.status_labels['policy_selector'].value != primary_policy:
+            self.status_labels['policy_selector'].set_value(primary_policy)
 
-        # 更新地形下拉選單狀態
+        # --- 更新地形選擇 UI ---
         if self.ui_terrain_selection != terrain_name:
             self.ui_terrain_selection = terrain_name
 
-        # 更新關節控制資訊
+        # --- 更新參數調校滑桿 ---
+        for key, slider in self.param_sliders.items():
+            state_value = tuning_params_copy[key]
+            # 只有在值有顯著差異時才更新，避免浮點數誤差導致的無限循環
+            if abs(slider.value - state_value) > 1e-4:
+                slider.set_value(state_value)
+
+        # --- 更新關節控制 UI ---
         if joint_info and self.joint_control_slider is not None:
             idx = joint_info['index']
-            self.joint_selector.set_value(idx)
+            if self.joint_selector.value != idx:
+                self.joint_selector.set_value(idx)
 
             target_abs = joint_info['target_abs']
-            actual_abs = joint_info['actual_abs']
-
-            if abs(self.joint_control_slider.value - target_abs) > 1e-3:
+            if abs(self.joint_control_slider.value - target_abs) > 1e-4:
                 self.joint_control_slider.set_value(target_abs)
 
+            # 更新顯示文字
+            actual_abs = joint_info['actual_abs']
             error = target_abs - actual_abs
             if joint_info['mode'] == 'offset':
-                offset = joint_info['offset']
-                text = f"模式: 偏移 | Offset={offset:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
+                text = f"模式: 偏移 | Offset={joint_info['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
             else:
                 text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
             self.status_labels['joint_info'].set_text(text)
 
-        # 更新 ONNX 標籤與日誌
+        # --- 更新 ONNX 觀察向量和日誌 ---
         self._update_onnx_labels()
         log_content = "\n".join(log_queue)
-        self.log_area.set_value(log_content)
+        if self.log_area.value != log_content:
+            self.log_area.set_value(log_content)
+
 
     def _update_onnx_labels(self):
         if self.state.latest_onnx_input.size == 0 or not self.policy_manager.get_active_recipe():
@@ -342,160 +427,6 @@ class UIController:
                     self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
                 current_idx = end_idx
 
-    def _request_mode_change(self, mode: str) -> None:
-        """【新增】僅設定待切換模式，由模擬執行緒在下個循環處理。"""
-        with self.state.lock:
-            self.state.control_mode_pending = mode
-        log.info(f"UI 請求切換模式至 {mode}")
-
-    # 【新增】「暫停/播放」按鈕的回呼函式
-    def _toggle_pause(self):
-        """切換模擬的暫停/播放狀態。"""
-        with self.state.lock:
-            self.state.single_step_mode = not self.state.single_step_mode
-        status = 'PAUSED' if self.state.single_step_mode else 'PLAYING'
-        log.info(f"--- SIMULATION {status} (toggled from UI) ---")
-
-    # 【新增】「下一步」按鈕的回呼函式
-    def _request_one_step(self):
-        """請求在暫停模式下執行單步模擬。"""
-        with self.state.lock:
-            if self.state.single_step_mode:
-                self.state.execute_one_step = True
-
-    def _toggle_hardware_ai(self):
-        if self.hardware_controller and self.state.control_mode == 'HARDWARE_MODE':
-            if self.state.hardware_ai_is_active:
-                self.hardware_controller.disable_ai()
-            else:
-                self.hardware_controller.enable_ai()
-
-    def _request_flag_change(self, flag_name: str):
-        """非阻塞地請求一次性操作，如重置。"""
-        with self.state.lock:
-            setattr(self.state, flag_name, True)
-        log.info(f"UI請求旗標設定: {flag_name}")
-
-    def _connect_serial(self):
-        if self.serial_comm:
-            is_connected = self.serial_comm.scan_and_connect()
-            with self.state.lock:
-                self.state.serial_is_connected = is_connected
-
-    def _connect_gamepad(self):
-        if self.xbox_handler:
-            is_connected = self.xbox_handler.scan_and_connect()
-            with self.state.lock:
-                self.state.gamepad_is_connected = is_connected
-
-    def _request_shutdown(self) -> None:
-        """請求關閉程式，由模擬執行緒處理"""
-        log.info("UI 請求關閉程式")
-        with self.state.lock:
-            self.state.shutdown_requested = True
-
-    def _set_joint_index(self, index: int):
-        """設定目前選中的關節索引。"""
-        with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
-                self.state.joint_test_index = index
-            elif self.state.control_mode == "MANUAL_CTRL":
-                self.state.manual_ctrl_index = index
-
-    def _on_joint_slider_change(self, event):
-        """滑桿改變時即時更新目標值。"""
-        value = event.value
-        with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
-                idx = self.state.joint_test_index
-                # 滑桿給的是絕對角度，轉成偏移量存回 state
-                self.state.joint_test_offsets[idx] = value - self.state.sim.default_pose[idx]
-            elif self.state.control_mode == "MANUAL_CTRL":
-                idx = self.state.manual_ctrl_index
-                self.state.manual_final_ctrl[idx] = value
-
-    def _adjust_joint_value(self, value: float, clear: bool = False):
-        """依目前模式調整關節值或歸零。"""
-        with self.state.lock:
-            if self.state.control_mode == "JOINT_TEST":
-                idx = self.state.joint_test_index
-                if clear:
-                    self.state.joint_test_offsets[idx] = 0.0
-                else:
-                    self.state.joint_test_offsets[idx] += value
-            elif self.state.control_mode == "MANUAL_CTRL":
-                idx = self.state.manual_ctrl_index
-                if clear:
-                    self.state.manual_final_ctrl[idx] = 0.0
-                else:
-                    self.state.manual_final_ctrl[idx] += value
-
-        # 滑桿的實際更新由 update_ui_elements 進行，避免鎖重複取得
-
-    def _on_manual_float_toggle(self, event) -> None:
-        """手動模式懸浮開關變化時呼叫，僅更新狀態由模擬執行緒處理"""
-        is_floating = bool(event.value)
-        with self.state.lock:
-            self.state.manual_mode_is_floating = is_floating
-        log.info(f"手動懸浮狀態切換為: {is_floating}")
-
-    def _update_command_from_joystick(self, event):
-        """虛擬搖桿移動時的回呼函式，根據 x、y 更新指令。"""
-        x_val = -event.y #/ 50.0  # y 值對應機器人前後速度，方向相反
-        y_val = event.x #/ 50.0   # x 值對應左右橫移速度
-        # 切換到虛擬搖桿輸入模式，但保留當前指令
-        self.state.toggle_input_mode("VJOY", clear_cmd=False)
-        with self.state.lock:
-            self.state.command[0] = y_val * self.state.config.gamepad_sensitivity['vy']
-            self.state.command[1] = x_val * self.state.config.gamepad_sensitivity['vx']
-            self.state.command[2] = 0.0
-
-    def _on_joystick_end(self, event):
-        """虛擬搖桿釋放時的回呼函式。"""
-        self.state.clear_command()
-        self.state.toggle_input_mode("KEYBOARD")
-
-
-    def _on_terrain_change(self, event):
-        """當地形下拉選單改變時，更新後端狀態並生成新的地形。"""
-        # 有些情況(如初始化)會傳入 None，此時直接忽略
-        if event.value is None:
-            return
-
-        terrain_name = event.value
-        terrain_manager = self.state.terrain_manager_ref
-
-        # 若 terrain_manager 在無頭模式下可能為 mock，需先檢查屬性
-        if not hasattr(terrain_manager, 'single_terrain_names'):
-            return
-
-        with self.state.lock:
-            # 若選擇與目前狀態相同，則不進行任何操作
-            current_real = terrain_manager.get_current_terrain_name_simple(self.state)
-            if terrain_name == current_real:
-                return
-
-            if terrain_name == 'INFINITE':
-                self.state.terrain_mode = 'INFINITE'
-                if terrain_manager.is_functional:
-                    terrain_manager.reset()
-            else:
-                self.state.terrain_mode = 'SINGLE'
-                if terrain_name in terrain_manager.single_terrain_names:
-                    self.state.single_terrain_index = terrain_manager.single_terrain_names.index(terrain_name)
-                if terrain_manager.is_functional:
-                    terrain_manager.set_single_terrain(terrain_name)
-
-            if terrain_manager.is_functional:
-                # 請求硬重置以適應新的地形
-                self.state.hard_reset_requested = True
-
-    def _send_serial_command(self):
-        command_text = self.serial_command_buffer.value
-        if self.serial_comm and command_text:
-            self.serial_comm.send_command(command_text)
-            self.serial_command_buffer.set_value('')
-            log.info(f"> {command_text}")
 
     def run(self):
         ui.run(title="Pupper Robot Console", port=8080)
