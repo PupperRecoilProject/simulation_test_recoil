@@ -417,11 +417,25 @@ class SimulationController:
 
         if new_mode == "HARDWARE_MODE" and not self.hardware_controller.is_running:
             log.info("派生執行緒以啟動硬體控制器...")
-            threading.Thread(target=self.hardware_controller.start_controller_threads, daemon=True).start()
+            # 【修改】檢查啟動是否成功，並更新 state
+            success = self.hardware_controller.start_controller_threads()
+            with self.state.lock:
+                self.state.hardware_is_running = success
+                # 如果啟動失敗，應將模式切換回去，避免UI狀態不一致
+                if not success:
+                    self.state.control_mode = old_mode # 或者一個預設的安全模式如 WALKING
+                    log.error("硬體控制器啟動失敗，模式已還原。")
+                else:
+                    self.state.set_control_mode(new_mode) # 只有成功才真正設定模式
+
         elif old_mode == "HARDWARE_MODE" and new_mode != "HARDWARE_MODE":
             if self.hardware_controller.is_running:
                 log.info("派生執行緒以停止硬體控制器...")
-                threading.Thread(target=self.hardware_controller.stop_controller_threads, daemon=True).start()
+                # 【修改】停止後更新 state
+                self.hardware_controller.stop_controller_threads()
+                with self.state.lock:
+                    self.state.hardware_is_running = False
+                self.state.set_control_mode(new_mode) # 執行模式切換
 
 
     def update_derived_states_and_render(self, pos, terrain_mode) -> None:

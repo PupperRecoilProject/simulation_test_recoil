@@ -42,7 +42,6 @@ class UIController:
     """管理 NiceGUI 介面與互動邏輯。"""
     def __init__(self, state: 'SimulationState'):
         self.state = state
-        self.hardware_controller = hw_controller # 增加 hw_controller 引用
         self.policy_manager = state.policy_manager_ref
         self.hardware_controller = state.hardware_controller_ref
         self.serial_comm = state.serial_communicator_ref
@@ -173,7 +172,7 @@ class UIController:
             # 現在綁定到 self.hardware_controller.is_running
             # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
             ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
-              .bind_enabled_from(self.hardware_controller, 'is_running')
+              .bind_enabled_from(self.state, 'hardware_is_running')
 
             ui.separator()
             ui.label('設備連接').classes('text-lg')
@@ -315,8 +314,9 @@ class UIController:
             sim_time = self.state.sim.data.time if self.state.sim else None
             serial_connected = self.state.serial_is_connected
             gamepad_connected = self.state.gamepad_is_connected
-            # 移除 hw_ai_active 的讀取，因為 state 不再管理它
-            # hw_ai_active = self.state.hardware_ai_is_active 
+
+            hw_running = self.state.hardware_is_running
+            hw_ai_active = self.state.hardware_ai_is_active
             
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
@@ -357,16 +357,16 @@ class UIController:
                 joint_info["actual_abs"] = self.state.latest_joint_positions[joint_info['index']]
 
         # 直接從 hardware_controller 讀取其內部狀態來更新 UI
-        hw_ai_active = self.hardware_controller.ai_control_enabled.is_set() if self.hardware_controller.is_running else False
         hw_mode_active = self.state.control_mode == 'HARDWARE_MODE'
-        
         ai_status_text = '硬體AI: N/A'
-        if hw_mode_active:
-            ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
+        if hw_running and hw_mode_active:
+             ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
+        elif hw_mode_active and not hw_running:
+             ai_status_text = '硬體AI: Starting...' # 或 'Failed'
         
         self.status_labels['hardware_ai'].set_text(ai_status_text)
 
-        
+
         # ============================ 步驟 2: 在鎖外安全地更新所有 UI 元件 ============================
 
         # --- 更新通用狀態標籤 ---
