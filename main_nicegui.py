@@ -4,6 +4,7 @@ import sys
 import argparse
 from nicegui import ui, app
 
+# --- 我們的模組導入 ---
 from config import load_config
 from state import SimulationState
 from policy import PolicyManager
@@ -65,31 +66,43 @@ def main() -> None:
     except Exception as exc:
         sys.exit(f"failed to initialise: {exc}")
 
+    # --- 核心組件裝配 ---
     sim, obs_builder, terrain_manager, floating_controller = create_simulation_components(use_sim, config)
 
+    # 將核心物件的參考存入 state，使其成為全域上下文
     state.sim = sim
     state.terrain_manager_ref = terrain_manager
     state.floating_controller_ref = floating_controller
 
+    # 按照依賴順序初始化所有管理器
     serial_comm = SerialCommunicator()
     state.serial_communicator_ref = serial_comm
 
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
 
-    policy_manager = PolicyManager(config, obs_builder, None)
+    policy_manager = PolicyManager(config, obs_builder, None) # 在 NiceGUI 模式下，overlay 設為 None
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
 
-    hw_controller = HardwareController(config, policy_manager, state, serial_comm)
+    # 初始化 HardwareController，它不再依賴 state
+    hw_controller = HardwareController(config, policy_manager, serial_comm)
     state.hardware_controller_ref = hw_controller
 
+    # 初始化 KeyboardInputHandler
     keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
     sim.register_callbacks(keyboard_handler)
 
+    # 初始化中央調度器與 UI 控制器
     simulation_controller = SimulationController(state)
+
+    # 根據 UIController 最新的 __init__(self, state) 定義，
+    # 移除多餘的 hw_controller 參數。
+    # UIController 現在只依賴 state，所有它需要知道的硬體狀態
+    # (如 is_running) 都應該由 SimulationController 更新到 state 中。
     ui_controller = UIController(state)
 
+    # --- 背景執行緒與資源清理設定 ---
     def start_background_threads() -> None:
         log.info("NiceGUI 已啟動，啟動背景執行緒...")
         simulation_controller.start()
@@ -107,6 +120,7 @@ def main() -> None:
     app.on_startup(start_background_threads)
     app.on_shutdown(cleanup_resources)
 
+    # --- 啟動 UI ---
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
     ui.run(title="Pupper Robot Console", port=8080)
 

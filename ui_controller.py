@@ -114,12 +114,10 @@ class UIController:
                 ui.button('走路 (Walking)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING"))
                 ui.button('懸浮 (Floating)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="FLOATING"))
 
-                # 【核心修改】為「硬體」按鈕增加啟用條件綁定
-                # 它現在只會在 self.state.serial_is_connected 為 True 時才可點擊。
-                # 這為使用者提供了清晰的視覺引導：必須先連接序列埠。
+                # 綁定到 state.serial_is_connected，提供清晰的使用者引導
                 ui.button('硬體 (Hardware)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE")) \
                   .bind_enabled_from(self.state, 'serial_is_connected')
-            
+
             with ui.row():
                 ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
                 ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
@@ -171,9 +169,10 @@ class UIController:
     def _create_device_panel(self):
         with ui.card():
             ui.label('硬體 AI 控制').classes('text-lg')
-            # [保留] AI 切換按鈕已經是發布事件，無需修改
-            ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)).bind_enabled_from(
-                self.state, 'control_mode', lambda mode: mode == "HARDWARE_MODE")
+            # 現在綁定到 self.hardware_controller.is_running
+            # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
+            ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
+              .bind_enabled_from(self.state, 'hardware_is_running')
 
             ui.separator()
             ui.label('設備連接').classes('text-lg')
@@ -315,7 +314,10 @@ class UIController:
             sim_time = self.state.sim.data.time if self.state.sim else None
             serial_connected = self.state.serial_is_connected
             gamepad_connected = self.state.gamepad_is_connected
+
+            hw_running = self.state.hardware_is_running
             hw_ai_active = self.state.hardware_ai_is_active
+            
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
 
@@ -353,6 +355,17 @@ class UIController:
                 
                 # 共享的資訊
                 joint_info["actual_abs"] = self.state.latest_joint_positions[joint_info['index']]
+
+        # 直接從 hardware_controller 讀取其內部狀態來更新 UI
+        hw_mode_active = self.state.control_mode == 'HARDWARE_MODE'
+        ai_status_text = '硬體AI: N/A'
+        if hw_running and hw_mode_active:
+             ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
+        elif hw_mode_active and not hw_running:
+             ai_status_text = '硬體AI: Starting...' # 或 'Failed'
+        
+        self.status_labels['hardware_ai'].set_text(ai_status_text)
+
 
         # ============================ 步驟 2: 在鎖外安全地更新所有 UI 元件 ============================
 
