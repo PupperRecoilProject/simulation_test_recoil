@@ -390,52 +390,86 @@ class SimulationController:
 
     def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
         """
-        【v3.1.3 核心修改】執行模式切換並處理相關狀態。
-        此函式現在由 run() 迴圈在安全的時間點呼叫。
+        【v3.3.1 死鎖修復版】執行模式切換並處理相關狀態。
+        此版本嚴格區分了耗時操作和狀態更新，並使用單一鎖區塊來避免死鎖。
         """
-        self.state.set_control_mode(new_mode)
-        is_headless = isinstance(self.sim, MockSimulation)
+        # 如果目標模式與當前模式相同，則無需執行任何操作，直接返回。
+        if old_mode == new_mode:
+            return
 
-        # 離開舊模式時的物理處理
+        # ==================== 步驟 1: 執行前置的、可能耗時的操作 (在鎖之外) ====================
+        # 在這個階段，我們不持有任何鎖，可以安全地執行可能阻塞或耗時的函式。
+        
+        hw_start_success = None  # 用於記錄硬體啟動嘗試的結果，初始為 None
+
+        # --- 情況 1: 準備進入硬體模式 ---
+        if new_mode == "HARDWARE_MODE":
+            if not self.hardware_controller.is_running:
+                log.info(f"模式切換請求: 從 '{old_mode}' 進入 '{new_mode}'...")
+                # 呼叫啟動函式。這是一個可能耗時的操作（涉及序列埠通信和執行緒創建）。
+                # 我們將其結果儲存在局部變數中，以便稍後在鎖內使用。
+                hw_start_success = self.hardware_controller.start_controller_threads()
+            else:
+                # 如果硬體控制器已在運行，則無需重複啟動。
+                log.info("硬體控制器已在運行中，無需重複啟動。")
+
+        # --- 情況 2: 準備離開硬體模式 ---
+        elif old_mode == "HARDWARE_MODE":
+            if self.hardware_controller.is_running:
+                log.info(f"模式切換請求: 從 '{old_mode}' 離開至 '{new_mode}'...")
+                # 呼叫停止函式。這也是一個可能耗時的操作。
+                self.hardware_controller.stop_controller_threads()
+        
+        # --- 情況 3: 其他模式之間的切換 ---
+        else:
+            log.info(f"模式切換請求: 從 '{old_mode}' 切換至 '{new_mode}'...")
+
+
+        # ==================== 步驟 2: 原子化地更新所有相關狀態 (在單一鎖之內) ====================
+        # 現在，所有耗時操作都已完成。我們進入一個單一的鎖區塊，
+        # 快速、原子化地更新所有共享狀態變數。
+        
+        with self.state.lock:
+            # --- 處理硬體啟動的後續狀態 ---
+            if hw_start_success is not None:  # 這意味著我們在步驟 1 中嘗試了啟動硬體
+                self.state.hardware_is_running = hw_start_success
+                if not hw_start_success:
+                    log.error("硬體控制器啟動失敗，模式切換已取消。")
+                    return  # 啟動失敗，直接終止模式切換流程，保持舊模式。
+
+            # --- 處理硬體停止的後續狀態 ---
+            elif old_mode == "HARDWARE_MODE":
+                self.state.hardware_is_running = False
+
+            # --- 執行最終的模式設定 ---
+            # 此時，我們已持有 state.lock。
+            # 而 self.state.set_control_mode 內部已移除了鎖。
+            # 因此，這次呼叫是安全的，不會導致死鎖。
+            self.state.set_control_mode(new_mode)
+
+
+        # ==================== 步驟 3: 執行模式切換後的物理效應 (在鎖之外) ====================
+        # 這些操作主要涉及 MuJoCo 的物理狀態，它們不直接修改 state 中的共享旗標，
+        # 因此可以在鎖之外安全地執行。
+        
+        is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
+            # --- 離開舊模式時的清理工作 ---
             if old_mode == "FLOATING":
                 self.floating_controller.disable()
             elif old_mode in ["JOINT_TEST", "MANUAL_CTRL"] and self._manual_float_active:
                 self.floating_controller.disable()
-                self._manual_float_active = False # 同步內部旗標
+                self._manual_float_active = False
 
-        # 進入新模式時的初始化
-        if not is_headless:
+            # --- 進入新模式時的初始化工作 ---
             if new_mode == "FLOATING":
                 self.floating_controller.enable(self.state.latest_pos)
             elif new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
-                log.info(f"進入 {new_mode} 模式，重置機器人關節與速度")
+                log.info(f"進入 {new_mode} 模式，重置機器人關節與速度。")
                 self.sim.data.qpos[7:] = self.sim.default_pose.copy()
                 self.sim.data.qvel[6:] = 0
                 if mujoco:
                     mujoco.mj_forward(self.sim.model, self.sim.data)
-
-        if new_mode == "HARDWARE_MODE" and not self.hardware_controller.is_running:
-            log.info("派生執行緒以啟動硬體控制器...")
-            # 【修改】檢查啟動是否成功，並更新 state
-            success = self.hardware_controller.start_controller_threads()
-            with self.state.lock:
-                self.state.hardware_is_running = success
-                # 如果啟動失敗，應將模式切換回去，避免UI狀態不一致
-                if not success:
-                    self.state.control_mode = old_mode # 或者一個預設的安全模式如 WALKING
-                    log.error("硬體控制器啟動失敗，模式已還原。")
-                else:
-                    self.state.set_control_mode(new_mode) # 只有成功才真正設定模式
-
-        elif old_mode == "HARDWARE_MODE" and new_mode != "HARDWARE_MODE":
-            if self.hardware_controller.is_running:
-                log.info("派生執行緒以停止硬體控制器...")
-                # 【修改】停止後更新 state
-                self.hardware_controller.stop_controller_threads()
-                with self.state.lock:
-                    self.state.hardware_is_running = False
-                self.state.set_control_mode(new_mode) # 執行模式切換
 
 
     def update_derived_states_and_render(self, pos, terrain_mode) -> None:

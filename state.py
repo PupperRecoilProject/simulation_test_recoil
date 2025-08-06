@@ -201,21 +201,20 @@ class SimulationState:
 
     def set_control_mode(self, new_mode: str):
         """
-        【修改後】此函式職責極度簡化，只負責更新模式相關的核心狀態變數。
-        它由 SimulationController 在處理模式切換請求時呼叫。
+        【v3.3.1 修正】此函式職責極度簡化，只負責更新模式相關的核心狀態變數。
+        它被假定總是在一個已經獲取了 self.lock 的上下文中被呼叫。
         """
-        with self.lock:
-            if self.control_mode == new_mode:
-                return
+        # with self.lock: # <--【刪除】這個鎖是導致死鎖的元兇，將其移除。
+        if self.control_mode == new_mode:
+            return
 
-            # 記錄切換前的模式，以便能從 SERIAL_MODE 正確返回
-            if new_mode == "SERIAL_MODE":
-                self.previous_control_mode = self.control_mode
+        if new_mode == "SERIAL_MODE":
+            self.previous_control_mode = self.control_mode
 
-            # 只更新 control_mode 本身，不再處理複雜的副作用。
-            # 副作用（如重置關節偏移）已移至 on_mode_changed 事件回呼中。
-            self.control_mode = new_mode
-            log.info(f"控制模式已設定為: {self.control_mode}")
+        self.control_mode = new_mode
+        log.info(f"控制模式已設定為: {self.control_mode}")
+        # 【新增】發布模式變更通知事件，供其他模組響應
+        event_bus.publish(EVENT_MODE_CHANGED, old_mode=self.previous_control_mode, new_mode=new_mode)
 
     # 以下所有輔助函式維持不變，它們的職責依然清晰有效。
     def reset_control_state(self, sim_time: float):
