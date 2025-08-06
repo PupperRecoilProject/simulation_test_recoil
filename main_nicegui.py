@@ -81,14 +81,17 @@ def main() -> None:
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
 
-    hw_controller = HardwareController(config, policy_manager, state, serial_comm)
+    # 不再傳入 state，使其完全獨立
+    hw_controller = HardwareController(config, policy_manager, serial_comm)
     state.hardware_controller_ref = hw_controller
 
     keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
     sim.register_callbacks(keyboard_handler)
 
     simulation_controller = SimulationController(state)
-    ui_controller = UIController(state)
+    
+    # 現在需要將 hw_controller 的引用也傳入，以便 UI 更新狀態
+    ui_controller = UIController(state, hw_controller)
 
     def start_background_threads() -> None:
         log.info("NiceGUI 已啟動，啟動背景執行緒...")
