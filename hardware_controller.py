@@ -41,29 +41,49 @@ class HardwareController:
         self.policy = policy
         self.global_state = global_state
         self.serial_comm = serial_comm 
-        
-        self.ser = None 
-        self.is_running = False 
-        self.read_thread = None 
-        self.control_thread = None 
-        
-        self.hw_state = RobotStateHardware()
-        self.lock = threading.Lock()
-        self.ai_control_enabled = threading.Event()
-
+        self.ser = None  # 串列通訊物件
+        self.is_running = False  # 控制執行緒狀態
+        self.read_thread = None  # 資料讀取執行緒
+        self.control_thread = None  # 控制執行執行緒
+        self.hw_state = RobotStateHardware()  # 儲存目前硬體觀測值
+        self.lock = threading.Lock()  # 執行緒鎖
+        self.ai_control_enabled = threading.Event()  # AI 控制是否啟用
         self.foot_positions_in_body = np.array([
             [-0.0804, -0.1759, -0.1964],
             [ 0.0806, -0.1759, -0.1964],
             [-0.0804,  0.0239, -0.1964],
             [ 0.0806,  0.0239, -0.1964],
-        ], dtype=np.float32)
-        log.info("✅ 硬體控制器已初始化。")
+        ], dtype=np.float32)  # 足端在本體座標系的位置
+        log.info("✅ 硬體控制器已初始化。")  # 初始化完成 log
+
+    def wait_for_valid_policy_stream(self, timeout: float = 3.0) -> bool:
+        print("⏳ 等待 Teensy 輸出 POLICY_STREAM 資料格式...")
+        start_time = time.time()
+        valid_lines = 0
+
+        while time.time() - start_time < timeout:
+            try:
+                line = self.ser.readline().decode('utf-8', errors='ignore').strip()  # 讀取一行串列資料
+                parts = line.split(',')
+                if len(parts) == 34:  # 需要剛好是 34 維資料
+                    valid_lines += 1
+                else:
+                    valid_lines = 0  # 只要一筆錯就重來計數
+                if valid_lines >= 3:  # 接連三筆正確才算穩定輸出
+                    print("✅ 確認 Teensy 資料格式正確。")
+                    return True
+            except Exception as e:
+                log.warning(f"讀取失敗: {e}")  # 錯誤處理
+                break
+
+        print("❌ 未能接收到連續正確資料。請確認 Teensy 是否在 monitor p 模式。")
+        return False
 
     def start_controller_threads(self):
         """在啟動背景執行緒前，自動命令Teensy切換到POLICY_STREAM模式。"""
         if self.is_running:
             log.info("硬體控制器已在運行中。")
-            return
+            return  # 若已經啟動就不重複啟動
 
         # 原本的程式碼會在檢查失敗時，強制將模式設回 WALKING。
         # 我們將其移除，讓 UI 層來決定是否允許用戶進入此模式。
@@ -72,7 +92,7 @@ class HardwareController:
             # self.global_state.set_control_mode("WALKING") # <--【刪除】
             return
 
-        self.ser = self.serial_comm.get_serial_connection()
+        self.ser = self.serial_comm.get_serial_connection()  # 取得序列連線實體
         if not self.ser:
             log.error("❌ 硬體模式錯誤：無法取得有效序列埠連接。")
             # self.global_state.set_control_mode("WALKING") # <--【刪-除】
@@ -80,34 +100,41 @@ class HardwareController:
 
         # 接管序列埠控制權
         log.info(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
-        self.serial_comm.is_managed_by_hardware_controller = True
+        self.serial_comm.is_managed_by_hardware_controller = True  # 告知 serial_comm 不再管理 serial
 
         # 自動切換 Teensy 到 AI 決策流模式
         try:
             log.info("  -> 正在命令 Teensy 切換至 POLICY_STREAM 模式...")
-            self.ser.write(b"monitor p\n")
-            time.sleep(0.1) # 給Teensy一點時間切換模式並清空緩衝區
-            self.ser.reset_input_buffer()
-            log.info("  -> Teensy 模式切換指令已發送。")
+            self.ser.write(b"monitor p\n")  # 發送指令
+            time.sleep(0.1)  # 等待 Teensy 切換完成
+            self.ser.reset_input_buffer()  # 清除殘留資料
+
+            if not self.wait_for_valid_policy_stream():  # 檢查資料格式是否穩定
+                log.error("❌ Teensy 串列資料無效，取消啟動硬體控制器")
+                self.stop_controller_threads()
+                return
         except serial.SerialException as e:
-            log.error(f"❌ 發送模式切換指令失敗: {e}")
-            self.stop_controller_threads() # 使用現有的停止函式來清理
+            log.error(f"❌ 發送模式切換指令失敗: {e}")  # 串列錯誤處理
+            self.stop_controller_threads()
             return
 
         # 後續的執行緒啟動邏輯
         self.ai_control_enabled.clear()
         with self.global_state.lock:
-            self.global_state.hardware_ai_is_active = False
+            self.global_state.hardware_ai_is_active = False  # 設定全域狀態為未啟用
 
         self.is_running = True
         self.read_thread = threading.Thread(target=self._read_from_port, daemon=True)
-        self.read_thread.start()
+        self.read_thread.start()  # 啟動串列接收執行緒
         self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
-        self.control_thread.start()
+        self.control_thread.start()  # 啟動 AI 控制執行緒
 
         with self.global_state.lock:
-            self.global_state.hardware_is_connected = True
-        log.info("✅ 硬體控制執行緒已啟動。")
+            self.global_state.hardware_is_connected = True  # 更新硬體連線狀態
+        log.info("✅ 硬體控制執行緒已啟動。")  # 啟動完成 log
+
+    # 其他函式保持不變...
+
 
     def stop_controller_threads(self):
         """【修改】在停止執行緒後，自動命令Teensy恢復到安全的人類友好模式。"""
