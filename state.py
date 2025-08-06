@@ -110,7 +110,7 @@ class SimulationState:
     # --- 設備連接與狀態 ---
     serial_is_connected: bool = False
     gamepad_is_connected: bool = False
-    hardware_is_connected: bool = False
+    hardware_is_running: bool = False
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "Not Connected"
     
