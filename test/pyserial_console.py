@@ -1,10 +1,16 @@
-# 引入 pyserial 套件以與序列埠通訊
 import serial
-# 提供延遲功能，讓硬體有時間初始化
 import time
 import sys
-import threading  # 使用執行緒避免阻塞式讀取
-from src.utils.serial_utils import select_serial_port
+import threading
+import os # 【新增】導入 os 模組
+
+# 【修改】調整 sys.path 以便能夠導入 src 下的模組
+# 讓腳本無論從何處運行，都能正確找到 src 目錄
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+from src.utils.serial_utils import select_serial_port # 【修改】更新 import 路徑
 
 # 全域旗標，用於在主執行緒與讀取執行緒間傳遞退出訊號
 exit_signal = threading.Event()

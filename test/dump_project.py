@@ -1,4 +1,4 @@
-# test/dump_project.py (最終防遞迴版)
+# test/dump_project.py
 import os
 import sys
 from datetime import datetime
@@ -8,7 +8,8 @@ from datetime import datetime
 # 1. 要忽略的資料夾名稱
 EXCLUDE_DIRS = {
     '.git', 'node_modules', '__pycache__', 'venv', '.vscode',
-    'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'venv_test_no_mujoco'
+    'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'venv_test_no_mujoco',
+    'output' # 【新增】忽略 output 目錄
 }
 
 # 2. 定義一個「內容跳過清單」。
@@ -36,6 +37,7 @@ def generate_tree_structure(root_dir, project_name):
             print(f"警告：無法存取目錄 {current_dir} ({e})")
             return
 
+        # 【修改】 EXCLUDE_DIRS 現在包含了 'output'
         dirs = sorted([d for d in items if os.path.isdir(os.path.join(current_dir, d)) and d not in EXCLUDE_DIRS])
         
         # 【修改】過濾掉我們自己產生的輸出檔案
@@ -43,6 +45,8 @@ def generate_tree_structure(root_dir, project_name):
         for f in sorted([f for f in items if os.path.isfile(os.path.join(current_dir, f))]):
             is_old_dump = f.startswith(f"{project_name}_dump_") and f.endswith(".txt")
             is_legacy_dump = f == "project_dump.txt"
+            # 這裡的邏輯是檢查文件名本身，所以即使檔案在 `output/` 下，只要文件名符合模式，它就會被忽略。
+            # 這確保了 `dump_project.py` 不會嘗試讀取自己的歷史輸出。
             if not is_old_dump and not is_legacy_dump:
                 files_to_process.append(f)
         
@@ -68,15 +72,20 @@ def generate_tree_structure(root_dir, project_name):
 
 
 # --- 程式碼彙整主函式 ---
-def generate_code_dump(root_dir, output_filename, project_name):
+def generate_code_dump(root_dir, output_filename_base, project_name): # 函式簽名改變，接收基礎文件名
     if not os.path.isdir(root_dir):
         print(f"錯誤：目錄 '{root_dir}' 不存在。")
         return
 
+    # 【修改】指定輸出目錄並確保其存在
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    full_output_path = os.path.join(output_dir, output_filename_base) # 構造完整輸出路徑
+
     processed_files_count = 0
     
     try:
-        with open(output_filename, 'w', encoding='utf-8', errors='ignore') as outfile:
+        with open(full_output_path, 'w', encoding='utf-8', errors='ignore') as outfile: # 【修改】寫入完整路徑
             outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
             outfile.write("=" * 80 + "\n\n")
 
@@ -93,6 +102,7 @@ def generate_code_dump(root_dir, output_filename, project_name):
             outfile.write("#" + "-" * 78 + "#\n\n")
             
             for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True):
+                # 【修改】在此處過濾掉不應遍歷的目錄 (包括 output/)
                 dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
 
                 for filename in sorted(filenames):
@@ -144,11 +154,11 @@ def generate_code_dump(root_dir, output_filename, project_name):
 
         print("\n" + "=" * 80)
         print(f"✅ 成功！共處理了 {processed_files_count} 個檔案。")
-        print(f"輸出結果已儲存至: {os.path.abspath(output_filename)}")
+        print(f"輸出結果已儲存至: {os.path.abspath(full_output_path)}") # 【修改】顯示完整路徑
         print("=" * 80)
 
     except IOError as e:
-        print(f"錯誤：無法寫入輸出檔案 '{output_filename}'。 ({e})")
+        print(f"錯誤：無法寫入輸出檔案 '{full_output_path}'。 ({e})") # 【修改】顯示完整路徑
     except Exception as e:
         print(f"發生未預期的錯誤: {e}")
 
@@ -157,16 +167,18 @@ if __name__ == "__main__":
     script_path = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_path)
     
-    os.chdir(project_root)
+    os.chdir(project_root) # 確保在專案根目錄下運行
     
-    target_dir = '.'
+    target_dir = '.' # 從專案根目錄開始掃描
     
     project_name = os.path.basename(os.path.abspath(project_root))
     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_file = f"{project_name}_dump_{timestamp_str}.txt"
+    # 【修改】只生成基礎文件名，路徑拼接在 generate_code_dump 內部處理
+    output_filename_base = f"{project_name}_dump_{timestamp_str}.txt"
     
     print(f"設定專案根目錄為: {os.path.abspath(project_root)}")
     print(f"將從 '{os.path.abspath(target_dir)}' 開始掃描...")
-    print(f"輸出檔案將命名為: {output_file}")
+    print(f"輸出檔案將命名為: {output_filename_base} (儲存於 output/ 目錄)") # 【修改】
     
-    generate_code_dump(target_dir, output_file, project_name)
+    # 傳入基礎文件名，而不是完整路徑
+    generate_code_dump(target_dir, output_filename_base, project_name)

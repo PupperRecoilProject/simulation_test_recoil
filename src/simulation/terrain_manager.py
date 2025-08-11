@@ -2,6 +2,7 @@
 import mujoco
 import numpy as np
 import random
+import os # 【新增】導入 os 模組
 from typing import Dict, Optional, Callable, Tuple
 from datetime import datetime
 from PIL import Image
@@ -302,8 +303,14 @@ class TerrainManager:
         img = Image.fromarray(normalized_data, 'L')
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"terrain_snapshot_{timestamp}.png"
-        img.save(filename)
-        log.info(f"✅ 地形快照已成功儲存至: {filename}")
+        
+        # 【修改】指定儲存到 output 目錄
+        output_dir = "output"
+        os.makedirs(output_dir, exist_ok=True) # 確保 output 目錄存在
+        full_path = os.path.join(output_dir, filename)
+        
+        img.save(full_path)
+        log.info(f"✅ 地形快照已成功儲存至: {full_path}")
 
     def _create_boundary_fade(self) -> np.ndarray:
         """創建一個邊界為0，中心為1的2D遮罩，用於確保地塊邊界高度為零。"""
