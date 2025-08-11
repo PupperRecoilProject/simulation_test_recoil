@@ -23,6 +23,10 @@ from event_system import (
     EVENT_JOINT_SELECT_REQUESTED,
     EVENT_JOINT_VALUE_ADJUSTED,
     EVENT_SHUTDOWN_REQUESTED,
+    # 【v4.0 新增】導入新的通知事件
+    EVENT_MODE_CHANGED,
+    EVENT_STATE_UPDATED,
+
     # ... 根據需要導入其他事件
 )
 
@@ -75,6 +79,9 @@ class SimulationController:
         event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted)
         event_bus.subscribe(EVENT_SHUTDOWN_REQUESTED, self.on_shutdown_requested)
 
+        # 【v4.0 修改】確保訂閱了手動懸浮事件
+        event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
+
 
         # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
         log.info("SimulationController 已訂閱所有核心請求事件。")
@@ -103,112 +110,164 @@ class SimulationController:
     # ============================ 主要運行 ============================
     def run(self) -> None:
         """
-        [v3.1.3] 執行緒進入點：負責處理所有請求並運行模擬。
-        此版本統一了請求旗標的處理邏輯，使主迴圈更清晰。
+        【v4.0 Phase 1 重構版】執行緒主迴圈。
+        確立了對 mjData 的唯一所有權，並在迴圈頂部安全地處理所有請求。
         """
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
             self.sim.initialize_window_and_context()
-            self._initialize_simulation_state()
-        else:
-            log.info("[MOCK] Headless mode, skip window/context init.")
+        self._initialize_simulation_state()
 
         while self._running.is_set():
-            # ======================== 步驟 1: 獲取狀態快照與處理同步請求 ========================
-            # 在一個鎖內，讀取所有本幀需要的旗標和狀態，然後立即釋放鎖。
-            # 這是執行緒安全的標準做法。
+            # ======================== [v4.0] 請求處理階段 ========================
+            # 在一個極短的鎖定範圍內，原子性地讀取並清除所有掛起的請求。
             with self.state.lock:
-                # 讀取請求旗標
                 shutdown_req = self.state.shutdown_requested
                 hard_reset_req = self.state.hard_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
-                pending_mode_req = self.state.control_mode_pending
+                mode_change_req = self.state.mode_change_request
+                float_toggle_req = self.state.manual_float_toggle_request
 
-                # 讀取後立即清除旗標，避免重複執行
-                if hard_reset_req: self.state.hard_reset_requested = False
-                if soft_reset_req: self.state.soft_reset_requested = False
-                if pending_mode_req: self.state.control_mode_pending = None
-            
-            # 在鎖外，安全地處理這些請求
-            if hard_reset_req:
-                self.hard_reset()
-            if soft_reset_req:
-                self.soft_reset()
-            if pending_mode_req:
-                self.handle_mode_change(self.state.control_mode, pending_mode_req)
+                # 清除已讀取的請求
+                self.state.shutdown_requested = False
+                self.state.hard_reset_requested = False
+                self.state.soft_reset_requested = False
+                self.state.mode_change_request = None
+                self.state.manual_float_toggle_request = None
 
-            # 檢查是否應關閉視窗 (全域關閉請求或視窗被手動關閉)
-            should_close = shutdown_req or (not is_headless and self.sim.should_close())
-            if should_close:
-                if not is_headless and not self.sim.should_close():
-                    # 如果是程式邏輯觸發的關閉，而非用戶點擊關閉按鈕
-                    log.info("偵測到全域關閉請求，正在關閉模擬視窗...")
-                    from glfw import set_window_should_close
-                    set_window_should_close(self.sim.window, 1)
-                self._running.clear()
-                # 確保 NiceGUI 也被通知關閉
-                from nicegui import app
-                app.shutdown()
-                continue
+            # 在鎖之外，安全地執行請求對應的操作
+            if shutdown_req:
+                self._handle_shutdown()
+                continue # 結束迴圈
+
+            if hard_reset_req: self.hard_reset()
+            if soft_reset_req: self.soft_reset()
+
+            if mode_change_req:
+                self._handle_mode_change(mode_change_req)
             
-            # ================================== 步驟 2: 主邏輯 ==================================
+            if float_toggle_req is not None:
+                self._handle_float_toggle(float_toggle_req)
+            
+            # ======================== 主邏輯與模擬步驟 ========================
             with self.state.lock:
                 mode = self.state.control_mode
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
-                manual_float = self.state.manual_mode_is_floating
-
+            
             if single_step and not execute_one:
                 self.sim.render_from_thread(self.state)
-                time.sleep(0.01)
+                time.sleep(0.01) # 避免空轉
                 continue
             
             if execute_one:
-                with self.state.lock:
-                    self.state.execute_one_step = False
+                with self.state.lock: self.state.execute_one_step = False
 
             if not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]:
                 self._simulation_step()
-
-            # 根據手動懸浮開關決定是否啟用懸浮控制器
-            is_manual_mode = mode in ["JOINT_TEST", "MANUAL_CTRL"]
-            if is_manual_mode and manual_float and not self._manual_float_active:
-                self.floating_controller.enable(self.state.latest_pos)
-                self._manual_float_active = True
-            elif (not is_manual_mode or not manual_float) and self._manual_float_active:
-                self.floating_controller.disable()
-                self._manual_float_active = False
             
-            # ============================== 步驟 3: 更新與渲染 ==============================
-            # 更新衍生狀態 (如地形) 並渲染場景
-            with self.state.lock:
-                pos = self.state.latest_pos
-                terrain_mode = self.state.terrain_mode
-            self.update_derived_states_and_render(pos, terrain_mode)
+            # ======================== 狀態更新與渲染 ========================
+            self.update_derived_states_and_render()
+        
+        log.info("模擬執行緒已優雅地停止。")
 
-        log.info("模擬執行緒已停止。")
+    def _handle_shutdown(self):
+        """【v4.0 新增】處理關閉請求的邏輯。"""
+        log.info("偵測到關閉請求，正在停止主迴圈...")
+        self._running.clear()
+        # 確保 NiceGUI 也被通知關閉
+        from nicegui import app
+        app.shutdown()
+
+    def _handle_mode_change(self, new_mode: str):
+        """
+        【v4.0 新增】安全地處理模式切換。
+        此函式在主迴圈的安全上下文中被呼叫，可以安全地修改物理狀態。
+        """
+        with self.state.lock:
+            old_mode = self.state.control_mode
+            if old_mode == new_mode: return
+
+            # 步驟 1: 處理非物理相關的邏輯 (如硬體啟停)
+            if new_mode == "HARDWARE_MODE":
+                if not self.hardware_controller.is_running:
+                    log.info(f"模式切換: 嘗試啟動硬體控制器...")
+                    success = self.hardware_controller.start_controller_threads()
+                    self.state.hardware_is_running = success
+                    if not success:
+                        log.error("硬體啟動失敗，模式切換取消。")
+                        return # 保持在原模式
+            elif old_mode == "HARDWARE_MODE":
+                if self.hardware_controller.is_running:
+                    log.info(f"模式切換: 正在停止硬體控制器...")
+                    self.hardware_controller.stop_controller_threads()
+                    self.state.hardware_is_running = False
+            
+            # 步驟 2: 原子性地更新核心模式狀態
+            self.state.set_control_mode(new_mode)
+        
+        # 步驟 3: 在鎖之外，安全地執行物理相關的修改
+        self._handle_mode_change_physics(old_mode, new_mode)
+
+        # 步驟 4: 發布模式已變更的通知事件
+        event_bus.publish(EVENT_MODE_CHANGED, old_mode=old_mode, new_mode=new_mode)
+        log.info(f"✅ 模式已成功從 '{old_mode}' 切換至 '{new_mode}'。")
+
+    def _handle_mode_change_physics(self, old_mode: str, new_mode: str):
+        """【v4.0 新增】專門處理模式切換中涉及物理修改的部分。"""
+        # 離開舊模式時的物理清理
+        if old_mode == "FLOATING":
+            self.floating_controller.disable()
+            self._manual_float_active = False # 確保同步
+        
+        # 進入新模式時的物理初始化
+        if new_mode == "FLOATING":
+            current_pos = self.sim.data.body('torso').xpos.copy()
+            self.floating_controller.enable(current_pos)
+            self._manual_float_active = True # 確保同步
+        
+        # 進入手動/測試模式時，重置關節姿態
+        if new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
+            log.info(f"進入 {new_mode}，重置關節姿態與速度。")
+            self.sim.data.qpos[7:] = self.sim.default_pose.copy()
+            self.sim.data.qvel[6:] = 0
+            mujoco.mj_forward(self.sim.model, self.sim.data)
+
+    def _handle_float_toggle(self, is_floating: bool):
+        """【v4.0 新增】安全地處理手動懸浮請求。"""
+        is_manual_mode = self.state.control_mode in ["JOINT_TEST", "MANUAL_CTRL"]
+        if not is_manual_mode:
+            log.warning("只有在 JOINT_TEST 或 MANUAL_CTRL 模式下才能切換懸浮。")
+            return
+
+        if is_floating and not self._manual_float_active:
+            current_pos = self.sim.data.body('torso').xpos.copy()
+            self.floating_controller.enable(current_pos)
+            self._manual_float_active = True
+        elif not is_floating and self._manual_float_active:
+            self.floating_controller.disable()
+            self._manual_float_active = False
+        
+        # 更新 state 中的真實狀態
+        with self.state.lock:
+            self.state.manual_mode_is_floating = self._manual_float_active
+        log.info(f"手動懸浮物理狀態已切換為: {self._manual_float_active}")
+
 
 
     # ============================ 事件回呼處理函式 ============================
     def on_mode_change_requested(self, mode: str):
-        """處理模式切換請求。"""
-        log.info(f"接收到模式切換請求: {mode}")
+        """【v4.0】處理模式切換請求。只設定請求旗標。"""
+        log.debug(f"接收到模式切換請求 -> {mode}，正在設定請求旗標。")
         with self.state.lock:
-            # 使用 pending 標誌來確保模式切換在主模擬執行緒中安全地進行
-            self.state.control_mode_pending = mode
-            
+            self.state.mode_change_request = mode
+
     def on_simulation_reset_requested(self, type: str):
-        """
-        【v3.1.3 核心修改】處理模擬重置請求。
-        此函式現在只負責設定請求旗標，而不是直接執行重置操作。
-        實際的重置操作將在主模擬迴圈中安全地執行。
-        """
-        log.info(f"接收到 '{type}' 重置請求，正在設定旗標...")
+        """【v4.0】處理模擬重置請求。只設定請求旗標。 (邏輯不變)"""
+        log.debug(f"接收到 '{type}' 重置請求，正在設定旗標。")
         with self.state.lock:
-            if type == "hard":
-                self.state.hard_reset_requested = True
-            elif type == "soft":
-                self.state.soft_reset_requested = True
+            if type == "hard": self.state.hard_reset_requested = True
+            elif type == "soft": self.state.soft_reset_requested = False # Soft reset 暫時禁用
 
     def on_tuning_param_select_requested(self, direction: int):
         """處理切換當前調校參數的請求。"""
@@ -325,12 +384,11 @@ class SimulationController:
             with self.state.lock:
                 self.state.hard_reset_requested = True
 
-
     def on_manual_float_toggled(self, is_floating: bool):
-        """處理手動模式下的懸浮開關請求。"""
+        """【v4.0】處理手動模式下的懸浮開關請求。只設定請求旗標。"""
+        log.debug(f"接收到手動懸浮切換請求 -> {is_floating}，正在設定請求旗標。")
         with self.state.lock:
-            self.state.manual_mode_is_floating = is_floating
-        log.info(f"手動懸浮狀態切換為: {is_floating}")
+            self.state.manual_float_toggle_request = is_floating
 
     def on_joint_select_requested(self, index: int):
         """處理關節選擇請求。"""
@@ -376,122 +434,35 @@ class SimulationController:
 
     # =========================================================================
 
+    # 【v4.0 移除】移除舊的、不安全的模式處理函式
+    # def process_pending_mode_change(self) -> None: ...
+    # def handle_mode_change(self, old_mode: str, new_mode: str) -> None: ...
 
-    def process_pending_mode_change(self) -> None:
-        """只處理待處理的模式切換請求。"""
-        with self.state.lock:
-            pending_mode = self.state.control_mode_pending
-            if pending_mode:
-                self.state.control_mode_pending = None
-
-        if pending_mode:
-            self.handle_mode_change(self.state.control_mode, pending_mode)
-
-
-    def handle_mode_change(self, old_mode: str, new_mode: str) -> None:
+    def update_derived_states_and_render(self) -> None:
         """
-        【v3.3.1 死鎖修復版】執行模式切換並處理相關狀態。
-        此版本嚴格區分了耗時操作和狀態更新，並使用單一鎖區塊來避免死鎖。
+        【v4.0】更新所有依賴於核心物理狀態的衍生狀態（如地形），並渲染場景。
+        此方法現在自給自足，直接從 self.state 獲取所需數據。
         """
-        # 如果目標模式與當前模式相同，則無需執行任何操作，直接返回。
-        if old_mode == new_mode:
-            return
-
-        # ==================== 步驟 1: 執行前置的、可能耗時的操作 (在鎖之外) ====================
-        # 在這個階段，我們不持有任何鎖，可以安全地執行可能阻塞或耗時的函式。
-        
-        hw_start_success = None  # 用於記錄硬體啟動嘗試的結果，初始為 None
-
-        # --- 情況 1: 準備進入硬體模式 ---
-        if new_mode == "HARDWARE_MODE":
-            if not self.hardware_controller.is_running:
-                log.info(f"模式切換請求: 從 '{old_mode}' 進入 '{new_mode}'...")
-                # 呼叫啟動函式。這是一個可能耗時的操作（涉及序列埠通信和執行緒創建）。
-                # 我們將其結果儲存在局部變數中，以便稍後在鎖內使用。
-                hw_start_success = self.hardware_controller.start_controller_threads()
-            else:
-                # 如果硬體控制器已在運行，則無需重複啟動。
-                log.info("硬體控制器已在運行中，無需重複啟動。")
-
-        # --- 情況 2: 準備離開硬體模式 ---
-        elif old_mode == "HARDWARE_MODE":
-            if self.hardware_controller.is_running:
-                log.info(f"模式切換請求: 從 '{old_mode}' 離開至 '{new_mode}'...")
-                # 呼叫停止函式。這也是一個可能耗時的操作。
-                self.hardware_controller.stop_controller_threads()
-        
-        # --- 情況 3: 其他模式之間的切換 ---
-        else:
-            log.info(f"模式切換請求: 從 '{old_mode}' 切換至 '{new_mode}'...")
-
-
-        # ==================== 步驟 2: 原子化地更新所有相關狀態 (在單一鎖之內) ====================
-        # 現在，所有耗時操作都已完成。我們進入一個單一的鎖區塊，
-        # 快速、原子化地更新所有共享狀態變數。
-        
-        with self.state.lock:
-            # --- 處理硬體啟動的後續狀態 ---
-            if hw_start_success is not None:  # 這意味著我們在步驟 1 中嘗試了啟動硬體
-                self.state.hardware_is_running = hw_start_success
-                if not hw_start_success:
-                    log.error("硬體控制器啟動失敗，模式切換已取消。")
-                    return  # 啟動失敗，直接終止模式切換流程，保持舊模式。
-
-            # --- 處理硬體停止的後續狀態 ---
-            elif old_mode == "HARDWARE_MODE":
-                self.state.hardware_is_running = False
-
-            # --- 執行最終的模式設定 ---
-            # 此時，我們已持有 state.lock。
-            # 而 self.state.set_control_mode 內部已移除了鎖。
-            # 因此，這次呼叫是安全的，不會導致死鎖。
-            self.state.set_control_mode(new_mode)
-
-
-        # ==================== 步驟 3: 執行模式切換後的物理效應 (在鎖之外) ====================
-        # 這些操作主要涉及 MuJoCo 的物理狀態，它們不直接修改 state 中的共享旗標，
-        # 因此可以在鎖之外安全地執行。
-        
-        is_headless = isinstance(self.sim, MockSimulation)
-        if not is_headless:
-            # --- 離開舊模式時的清理工作 ---
-            if old_mode == "FLOATING":
-                self.floating_controller.disable()
-            elif old_mode in ["JOINT_TEST", "MANUAL_CTRL"] and self._manual_float_active:
-                self.floating_controller.disable()
-                self._manual_float_active = False
-
-            # --- 進入新模式時的初始化工作 ---
-            if new_mode == "FLOATING":
-                self.floating_controller.enable(self.state.latest_pos)
-            elif new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
-                log.info(f"進入 {new_mode} 模式，重置機器人關節與速度。")
-                self.sim.data.qpos[7:] = self.sim.default_pose.copy()
-                self.sim.data.qvel[6:] = 0
-                if mujoco:
-                    mujoco.mj_forward(self.sim.model, self.sim.data)
-
-
-    def update_derived_states_and_render(self, pos, terrain_mode) -> None:
-        """更新衍生狀態並渲染場景。"""
         is_headless = isinstance(self.sim, MockSimulation)
 
-        if not is_headless and self.terrain_manager.is_functional and self.terrain_manager.needs_physics_and_scene_update:
-            mujoco.mj_forward(self.sim.model, self.sim.data)
-            mujoco.mjr_uploadHField(self.sim.model, self.sim.context, self.terrain_manager.hfield_id)
-            self.terrain_manager.needs_physics_and_scene_update = False
-            log.info("✅ 地形物理與渲染已同步更新。")
-
-        if not is_headless:
-            with self.state.lock:
+        # 步驟 1: 在函式內部，從 state 中讀取本幀需要的所有數據
+        with self.state.lock:
+            # 獲取地形更新所需的數據
+            current_pos = self.state.latest_pos.copy()
+            terrain_mode = self.state.terrain_mode
+            
+            # 如果不是無頭模式，則更新 state 中的物理數據以供 UI 讀取
+            if not is_headless:
                 self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
                 self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
-                # 將當前關節角度複製到共享狀態，避免 UI 執行緒直接讀取 sim.data
                 self.state.latest_joint_positions = self.sim.data.qpos[7:].copy()
 
+        # 步驟 2: 執行衍生狀態的更新 (此處邏輯不變)
+        # 更新地形（如果需要）
         if self.terrain_manager.is_functional:
-            self.terrain_manager.update(pos, terrain_mode)
-
+            self.terrain_manager.update(current_pos, terrain_mode)
+        
+        # 步驟 3: 執行渲染 (此處邏輯不變)
         self.sim.render_from_thread(self.state)
 
     # ------------------------------------------------------------------
