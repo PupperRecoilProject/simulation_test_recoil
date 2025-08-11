@@ -74,6 +74,9 @@ class DebugOverlay:
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """渲染硬體控制模式的專用介面，使用 MjrRect 進行精確排版。"""
+        # 【v4.0.2 UX 優化】在背景渲染一個半透明遮罩，以明確表示模擬已暫停
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.7)
+        
         padding = 10
         panel_width = int(viewport.width * 0.45)
         panel_height = int(viewport.height * 0.6)
@@ -100,8 +103,8 @@ class DebugOverlay:
         hw_ctrl = state.hardware_controller_ref
         if hw_ctrl and hw_ctrl.is_running:
             with hw_ctrl.lock:
-                imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True)
-                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
+                imu_acc_str = np.array2string(hw_ctrl.hw_state_data.imu_acc_g, precision=2, suppress_small=True)
+                joint_pos_str = np.array2string(hw_ctrl.hw_state_data.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
                 sensor_text = (
                     f"\n\n--- Sensor Readings (from Robot) ---\n"
                     f"IMU Acc (g): {imu_acc_str}\n"

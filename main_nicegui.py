@@ -86,7 +86,7 @@ def main() -> None:
     state.available_policies = policy_manager.model_names
 
     # 初始化 HardwareController，它不再依賴 state
-    hw_controller = HardwareController(config, policy_manager, serial_comm)
+    hw_controller = HardwareController(config, policy_manager, state, serial_comm)
     state.hardware_controller_ref = hw_controller
 
     # 初始化 KeyboardInputHandler
@@ -110,8 +110,14 @@ def main() -> None:
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
+        # 步驟 1: 停止 simulation_controller 的主迴圈
         simulation_controller.stop()
-        hw_controller.stop_controller_threads()
+
+        # 步驟 2: 【v4.0.2 修正】呼叫新的、為關閉而設計的 shutdown 方法
+        # 舊: hw_controller.stop_controller_threads()
+        hw_controller.shutdown()
+
+        # 步驟 3: 依次關閉其他資源
         serial_comm.close()
         xbox_handler.close()
         sim.close()

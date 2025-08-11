@@ -70,7 +70,10 @@ class SimulationState:
     # --- 系統控制與模式狀態 ---
     # 這些屬性由 SimulationController 根據請求事件來管理
     control_mode: str = "WALKING"
-    control_mode_pending: str | None = None
+    # 【v4.0 移除】移除舊的 pending 旗標
+    # control_mode_pending: str | None = None
+    # 【v4.0 新增】更明確的模式切換請求
+    mode_change_request: str | None = None
     previous_control_mode: str = "WALKING"
     input_mode: str = "KEYBOARD"
     
@@ -90,6 +93,8 @@ class SimulationState:
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
     shutdown_requested: bool = False
+    # 【v4.0 新增】手動懸浮切換請求
+    manual_float_toggle_request: bool | None = None # 用 bool|None 來表示三種狀態：請求開啟, 請求關閉, 無請求
     
     # --- 模擬器特定狀態 ---
     control_timer: float = 0.0
@@ -105,6 +110,7 @@ class SimulationState:
     joint_test_offsets: np.ndarray = field(default_factory=lambda: np.zeros(12))
     manual_ctrl_index: int = 0
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    # 【v4.0 修改】這個旗標現在只反映當前的真實狀態，不再被直接寫入
     manual_mode_is_floating: bool = False
     
     # --- 設備連接與狀態 ---
@@ -201,21 +207,20 @@ class SimulationState:
 
     def set_control_mode(self, new_mode: str):
         """
-        【修改後】此函式職責極度簡化，只負責更新模式相關的核心狀態變數。
-        它由 SimulationController 在處理模式切換請求時呼叫。
+        【v4.0 Phase 1 修改】職責極度簡化，只更新模式變數。
+        假定總在持有鎖的上下文中被呼叫，且不再發布事件。
+        事件應由真正完成模式切換的 Controller 發布。
         """
-        with self.lock:
-            if self.control_mode == new_mode:
-                return
+        # with self.lock:  <-- 舊的鎖已移除
+        if self.control_mode == new_mode:
+            return
 
-            # 記錄切換前的模式，以便能從 SERIAL_MODE 正確返回
-            if new_mode == "SERIAL_MODE":
-                self.previous_control_mode = self.control_mode
-
-            # 只更新 control_mode 本身，不再處理複雜的副作用。
-            # 副作用（如重置關節偏移）已移至 on_mode_changed 事件回呼中。
-            self.control_mode = new_mode
-            log.info(f"控制模式已設定為: {self.control_mode}")
+        # 記錄上一個模式，供返回時使用
+        self.previous_control_mode = self.control_mode
+        self.control_mode = new_mode
+        log.info(f"內部狀態: 控制模式已設定為: {self.control_mode}")
+        # 【v4.0 移除】不再從 state 發布事件。通知事件應由完成操作的 SimulationController 發布。
+        # event_bus.publish(EVENT_MODE_CHANGED, old_mode=self.previous_control_mode, new_mode=new_mode)
 
     # 以下所有輔助函式維持不變，它們的職責依然清晰有效。
     def reset_control_state(self, sim_time: float):

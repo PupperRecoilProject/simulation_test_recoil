@@ -215,14 +215,22 @@ class UIController:
 
 
     def _create_joint_control_panel(self):
-        with ui.card().bind_visibility_from(self.state, 'control_mode', lambda m: m in ["JOINT_TEST", "MANUAL_CTRL"]).classes('w-full'):
+        # 僅當控制模式為 "JOINT_TEST" 或 "MANUAL_CTRL" 時，此卡片才可見
+        with ui.card().bind_visibility_from(self.state, 'control_mode', lambda m: m in ["JOINT_TEST", "MANUAL_CTRL"]):
             ui.label('關節微調 (Joint Fine-Tuning)').classes('text-lg')
             
             with ui.row().classes('items-center'):
                 ui.label('啟用懸浮')
-                # [修改] 開關 on_change 發布事件
-                ui.switch(on_change=lambda e: event_bus.publish(EVENT_MANUAL_FLOAT_TOGGLED, is_floating=e.value)).bind_value(self.state, 'manual_mode_is_floating')
-            
+                
+                # 【v4.0 核心修改】將雙向綁定拆為 "on_change" 和 "bind_value_from"
+                ui.switch(
+                    # 1. 控制流: 當用戶操作開關時，發布一個請求事件
+                    on_change=lambda e: event_bus.publish(EVENT_MANUAL_FLOAT_TOGGLED, is_floating=e.value)
+                ).bind_value_from(
+                    # 2. 數據流: 開關的 "開/關" 狀態，單向地從 state.manual_mode_is_floating 讀取
+                    self.state, 'manual_mode_is_floating'
+                )
+
             joint_names = {i: name for i, name in enumerate([
                 "FR_Abduction", "FR_Hip", "FR_Knee", "FL_Abduction", "FL_Hip", "FL_Knee",
                 "RR_Abduction", "RR_Hip", "RR_Knee", "RL_Abduction", "RL_Hip", "RL_Knee"
