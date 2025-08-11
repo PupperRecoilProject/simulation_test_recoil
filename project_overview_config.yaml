@@ -1,0 +1,78 @@
+# project_overview_config.yaml
+
+# 項目根目錄下的絕對路徑。如果使用當前工作目錄，可以留空或 '.'
+# 默認情況下，腳本會嘗試使用 os.getcwd() 作為根目錄。
+project_root_path: ""
+
+# 要排除的目錄名稱列表 (相對於掃描根目錄)
+exclude_directories:
+  - .git
+  - node_modules
+  - __pycache__
+  - venv
+  - .vscode
+  - .idea
+  - dist
+  - build
+  - env
+  - target
+  - .DS_Store
+  - venv_test_no_mujoco
+  - output # 確保不掃描輸出目錄本身
+  - .mypy_cache # Python 類型檢查器緩存
+
+# 內容將被跳過，只顯示文件名和大小的檔案副檔名列表
+skip_content_extensions:
+  - .onnx
+  - .stl
+  - .ort
+  - .png
+  - .jpg
+  - .jpeg
+  - .gif
+  - .bmp
+  - .ico
+  - .mp3
+  - .mp4
+  - .avi
+  - .pdf
+  - .doc
+  - .docx
+  - .xls
+  - .xlsx
+  - .ppt
+  - .pptx
+  - .pyc
+  - .pyo
+  - .lock
+  - .swp
+  - .swo
+
+# 只包含這些副檔名的檔案內容 (如果此列表不為空，則其他所有檔案內容都將被跳過)
+# 默認留空，表示包含所有未明確跳過的內容
+include_only_extensions: []
+
+# 排除符合 fnmatch 模式的檔案名 (例如 "*.log", "*-temp.py")
+exclude_file_patterns:
+  - "project_dump.txt"     # 舊的單一 dump 檔案名稱 (通常是開發過程中的臨時輸出)
+  - "*_dump_*.txt"         # 匹配任何以專案名開頭，包含 _dump_ 的 txt 檔案 (原 dump_project.py 的輸出)
+  # 由於 project_overview.py 的輸出會進入 `output/` 目錄且 `output/` 已被排除，
+  # 腳本不會遍歷這些文件。這裡可以添加其他希望排除的特定模式文件。
+
+# 每個文本檔案的內容最大行數。如果超過，將被截斷。設置為 0 或 None 表示無限制。
+max_lines_per_file: 1000
+
+# 輸出目錄 (相對於腳本執行目錄)
+output_directory: "output"
+
+# 輸出格式: "text" (純文本) 或 "markdown" (Markdown 格式)
+output_format: "markdown"
+
+# 項目名稱 (用於生成輸出文件的文件名和報告標題。如果留空，會自動從 project_root_path 推斷)
+# project_name: "simulation_test_recoil"
+
+# 輸出文件名的前綴 (例如 "my_report_")。如果留空，則直接以 project_name 開頭。
+output_filename_prefix: ""
+
+# 是否在輸出文件名中包含時間戳 (例如 project_name_overview_YYYYMMDD_HHMMSS.md)
+add_timestamp_to_filename: true
