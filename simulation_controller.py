@@ -191,20 +191,17 @@ class SimulationController:
             old_mode = self.state.control_mode
             if old_mode == new_mode: return
 
-            # 步驟 1: 處理非物理相關的邏輯 (如硬體啟停)
+            # 步驟 1: 處理非物理相關的邏輯
             if new_mode == "HARDWARE_MODE":
-                if not self.hardware_controller.is_running:
-                    log.info(f"模式切換: 嘗試啟動硬體控制器...")
-                    success = self.hardware_controller.start_controller_threads()
-                    self.state.hardware_is_running = success
-                    if not success:
-                        log.error("硬體啟動失敗，模式切換取消。")
-                        return # 保持在原模式
+                # 【v4.0.2 修改】呼叫非阻塞的請求函式
+                log.info(f"模式切換: 發出硬體啟動請求...")
+                self.hardware_controller.request_start()
             elif old_mode == "HARDWARE_MODE":
-                if self.hardware_controller.is_running:
-                    log.info(f"模式切換: 正在停止硬體控制器...")
-                    self.hardware_controller.stop_controller_threads()
-                    self.state.hardware_is_running = False
+                # 【v4.0.2 修改】呼叫非阻塞的請求函式
+                log.info(f"模式切換: 發出硬體停止請求...")
+                self.hardware_controller.request_stop()
+            # 【v4.0.2 移除】不再由 SimCtrl 直接修改 HW 狀態，改由 HWCtrl 自己負責
+            # self.state.hardware_is_running = success 
             
             # 步驟 2: 原子性地更新核心模式狀態
             self.state.set_control_mode(new_mode)

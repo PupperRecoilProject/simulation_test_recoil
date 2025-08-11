@@ -86,7 +86,7 @@ def main() -> None:
     state.available_policies = policy_manager.model_names
 
     # 初始化 HardwareController，它不再依賴 state
-    hw_controller = HardwareController(config, policy_manager, serial_comm)
+    hw_controller = HardwareController(config, policy_manager, state, serial_comm)
     state.hardware_controller_ref = hw_controller
 
     # 初始化 KeyboardInputHandler

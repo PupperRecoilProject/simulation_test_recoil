@@ -100,8 +100,8 @@ class DebugOverlay:
         hw_ctrl = state.hardware_controller_ref
         if hw_ctrl and hw_ctrl.is_running:
             with hw_ctrl.lock:
-                imu_acc_str = np.array2string(hw_ctrl.hw_state.imu_acc_g, precision=2, suppress_small=True)
-                joint_pos_str = np.array2string(hw_ctrl.hw_state.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
+                imu_acc_str = np.array2string(hw_ctrl.hw_state_data.imu_acc_g, precision=2, suppress_small=True)
+                joint_pos_str = np.array2string(hw_ctrl.hw_state_data.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
                 sensor_text = (
                     f"\n\n--- Sensor Readings (from Robot) ---\n"
                     f"IMU Acc (g): {imu_acc_str}\n"
