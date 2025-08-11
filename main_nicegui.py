@@ -110,8 +110,14 @@ def main() -> None:
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
+        # 步驟 1: 停止 simulation_controller 的主迴圈
         simulation_controller.stop()
-        hw_controller.stop_controller_threads()
+
+        # 步驟 2: 【v4.0.2 修正】呼叫新的、為關閉而設計的 shutdown 方法
+        # 舊: hw_controller.stop_controller_threads()
+        hw_controller.shutdown()
+
+        # 步驟 3: 依次關閉其他資源
         serial_comm.close()
         xbox_handler.close()
         sim.close()
