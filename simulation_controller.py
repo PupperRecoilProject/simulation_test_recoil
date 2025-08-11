@@ -124,6 +124,7 @@ class SimulationController:
             with self.state.lock:
                 shutdown_req = self.state.shutdown_requested
                 hard_reset_req = self.state.hard_reset_requested
+                # 【v4.0.1 修正】正確讀取 soft_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
                 mode_change_req = self.state.mode_change_request
                 float_toggle_req = self.state.manual_float_toggle_request
@@ -131,6 +132,7 @@ class SimulationController:
                 # 清除已讀取的請求
                 self.state.shutdown_requested = False
                 self.state.hard_reset_requested = False
+                # 【v4.0.1 修正】正確清除 soft_reset_requested
                 self.state.soft_reset_requested = False
                 self.state.mode_change_request = None
                 self.state.manual_float_toggle_request = None
@@ -141,6 +143,7 @@ class SimulationController:
                 continue # 結束迴圈
 
             if hard_reset_req: self.hard_reset()
+            # 【v4.0.1 修正】補上對軟重置請求的處理
             if soft_reset_req: self.soft_reset()
 
             if mode_change_req:
@@ -263,11 +266,14 @@ class SimulationController:
             self.state.mode_change_request = mode
 
     def on_simulation_reset_requested(self, type: str):
-        """【v4.0】處理模擬重置請求。只設定請求旗標。 (邏輯不變)"""
+        """【v4.0.1 修復】處理模擬重置請求。只設定請求旗標。"""
         log.debug(f"接收到 '{type}' 重置請求，正在設定旗標。")
         with self.state.lock:
-            if type == "hard": self.state.hard_reset_requested = True
-            elif type == "soft": self.state.soft_reset_requested = False # Soft reset 暫時禁用
+            if type == "hard":
+                self.state.hard_reset_requested = True
+            elif type == "soft":
+                # 【v4.0.1 修正】確保 soft reset 旗標被正確設置為 True
+                self.state.soft_reset_requested = True 
 
     def on_tuning_param_select_requested(self, direction: int):
         """處理切換當前調校參數的請求。"""
@@ -549,6 +555,7 @@ class SimulationController:
             mujoco.mj_forward(self.sim.model, self.sim.data)
 
     def soft_reset(self) -> None:
+        """【v4.0.1 確認】此函式邏輯是正確的，無需修改。"""
         print("\n--- 正在執行空中姿態重置 ---")
         with self.state.lock:
             if self.state.control_mode == "HARDWARE_MODE":
@@ -567,7 +574,8 @@ class SimulationController:
                 self.floating_controller.disable()
                 self._manual_float_active = False
             mujoco.mj_forward(self.sim.model, self.sim.data)
-            self.state.soft_reset_requested = False
+            # 【v4.0.1 移除】旗標的清除工作已經在 run() 迴圈的頂部完成
+            # self.state.soft_reset_requested = False
 
 
 

@@ -121,6 +121,23 @@ class KeyboardInputHandler:
         """處理所有非專用模式下的全域快捷鍵和預設控制。"""
         # --- 只在按鍵按下的瞬間觸發一次的事件 ---
         if action == glfw.PRESS:
+            # --- 模擬控制 (v4.0.1 修復) ---
+            if key == glfw.KEY_SPACE:
+                # 直接切換單步模式的布林旗標
+                self.state.single_step_mode = not self.state.single_step_mode
+                log.info(f"單步模式已 {'啟用' if self.state.single_step_mode else '關閉'}.")
+                # 確保在退出單步模式時，execute_one_step 也被重置
+                if not self.state.single_step_mode:
+                    self.state.execute_one_step = False
+                return # 處理完畢，返回
+
+            if key == glfw.KEY_N:
+                # 僅在單步模式下，N鍵才有效，觸發執行一幀
+                if self.state.single_step_mode:
+                    self.state.execute_one_step = True
+                    log.info("請求執行下一步。")
+                return # 處理完畢，返回
+            
             # --- 模式切換 ---
             if key == glfw.KEY_GRAVE_ACCENT:
                 event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="SERIAL_MODE")
