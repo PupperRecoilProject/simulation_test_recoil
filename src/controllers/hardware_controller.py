@@ -2,19 +2,19 @@
 import serial
 import threading
 import time
-from logger import log
+from src.core.logger import log
 import numpy as np
 from typing import TYPE_CHECKING
 from queue import Queue, Empty
 from enum import Enum, auto
 
-from event_system import event_bus, EVENT_HARDWARE_AI_TOGGLE_REQUESTED
+from src.core.event_system import event_bus, EVENT_HARDWARE_AI_TOGGLE_REQUESTED
 
 if TYPE_CHECKING:
-    from config import AppConfig
-    from policy import PolicyManager
-    from serial_communicator import SerialCommunicator
-    from state import SimulationState
+    from src.core.config import AppConfig
+    from src.hardware.policy import PolicyManager
+    from src.hardware.serial_communicator import SerialCommunicator
+    from src.core.state import SimulationState
 
 class RobotStateHardware:
     def __init__(self):

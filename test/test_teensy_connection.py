@@ -17,7 +17,7 @@ repo_root = os.path.dirname(os.path.dirname(__file__))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-from serial_utils import TEENSY_VID, TEENSY_PID  # 用於辨識 Teensy 的 VID/PID
+from src.utils.serial_utils import TEENSY_VID, TEENSY_PID  # 用於辨識 Teensy 的 VID/PID
 
 
 def test_teensy_connection():

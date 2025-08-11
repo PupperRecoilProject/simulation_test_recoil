@@ -4,7 +4,7 @@ import mujoco
 from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
-    from config import AppConfig
+    from src.core.config import AppConfig
 
 class ObservationBuilder:
     def __init__(self, data, model, torso_id, default_pose, config: 'AppConfig'):

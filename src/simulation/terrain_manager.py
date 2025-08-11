@@ -5,12 +5,12 @@ import random
 from typing import Dict, Optional, Callable, Tuple
 from datetime import datetime
 from PIL import Image
-from logger import log
+from src.core.logger import log
 
 # 為了型別提示，避免循環匯入
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from state import SimulationState
+    from src.core.state import SimulationState
 
 class TerrainTile:
     """代表地形網格中的一個地塊(Tile)的資料類別。"""

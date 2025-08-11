@@ -1,7 +1,7 @@
 # event_system.py
 import threading
 from collections import defaultdict
-from logger import log
+from src.core.logger import log
 
 # ===================================================================
 # 1. 系統事件字典 (System Event Dictionary)

@@ -14,7 +14,7 @@ repo_root = os.path.dirname(os.path.dirname(__file__))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-from serial_utils import select_serial_port, TEENSY_VID, TEENSY_PID
+from src.utils.serial_utils import select_serial_port, TEENSY_VID, TEENSY_PID
 
 class DummyPort:
     def __init__(self, device, description, vid, pid):

@@ -6,9 +6,9 @@ import time
 from pathlib import Path
 
 # --- 導入您專案的模組 ---
-from config import load_config
-from policy import ONNXPolicy
-from observation import ObservationBuilder # 我們將使用您修改後的版本
+from src.core.config import load_config
+from src.hardware.policy import ONNXPolicy
+from src.simulation.observation import ObservationBuilder # 我們將使用您修改後的版本
 
 # --- 腳本設定 ---
 SIMULATION_DURATION = 3.0

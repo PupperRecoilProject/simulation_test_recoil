@@ -1,9 +1,9 @@
-from state import SimulationState
-from xbox_controller import XboxController
+from src.core.state import SimulationState
+from src.hardware.xbox_controller import XboxController
 import threading
 import time
 import numpy as np  # 確保 numpy 已導入
-from event_system import (
+from src.core.event_system import (
     event_bus, 
     EVENT_COMMAND_UPDATED,
     EVENT_SIMULATION_RESET_REQUESTED,

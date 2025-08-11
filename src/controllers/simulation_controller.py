@@ -3,12 +3,12 @@ from __future__ import annotations
 import threading
 import time
 from typing import TYPE_CHECKING
-from logger import log
+from src.core.logger import log
 
 import numpy as np
-from mock_simulation import MockSimulation
+from src.mock.mock_simulation import MockSimulation
 
-from event_system import (
+from src.core.event_system import (
     event_bus,
     EVENT_MODE_CHANGE_REQUESTED,
     EVENT_SIMULATION_RESET_REQUESTED,
@@ -36,7 +36,7 @@ except ImportError:
     mujoco = None
 
 if TYPE_CHECKING:
-    from state import SimulationState
+    from src.core.state import SimulationState
 
 
 class SimulationController:

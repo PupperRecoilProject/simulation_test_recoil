@@ -4,22 +4,22 @@ import numpy as np
 import mujoco
 import time
 
-from config import load_config
-from state import SimulationState
-from simulation import Simulation
-from policy import PolicyManager
-from observation import ObservationBuilder
-from rendering import DebugOverlay
-from keyboard_input_handler import KeyboardInputHandler
-from xbox_input_handler import XboxInputHandler
-from floating_controller import FloatingController
-from serial_communicator import SerialCommunicator
-from terrain_manager import TerrainManager
-from hardware_controller import HardwareController
+from src.core.config import load_config
+from src.core.state import SimulationState
+from src.simulation.simulation import Simulation
+from src.hardware.policy import PolicyManager
+from src.simulation.observation import ObservationBuilder
+from src.simulation.rendering import DebugOverlay
+from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
+from src.input_handlers.xbox_input_handler import XboxInputHandler
+from src.simulation.floating_controller import FloatingController
+from src.hardware.serial_communicator import SerialCommunicator
+from src.simulation.terrain_manager import TerrainManager
+from src.controllers.hardware_controller import HardwareController
 
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
-    from xbox_controller import XboxController 
+    from src.hardware.xbox_controller import XboxController 
     print("\n--- 機器人模擬控制器 (含硬體與多模型模式) ---")
     
     # --- 1. 初始化核心組件 ---

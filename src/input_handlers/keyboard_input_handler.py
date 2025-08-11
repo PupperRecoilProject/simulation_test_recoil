@@ -2,9 +2,9 @@ try:
     import glfw
 except ImportError:
     glfw = None
-from state import SimulationState
-from logger import log
-from event_system import (
+from src.core.state import SimulationState
+from src.core.logger import log
+from src.core.event_system import (
     event_bus,
     EVENT_MODE_CHANGE_REQUESTED,
     EVENT_SIMULATION_RESET_REQUESTED,

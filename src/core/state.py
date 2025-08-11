@@ -4,14 +4,14 @@
 from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass, field
-from config import AppConfig
-from logger import log
+from src.core.config import AppConfig
+from src.core.logger import log
 from typing import TYPE_CHECKING
 import threading
 
 # 導入我們新創建的事件系統模組和核心事件
 # 這是讓 SimulationState 能夠監聽系統事件的關鍵
-from event_system import (
+from src.core.event_system import (
     event_bus,
     EventSystem,  # 導入 EventSystem 類別以進行類型提示
     EVENT_SIMULATION_TICK,
@@ -25,13 +25,13 @@ from event_system import (
 # TYPE_CHECKING 區塊
 if TYPE_CHECKING:
     # 這些導入僅用於類型提示，不會造成循環依賴
-    from floating_controller import FloatingController
-    from policy import PolicyManager
-    from hardware_controller import HardwareController
-    from terrain_manager import TerrainManager
-    from serial_communicator import SerialCommunicator
-    from simulation import Simulation
-    from xbox_input_handler import XboxInputHandler
+    from src.simulation.floating_controller import FloatingController
+    from src.hardware.policy import PolicyManager
+    from src.controllers.hardware_controller import HardwareController
+    from src.simulation.terrain_manager import TerrainManager
+    from src.hardware.serial_communicator import SerialCommunicator
+    from src.simulation.simulation import Simulation
+    from src.input_handlers.xbox_input_handler import XboxInputHandler
 
 # TuningParams 資料類別
 @dataclass

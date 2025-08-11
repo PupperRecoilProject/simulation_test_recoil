@@ -2,7 +2,7 @@ from nicegui import ui, app
 import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
-from logger import log, log_queue
+from src.core.logger import log, log_queue
 
 # [新增] 導入我們新創建的事件系統模組和所有UI會用到的事件名稱
 # 解釋:
@@ -15,7 +15,7 @@ from logger import log, log_queue
 #
 #   通過從一個統一的地方導入這些"事件契約"，我們可以確保UI和核心邏輯
 #   使用的是完全相同的事件名稱，避免因拼寫錯誤導致的通信失敗。
-from event_system import (
+from src.core.event_system import (
     event_bus,
     EVENT_MODE_CHANGE_REQUESTED,
     EVENT_SIMULATION_RESET_REQUESTED,
@@ -34,7 +34,7 @@ from event_system import (
 )
 
 if TYPE_CHECKING:
-    from state import SimulationState
+    from src.core.state import SimulationState
 
 
 

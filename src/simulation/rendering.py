@@ -2,11 +2,11 @@
 import mujoco
 import numpy as np
 import time
-from state import SimulationState
+from src.core.state import SimulationState
 from typing import TYPE_CHECKING, List, Dict
 
 if TYPE_CHECKING:
-    from simulation import Simulation
+    from src.simulation.simulation import Simulation
 
 class DebugOverlay:
     """
@@ -136,7 +136,7 @@ class DebugOverlay:
         title = "--- SERIAL CONSOLE MODE (Press ~ to exit) ---"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_BIG, mujoco.mjtGridPos.mjGRID_TOPLEFT, console_rect, title, " ", context)
         
-        from logger import log_queue
+        from src.core.logger import log_queue
         log_text = "\n".join(list(log_queue)[-50:])
         log_rect = mujoco.MjrRect(console_rect.left + 10, console_rect.bottom, console_rect.width - 20, console_rect.height - 50)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, log_rect, "\n\n" + log_text, " ", context)

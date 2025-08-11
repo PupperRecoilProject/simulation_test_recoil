@@ -5,26 +5,26 @@ import argparse
 from nicegui import ui, app
 
 # --- 我們的模組導入 ---
-from config import load_config
-from state import SimulationState
-from policy import PolicyManager
-from hardware_controller import HardwareController
-from serial_communicator import SerialCommunicator
-from xbox_input_handler import XboxInputHandler
-from ui_controller import UIController
-from simulation_controller import SimulationController
-from keyboard_input_handler import KeyboardInputHandler
-from logger import log
+from src.core.config import load_config
+from src.core.state import SimulationState
+from src.hardware.policy import PolicyManager
+from src.controllers.hardware_controller import HardwareController
+from src.hardware.serial_communicator import SerialCommunicator
+from src.input_handlers.xbox_input_handler import XboxInputHandler
+from src.controllers.ui_controller import UIController
+from src.controllers.simulation_controller import SimulationController
+from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
+from src.core.logger import log
 
 
 def create_simulation_components(use_sim: bool, config):
     """根據是否使用模擬，建立對應的模組實例。"""
     if use_sim:
         log.info("✅ Simulation mode enabled.")
-        from simulation import Simulation
-        from observation import ObservationBuilder
-        from terrain_manager import TerrainManager
-        from floating_controller import FloatingController
+        from src.simulation.simulation import Simulation
+        from src.simulation.observation import ObservationBuilder
+        from src.simulation.terrain_manager import TerrainManager
+        from src.simulation.floating_controller import FloatingController
 
         sim = Simulation(config)
         terrain = TerrainManager(sim.model, sim.data)
@@ -33,7 +33,7 @@ def create_simulation_components(use_sim: bool, config):
         return sim, obs, terrain, floating
     else:
         log.info("🚫 Simulation disabled, using mock components.")
-        from mock_simulation import (
+        from src.mock.mock_simulation import (
             MockSimulation,
             MockObservationBuilder,
             MockTerrainManager,

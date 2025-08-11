@@ -1,11 +1,11 @@
 # floating_controller.py
 import mujoco
 import numpy as np
-from config import AppConfig
+from src.core.config import AppConfig
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from terrain_manager import TerrainManager
+    from src.simulation.terrain_manager import TerrainManager
 
 class FloatingController:
     """
