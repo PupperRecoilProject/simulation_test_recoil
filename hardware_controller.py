@@ -169,13 +169,16 @@ class HardwareController:
             self._set_internal_state(HWState.FAILED)
             return
 
-        self.ser = self.serial_comm.get_serial_connection()
+        self.ser = self.serial_comm.get_serial_connection()  # 取得序列連線實體
         if not self.ser:
             log.error("❌ 硬體啟動失敗：無法獲取有效連接。")
             self._set_internal_state(HWState.FAILED)
             return
 
-        self.serial_comm.is_managed_by_hardware_controller = True
+        # --- 接管與初始化 ---
+        log.info(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
+        self.serial_comm.is_managed_by_hardware_controller = True  # 告知 serial_comm 不再管理 serial
+
         try:
             log.info("  -> 命令 Teensy 切換至 POLICY_STREAM 模式...")
             self.ser.write(b"monitor p\n")
