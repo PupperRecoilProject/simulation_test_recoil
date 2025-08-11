@@ -110,8 +110,7 @@ class SimulationController:
     # ============================ 主要運行 ============================
     def run(self) -> None:
         """
-        【v4.0 Phase 1 重構版】執行緒主迴圈。
-        確立了對 mjData 的唯一所有權，並在迴圈頂部安全地處理所有請求。
+        【v4.0.2 修改版】執行緒主迴圈。
         """
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
@@ -166,12 +165,19 @@ class SimulationController:
             if execute_one:
                 with self.state.lock: self.state.execute_one_step = False
 
-            if not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]:
-                self._simulation_step()
+            # 【v4.0.2 修正】UX 優化
+            is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
             
-            # ======================== 狀態更新與渲染 ========================
-            self.update_derived_states_and_render()
-        
+            if is_simulation_active:
+                # 【模擬活動模式】: 執行物理計算，然後更新狀態並渲染完整畫面
+                self._simulation_step()
+                self.update_derived_states_and_render()
+            elif not is_headless:
+                # 【模擬非活動模式 (硬體/序列埠)】: 
+                # 不執行任何物理或渲染計算，只處理視窗事件以保持響應。
+                self.sim.poll_window_events()
+                # 加入一個非常短的休眠，以防止此迴圈在空閒時吃掉100%的CPU核心。
+                time.sleep(0.01)
         log.info("模擬執行緒已優雅地停止。")
 
     def _handle_shutdown(self):
@@ -208,6 +214,13 @@ class SimulationController:
         
         # 步驟 3: 在鎖之外，安全地執行物理相關的修改
         self._handle_mode_change_physics(old_mode, new_mode)
+
+        # 【v4.0.2 新增】在完成模式切換後，如果進入了非模擬模式，
+        # 我們主動渲染一次“凍結幀”，以確保UI上顯示的是正確的遮罩和文字。
+        if new_mode in ["HARDWARE_MODE", "SERIAL_MODE"]:
+            if not isinstance(self.sim, MockSimulation):
+                log.info(f"渲染 '{new_mode}' 的凍結畫面...")
+                self.sim.render_from_thread(self.state)
 
         # 步驟 4: 發布模式已變更的通知事件
         event_bus.publish(EVENT_MODE_CHANGED, old_mode=old_mode, new_mode=new_mode)

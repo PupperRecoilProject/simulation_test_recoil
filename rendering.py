@@ -74,6 +74,9 @@ class DebugOverlay:
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """渲染硬體控制模式的專用介面，使用 MjrRect 進行精確排版。"""
+        # 【v4.0.2 UX 優化】在背景渲染一個半透明遮罩，以明確表示模擬已暫停
+        mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.7)
+        
         padding = 10
         panel_width = int(viewport.width * 0.45)
         panel_height = int(viewport.height * 0.6)

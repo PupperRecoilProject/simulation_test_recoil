@@ -177,3 +177,16 @@ class Simulation:
         if self.window:
             glfw.terminate()
             self.window = None
+
+    def poll_window_events(self):
+        """
+        (v4.0.2 新增) 只處理視窗系統的事件（如拖動、點擊關閉），
+        保持視窗的響應性，但不執行任何耗時的渲染。
+        """
+        if self.window and not glfw.window_should_close(self.window):
+            try:
+                glfw.poll_events()
+            except Exception:
+                # 在極端情況下（如視窗被強制關閉），poll_events 可能會出錯，這裡做一個保護
+                pass
+
