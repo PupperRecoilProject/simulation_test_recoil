@@ -6,7 +6,7 @@ import argparse
 import fnmatch
 import yaml
 from datetime import datetime
-from typing import Dict, Any, List, Optional # 【新增】類型提示
+from typing import Dict, Any, List, Optional # 類型提示
 
 # ====================================================================
 # 【新增】語言映射：將文件副檔名映射到 Markdown 程式碼區塊的語言提示
@@ -45,7 +45,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                                 '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt',
                                 '.pptx', '.pyc', '.pyo', '.lock', '.swp', '.swo'],
     'include_only_extensions': [], # 默認空列表，表示不限制包含，只按排除規則走
-    'exclude_file_patterns': ["project_dump.txt", "*_dump_*.txt"], # 排除舊的或新的 dump 文件自身
+    'exclude_file_patterns': ["project_dump.txt", "*_dump_*.txt",
+                              "project_overview.py", "test_pyserial_console.py", # 【修改】加入自身和輔助腳本
+                              "test_joystick.py", "test_serial_utils.py", "test_teensy_connection.py", "verify_model_mode.py"],
     'max_lines_per_file': 300, # 文本文件內容截斷行數
     'output_directory': 'output',
     'output_format': 'markdown', # 默認為 markdown
@@ -81,80 +83,88 @@ def load_overview_config(config_file_path: str) -> Dict[str, Any]:
 # 樹狀結構生成 (修改以支持不同格式)
 # ====================================================================
 def generate_tree_structure(root_dir: str, project_name: str, exclude_dirs: List[str], output_format: str) -> str:
-    """生成專案的目錄樹結構，可選純文本或 Markdown 格式。"""
+    """生成專案的目錄樹結構，可選純文本 (ASCII Art) 或 Markdown (列表) 格式。"""
     tree_lines: List[str] = []
     
     # 根據格式調整縮進和連接符
     if output_format == 'markdown':
         # Markdown 列表使用 "- " 或 "* "，巢狀通過兩個空格縮進
-        # 標題從 H2 開始，因為 H1 是整個檔案的標題
-        tree_lines.append(f"## {project_name}/\n")
-        indent_per_level = "  "
-        list_prefix = "- "
-    else: # text
-        tree_lines.append(f"{project_name}/\n")
-        indent_per_level = "    "
-        list_prefix = "├── " # 頂層將特別處理
+        tree_lines.append(f"## {project_name}/\n") # 頂層標題
+        indent_per_level = "  " # 每個層級的縮進量
+        list_prefix = "- "     # 列表項前綴
 
-    def _generate_tree_recursive(current_dir: str, level: int = 0, parent_is_last: bool = False, current_text_prefix: str = "") -> None:
-        try:
-            items_in_dir = os.listdir(current_dir)
-        except OSError as e:
-            if output_format == 'markdown':
+        def _recursive_markdown_tree(current_dir: str, level: int = 0) -> None:
+            try:
+                items_in_dir = os.listdir(current_dir)
+            except OSError as e:
                 tree_lines.append(f"{indent_per_level * level}{list_prefix}*無法訪問目錄*: `{current_dir}` - {e}\n")
-            else:
-                tree_lines.append(f"{current_text_prefix}├── <無法訪問目錄: {current_dir} - {e}>\n")
-            return
+                return
 
-        dirs_to_process: List[str] = []
-        files_to_process: List[str] = []
+            dirs_to_process: List[str] = []
+            files_to_process: List[str] = []
 
-        for item_name in sorted(items_in_dir):
-            path = os.path.join(current_dir, item_name)
-            
-            # 在樹狀圖中，我們仍會顯示排除目錄的父級，但不會展開其內容。
-            # 這裡的排除dirs主要是在遍歷時不進入這些目錄，但在樹狀圖中可以選擇性顯示。
-            # 這裡簡單地跳過，保持與os.walk行為一致，不顯示其子項。
-            if os.path.isdir(path) and item_name in exclude_dirs:
-                # 如果是排除的目錄，就直接作為一個葉子節點列出，但不會再遞歸其內容
-                if output_format == 'markdown':
+            for item_name in sorted(items_in_dir):
+                path = os.path.join(current_dir, item_name)
+                # 僅僅在樹狀圖中，如果目錄被排除，我們列出它但不再遞歸其內容
+                if os.path.isdir(path) and item_name in exclude_dirs:
                     tree_lines.append(f"{indent_per_level * level}{list_prefix}{item_name}/ (Excluded)\n")
-                else:
-                    tree_lines.append(f"{current_text_prefix}├── {item_name}/ (Excluded)\n")
-                continue
-                
-            if os.path.isdir(path):
-                dirs_to_process.append(item_name)
-            elif os.path.isfile(path):
-                files_to_process.append(item_name)
+                    continue
+                    
+                if os.path.isdir(path):
+                    dirs_to_process.append(item_name)
+                elif os.path.isfile(path):
+                    files_to_process.append(item_name)
 
-        all_entries_sorted = sorted(dirs_to_process) + sorted(files_to_process)
+            all_entries_sorted = sorted(dirs_to_process) + sorted(files_to_process)
 
-        for i, item_name in enumerate(all_entries_sorted):
-            is_last_entry = (i == len(all_entries_sorted) - 1)
-            item_path = os.path.join(current_dir, item_name)
-            is_dir = os.path.isdir(item_path)
-
-            if output_format == 'markdown':
+            for item_name in all_entries_sorted:
+                item_path = os.path.join(current_dir, item_name)
+                is_dir = os.path.isdir(item_path)
                 tree_lines.append(f"{indent_per_level * level}{list_prefix}{item_name}{'/' if is_dir else ''}\n")
                 if is_dir:
-                    _generate_tree_recursive(item_path, level + 1, is_last_entry) # Markdown 模式下，parent_is_last 影響不大
-            else: # text format
-                connector = "└── " if is_last_entry else "├── "
-                # 計算當前行的前綴，根據父級是否是最後一個子項來決定畫 '|' 或 ' '
-                new_text_prefix = current_text_prefix + ("    " if parent_is_last else "│   ")
+                    _recursive_markdown_tree(item_path, level + 1)
+        
+        _recursive_markdown_tree(root_dir)
+    else: # text format (ASCII Art Tree)
+        tree_lines.append(f"{project_name}/\n") # 頂層標題 (無前綴)
+        
+        def _recursive_text_tree(current_dir: str, prefix: str = "", is_last_parent: bool = False) -> None:
+            try:
+                items_in_dir = os.listdir(current_dir)
+            except OSError as e:
+                tree_lines.append(f"{prefix}├── <無法訪問目錄: {current_dir} - {e}>\n")
+                return
+
+            dirs_to_process: List[str] = []
+            files_to_process: List[str] = []
+
+            for item_name in sorted(items_in_dir):
+                path = os.path.join(current_dir, item_name)
+                if os.path.isdir(path) and item_name in exclude_dirs:
+                    tree_lines.append(f"{prefix}├── {item_name}/ (Excluded)\n")
+                    continue
                 
-                line = f"{current_text_prefix}{connector}{item_name}{'/' if is_dir else ''}"
-                tree_lines.append(line)
+                if os.path.isdir(path):
+                    dirs_to_process.append(item_name)
+                elif os.path.isfile(path):
+                    files_to_process.append(item_name)
+
+            all_entries_sorted = sorted(dirs_to_process) + sorted(files_to_process)
+
+            for i, item_name in enumerate(all_entries_sorted):
+                is_last_entry = (i == len(all_entries_sorted) - 1)
+                item_path = os.path.join(current_dir, item_name)
+                is_dir = os.path.isdir(item_path)
+
+                connector = "└── " if is_last_entry else "├── "
+                current_item_prefix = prefix + ("    " if is_last_parent else "│   ")
+
+                tree_lines.append(f"{current_item_prefix}{connector}{item_name}{'/' if is_dir else ''}\n")
                 
                 if is_dir:
-                    _generate_tree_recursive(item_path, level + 1, is_last_entry, new_text_prefix)
-
-    # 針對 text 格式，頂層調用需要特別處理 (無初始前綴)
-    if output_format == 'markdown':
-        _generate_tree_recursive(root_dir)
-    else: # text
-        _generate_tree_recursive(root_dir, level=0, parent_is_last=False, current_text_prefix="")
+                    _recursive_text_tree(item_path, current_item_prefix, is_last_entry)
+        
+        _recursive_text_tree(root_dir, prefix="", is_last_parent=False) # 頂層調用
 
     return "".join(tree_lines)
 
@@ -175,11 +185,16 @@ def generate_project_overview(config: Dict[str, Any]):
     output_ext = "md" if output_format == "markdown" else "txt"
     
     # 構建輸出文件名
-    filename_parts = []
+    filename_parts: List[str] = []
     if config['output_filename_prefix']:
         filename_parts.append(config['output_filename_prefix'])
-    filename_parts.append(project_name.replace(' ', '_').lower()) # 將專案名轉為小寫和下劃線
-    filename_parts.append("overview")
+    
+    # 專案名稱處理：替換空格為下劃線並轉小寫，確保文件名友好
+    sanitized_project_name = project_name.replace(' ', '_').lower()
+    filename_parts.append(sanitized_project_name)
+    
+    filename_parts.append("overview") # 【新增】固定副名稱部分
+    
     if timestamp_str:
         filename_parts.append(timestamp_str)
     
@@ -230,6 +245,7 @@ def generate_project_overview(config: Dict[str, Any]):
             outfile.write(f"{section_title_level} 專案目錄結構\n")
             outfile.write(header_separator)
             
+            # 【修改】確保 generate_tree_structure 使用 project_root
             tree_structure = generate_tree_structure(project_root, project_name, config['exclude_directories'], output_format)
             outfile.write(tree_structure)
             outfile.write(header_separator)
@@ -240,7 +256,12 @@ def generate_project_overview(config: Dict[str, Any]):
             
             # 使用 `exclude_directories` 進行 `os.walk` 的過濾
             for dirpath, dirnames, filenames in os.walk(project_root, topdown=True):
-                # 過濾不應遍歷的目錄
+                # 過濾不應遍歷的目錄 (只在第一層篩選，防止進入)
+                # dirnames[:] = [d for d in dirnames if d not in config['exclude_directories']]
+                # 上面這行在 generate_tree_structure 內部處理了 exclude_directories，不需要在 os.walk 層面重複。
+                # os.walk 本身會遞歸，如果我們希望它跳過這些目錄的 *內容*，這行是需要的。
+                # 為了邏輯統一，讓 generate_tree_structure 只負責顯示，os.walk 負責遍歷。
+                # 所以這裡要保留過濾，以確保不處理排除目錄下的文件。
                 dirnames[:] = [d for d in dirnames if d not in config['exclude_directories']]
 
                 for filename in sorted(filenames):
@@ -252,17 +273,17 @@ def generate_project_overview(config: Dict[str, Any]):
 
                     # 檢查是否應排除此文件 (根據模式)
                     if any(fnmatch.fnmatch(filename, pattern) for pattern in config['exclude_file_patterns']):
-                        print(f"跳過 (匹配排除模式): {relative_path}")
+                        # print(f"跳過 (匹配排除模式): {relative_path}") # Debugging
                         continue
 
                     # 檢查是否應只包含特定類型文件 (如果 include_only_extensions 不為空)
                     if config['include_only_extensions'] and extension_lower not in config['include_only_extensions']:
-                        print(f"跳過 (不符合包含列表): {relative_path}")
+                        # print(f"跳過 (不符合包含列表): {relative_path}") # Debugging
                         continue
 
-                    print(f"處理中: {relative_path}") # 【修改】控制台通知
+                    print(f"處理中: {relative_path}") # 控制台通知
 
-                    outfile.write(f"{file_title_level} 檔案: `{relative_path}`\n\n") # 【修改】檔案標題格式
+                    outfile.write(f"{file_title_level} 檔案: `{relative_path}`\n\n") # 檔案標題格式
                     
                     if extension_lower in config['skip_content_extensions']:
                         file_size = os.path.getsize(file_path)
@@ -286,20 +307,23 @@ def generate_project_overview(config: Dict[str, Any]):
                             outfile.writelines(file_content_lines)
                             if lines_skipped_count > 0:
                                 outfile.write(truncated_comment(lines_skipped_count))
-                                print(f"  ⚠️ 已截斷內容 (跳過 {lines_skipped_count} 行): {relative_path}") # 【新增】截斷通知
+                                print(f"  ⚠️ 已截斷內容 (跳過 {lines_skipped_count} 行): {relative_path}") # 截斷通知
                             outfile.write(code_block_end)
 
                         except (UnicodeDecodeError, IOError) as e:
                             file_size = os.path.getsize(file_path)
                             outfile.write(read_error_comment(filename, file_size))
                             errors_encountered.append(f"讀取錯誤: {relative_path} - {e}")
-                            print(f"  ❌ 讀取錯誤: {relative_path} - {e}") # 【新增】錯誤通知
+                            print(f"  ❌ 讀取錯誤: {relative_path} - {e}") # 錯誤通知
                         except Exception as e:
                             outfile.write(f"<!-- 未知錯誤: {filename} - {e} -->\n") # 輸出為 Markdown 註解
                             errors_encountered.append(f"未知錯誤: {relative_path} - {e}")
-                            print(f"  ❌ 未知錯誤: {relative_path} - {e}") # 【新增】錯誤通知
+                            print(f"  ❌ 未知錯誤: {relative_path} - {e}") # 錯誤通知
 
-                    outfile.write("\n") # 確保每個檔案內容塊後有空行
+                    if output_format == 'markdown': # Markdown 模式的結束格式，明確的檔案結束標記
+                        outfile.write(f"<!-- END OF FILE: {relative_path} -->\n\n") # 【新增】檔案結束標記
+                    else: # Text 模式的結束格式
+                        outfile.write(f"\n\n{'-' * (len(relative_path) + 17)}\n--- END OF FILE: {relative_path} ---\n" + "=" * 80 + "\n\n") # 【修改】確保文本模式也有明確的結束標記
                     
                     processed_files_count += 1
 
@@ -322,7 +346,7 @@ def generate_project_overview(config: Dict[str, Any]):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="生成專案程式碼概覽檔案。")
-    parser.add_argument("--config", type=str, default="project_overview_config.yaml", # 【修改】默認配置文件名
+    parser.add_argument("--config", type=str, default="project_overview_config.yaml", # 默認配置文件名
                         help="指定配置檔案的路徑 (默認: project_overview_config.yaml)")
     parser.add_argument("--output-dir", type=str,
                         help="輸出目錄 (覆蓋配置檔案設定)")

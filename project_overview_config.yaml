@@ -53,11 +53,16 @@ skip_content_extensions:
 include_only_extensions: []
 
 # 排除符合 fnmatch 模式的檔案名 (例如 "*.log", "*-temp.py")
+# 【修改】新增對 project_overview.py 和 test_pyserial_console.py 的排除
 exclude_file_patterns:
   - "project_dump.txt"     # 舊的單一 dump 檔案名稱 (通常是開發過程中的臨時輸出)
   - "*_dump_*.txt"         # 匹配任何以專案名開頭，包含 _dump_ 的 txt 檔案 (原 dump_project.py 的輸出)
-  # 由於 project_overview.py 的輸出會進入 `output/` 目錄且 `output/` 已被排除，
-  # 腳本不會遍歷這些文件。這裡可以添加其他希望排除的特定模式文件。
+  - "project_overview.py"  # 排除 project_overview.py 自身的源碼
+  - "test_pyserial_console.py" # 排除測試用的串口控制台腳本
+  - "test_joystick.py" # 排除測試用的搖桿腳本
+  - "test_serial_utils.py" # 排除測試用的串口工具腳本
+  - "test_teensy_connection.py" # 排除測試用的teensy連線腳本
+  - "verify_model_mode.py" # 排除模型驗證腳本
 
 # 每個文本檔案的內容最大行數。如果超過，將被截斷。設置為 0 或 None 表示無限制。
 max_lines_per_file: 1000
