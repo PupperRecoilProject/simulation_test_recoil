@@ -21,10 +21,18 @@ def create_simulation_components(use_sim: bool, config):
     """根據是否使用模擬，建立對應的模組實例。"""
     if use_sim:
         log.info("✅ Simulation mode enabled.")
-        from src.simulation.simulation import Simulation
-        from src.simulation.observation import ObservationBuilder
-        from src.simulation.terrain_manager import TerrainManager
-        from src.simulation.floating_controller import FloatingController
+        try:
+            # 匯入需要的 MuJoCo 模擬元件
+            from src.simulation.simulation import Simulation
+            from src.simulation.observation import ObservationBuilder
+            from src.simulation.terrain_manager import TerrainManager
+            from src.simulation.floating_controller import FloatingController
+        except ModuleNotFoundError as exc:
+            # 若系統未安裝 MuJoCo，提示並退回至 no-sim 模式
+            if exc.name == "mujoco":
+                log.warning("⚠️ 找不到 MuJoCo 模組，自動切換為 no-sim 模式。")
+                return create_simulation_components(False, config)
+            raise
 
         sim = Simulation(config)
         terrain = TerrainManager(sim.model, sim.data)
