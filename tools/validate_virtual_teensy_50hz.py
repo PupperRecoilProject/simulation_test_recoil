@@ -10,6 +10,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from src.hardware.virtual_teensy import VirtualTeensy
 from src.core.state import SimulationState
 from src.controllers.hardware_controller import construct_observation_51
+from src.core.config import TuningParamsConfig  # 導入調校參數資料類別
 
 
 class _DummySim:
@@ -42,17 +43,22 @@ class _DummySim:
 
 
 class _DummyConfig:
-    """簡化版設定，提供最少必要欄位給 SimulationState 使用。"""
+    """
+    簡化版設定，提供最少必要欄位給 SimulationState 使用。
+    Minimal config for SimulationState so the validation tool can run.
+    """
+
     use_virtual_teensy = True
     num_motors = 12  # 模擬用的馬達數
-    # 最小化的初始調校參數，避免初始化時找不到欄位
-    class _DummyTuning:
-        kp = 0.0
-        kd = 0.0
-        action_scale = 1.0
-        bias = 0.0
 
-    initial_tuning_params = _DummyTuning()
+    # 使用正式的 TuningParamsConfig，確保 __dict__ 含有所需欄位
+    # Use real TuningParamsConfig so __dict__ has required fields
+    initial_tuning_params = TuningParamsConfig(
+        kp=0.0,        # 比例增益 (Proportional gain)
+        kd=0.0,        # 微分增益 (Derivative gain)
+        action_scale=1.0,  # 動作縮放係數
+        bias=0.0,      # 力矩偏置
+    )
 
 
 def main():
