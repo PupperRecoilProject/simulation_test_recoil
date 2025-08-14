@@ -15,6 +15,7 @@ from src.controllers.ui_controller import UIController
 from src.controllers.simulation_controller import SimulationController
 from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
+from src.utils.gamepad_presence_guard import start_gamepad_presence_guard
 
 
 def create_simulation_components(use_sim: bool, config):
@@ -92,6 +93,8 @@ def main() -> None:
 
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
+    # 啟動搖桿存在守門員，只用於 UI 顯示，不影響 handler
+    start_gamepad_presence_guard(state)
 
     policy_manager = PolicyManager(config, obs_builder, None) # 在 NiceGUI 模式下，overlay 設為 None
     state.policy_manager_ref = policy_manager

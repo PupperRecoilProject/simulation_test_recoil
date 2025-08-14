@@ -82,6 +82,10 @@ class SimulationState:
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
     latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    # 硬體輸入解析後的最新 51 維觀測向量
+    latest_observation_51: np.ndarray = field(default_factory=lambda: np.zeros(51))
+    # 上一次送出的動作 (供觀測使用)
+    last_action: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
     # --- 物理狀態 (由主驅動者直接更新) ---
     # 這些是物理世界的最直接反映，由擁有 sim.data 的模組 (SimulationController) 直接更新
@@ -116,6 +120,8 @@ class SimulationState:
     # --- 設備連接與狀態 ---
     serial_is_connected: bool = False
     gamepad_is_connected: bool = False
+    # 由 Gamepad Presence Guard 更新，僅用於 UI 顯示
+    ui_gamepad_connected: bool = False
     hardware_is_running: bool = False
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "Not Connected"

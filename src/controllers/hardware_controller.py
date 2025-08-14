@@ -11,7 +11,35 @@ from enum import Enum, auto  # 引入枚舉，用於定義清晰的狀態和命�
 # 導入專案內部模組
 from src.core.logger import log
 from src.core.event_system import event_bus, EVENT_HARDWARE_AI_TOGGLE_REQUESTED
-from virtual_teensy import VirtualTeensy  # 導入虛擬Teensy
+
+# 每 LOG_EVERY_N 筆資料列印一次，避免終端被大量輸出淹沒
+LOG_EVERY_N = 50
+
+
+def construct_observation_51(state, hw):
+    """將 34 維硬體資料 + 內部狀態組裝成 51 維觀測。"""
+    # linear_velocity(3)：實體端無此量，虛擬模式可從模擬器取得
+    if getattr(state.config, "use_virtual_teensy", False) and hasattr(state.sim, "linear_velocity_local"):
+        lin_vel = np.asarray(state.sim.linear_velocity_local(), dtype=np.float32)
+    else:
+        lin_vel = np.zeros(3, dtype=np.float32)
+
+    ang_vel = np.asarray(hw.angular_velocity_radps, dtype=np.float32)
+    g_vec = np.asarray(hw.gravity_vector_norm, dtype=np.float32)
+    accel = np.asarray(hw.accelerometer_ms2, dtype=np.float32)
+    qpos = np.asarray(hw.joint_positions_rad, dtype=np.float32)
+    qvel = np.asarray(hw.joint_velocities_radps, dtype=np.float32)
+
+    last_action = np.asarray(getattr(state, "last_action", np.zeros(12, np.float32)), dtype=np.float32)
+    cmd = np.asarray(getattr(state, "command", np.zeros(3, np.float32)), dtype=np.float32)
+
+    scale = getattr(getattr(state, "tuning_params", None), "command_scale", [1.0, 1.0, 1.0])
+    if isinstance(scale, (list, tuple, np.ndarray)) and len(scale) == 3:
+        cmd = cmd * np.asarray(scale, dtype=np.float32)
+
+    obs = np.concatenate([lin_vel, ang_vel, g_vec, accel, qpos, qvel, last_action, cmd]).astype(np.float32)
+    assert obs.shape[0] == 51, f"觀測維度應為 51，實得 {obs.shape[0]}"
+    return obs
 
 # 類型檢查區塊，僅在靜態分析時執行，避免循環導入
 if TYPE_CHECKING:
@@ -87,6 +115,7 @@ class HardwareController:
         self.command_queue = Queue()  # 執行緒安全的命令隊列
         self.internal_state = HWState.STOPPED  # 內部狀態機的初始狀態
         self.ai_control_active = False  # AI是否啟用的內部旗標
+        self._dbg_counter = 0  # 調試計數器，用於節流輸出
 
         self._subscribe_to_events()
         log.info("✅ 硬體控制器 (v4.0.2 異步版) 已初始化。")
@@ -191,11 +220,9 @@ class HardwareController:
 
         if self.config.use_virtual_teensy:
             log.info("🚀 正在啟用【虛擬 Teensy】模式...")
-            if isinstance(self.state.sim, MockSimulation):
-                log.error("❌ 無法在 --no-sim 模式下使用虛擬Teensy。")
-                self._set_internal_state(HWState.FAILED)
-                return
-            self.ser = VirtualTeensy(self.state)
+            # 避免在模擬器缺失時發生導入錯誤，於此處動態導入
+            from src.hardware.virtual_teensy import VirtualTeensy
+            self.ser = VirtualTeensy(self.state, rate_hz=50.0)
             # 虛擬模式也視為已接管序列埠，避免 SerialCommunicator 介入
             self.serial_comm.is_managed_by_hardware_controller = True
         else:
@@ -277,8 +304,10 @@ class HardwareController:
 
         _, action_raw = self.policy.get_action_for_hardware(observation)
 
-        with self.lock:
+        # 記錄最新動作，供下一次觀測使用
+        with self.lock, self.state.lock:
             self.hw_state_data.last_action[:] = action_raw
+            self.state.last_action[:] = action_raw
 
         # 將原始動作（通常是-1到1的偏移量）轉換為字串指令
         action_str = " ".join(f"{a:.4f}" for a in action_raw)
@@ -332,6 +361,15 @@ class HardwareController:
                 self.hw_state_data.joint_positions_rad[:] = data_vec[10:22]
                 self.hw_state_data.joint_velocities_radps[:] = data_vec[22:34]
                 self.hw_state_data.last_update_time = time.time()
+
+                # 解析完成後立即組裝 51 維觀測向量供外部驗證/策略使用
+                obs51 = construct_observation_51(self.state, self.hw_state_data)
+                self.state.latest_observation_51 = obs51
+
+                # 每 LOG_EVERY_N 筆列印一次，協助觀察資料串流
+                self._dbg_counter += 1
+                if self._dbg_counter % LOG_EVERY_N == 0:
+                    print(f"[VT DEBUG] gyro={self.hw_state_data.angular_velocity_radps}, q0={self.hw_state_data.joint_positions_rad[0]:.3f}")
         except (ValueError, IndexError):
             pass  # 在高頻率流中，靜默忽略單次的解析錯誤
 

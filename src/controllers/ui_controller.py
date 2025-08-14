@@ -264,7 +264,12 @@ class UIController:
                 self.status_labels['input_mode'] = ui.label('輸入: KEYBOARD')
                 self.status_labels['sim_time'] = ui.label('時間: 0.00s')
                 self.status_labels['serial_status'] = ui.label('序列埠: Disconnected')
-                self.status_labels['gamepad_status'] = ui.label('搖桿: Disconnected')
+                # 透過 Gamepad Presence Guard 綁定 UI 顯示
+                self.status_labels['gamepad_status'] = ui.label().bind_text_from(
+                    self.state,
+                    'ui_gamepad_connected',
+                    lambda v: '搖桿: Connected' if v else '搖桿: Disconnected',
+                )
                 self.status_labels['hardware_ai'] = ui.label('硬體AI: N/A')
                 self.status_labels['policy_status'] = ui.label(f'策略: {self.policy_manager.primary_policy_name}')
             ui.separator()
@@ -322,7 +327,6 @@ class UIController:
             input_mode = self.state.input_mode
             sim_time = self.state.sim.data.time if self.state.sim else None
             serial_connected = self.state.serial_is_connected
-            gamepad_connected = self.state.gamepad_is_connected
 
             hw_running = self.state.hardware_is_running
             hw_ai_active = self.state.hardware_ai_is_active
@@ -387,7 +391,6 @@ class UIController:
         self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
         self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s" if sim_time is not None else "時間: N/A")
         self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
-        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Connected')
         # hardware_ai 的文字已在上方統一處理，這裡不再覆寫
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
