@@ -1,16 +1,18 @@
 # src/simulation/observation_manager.py (4.3.1 新檔案)
 
+# [v4.3.1 修正] 導入缺失的模組
 import numpy as np
-from typing import TYPE_CHECKING, List, Dict
+from typing import TYPE_CHECKING, List, Dict, Callable
 from src.core.logger import log
 
-# 類型檢查
+# 【v4.3.1 新增】 類型檢查區塊
 if TYPE_CHECKING:
     from src.core.state import SimulationState
 
+# 【v4.3.1 新增】 ObservationManager 類別
 class ObservationManager:
     """
-    [v4.3.1 新增] 觀測向量管理器
+    【v4.3.1 新增】 觀測向量管理器
 
     這是觀測向量生成的唯一權威。它從中央的 SimulationState 中讀取
     原始感測器數據，並根據指定的「配方」將它們組合成最終的 ONNX 模型輸入。
@@ -44,6 +46,7 @@ class ObservationManager:
         self._component_generators = self._register_components()
         log.info("✅ 觀測管理器 (ObservationManager) 初始化完成。")
 
+    # 【v4.3.1 新增】 set_recipe 方法
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要使用的觀測配方。"""
         if self.recipe == recipe:
@@ -56,6 +59,7 @@ class ObservationManager:
             if component not in self._component_generators:
                 log.warning(f"新配方中的元件 '{component}' 不存在，將被忽略。")
     
+    # 【v4.3.1 新增】 get_observation 方法
     def get_observation(self) -> np.ndarray:
         """
         根據當前設定的配方，依序呼叫產生器函式並拼接成最終的觀測向量。
@@ -75,10 +79,12 @@ class ObservationManager:
         # 將所有元件的向量拼接成一個長向量
         return np.concatenate(obs_list).astype(np.float32)
 
+
     # ------------------- 向量計算輔助函式 -------------------
     # 這些函式是從舊的 ObservationBuilder 遷移而來，並進行了重構。
     # 【核心重構】: 所有數據源都從 self.data 改為 self.state.raw_...
 
+    # 【v4.3.1 新增】 _register_components 方法
     def _register_components(self) -> Dict[str, Callable]:
         """註冊所有已知的觀察元件及其對應的產生器函式。"""
         return {
@@ -94,6 +100,7 @@ class ObservationManager:
             'z_angular_velocity': self._get_z_angular_velocity,
         }
 
+    # 【v4.3.1 修改】 _get_torso_inverse_rotation 方法
     def _get_torso_inverse_rotation(self) -> np.ndarray:
         """計算軀幹的逆四元數，用於將世界座標系向量轉換為局部座標系。"""
         # [修改] 數據源變更
@@ -103,53 +110,63 @@ class ObservationManager:
             return np.array([1., 0., 0., 0.])
         return np.array([torso_quat[0], -torso_quat[1], -torso_quat[2], -torso_quat[3]]) / norm
 
+    # 【v4.3.1 新增】 _rotate_vec_by_quat_inv 方法
     def _rotate_vec_by_quat_inv(self, v: np.ndarray, q_inv: np.ndarray) -> np.ndarray:
         """使用逆四元數旋轉一個向量。"""
         u, s = q_inv[1:], q_inv[0]
         return 2 * np.dot(u, v) * u + (s * s - np.dot(u, u)) * v + 2 * s * np.cross(u, v)
 
+    # 【v4.3.1 修改】 _get_gravity_vector 方法
     def _get_gravity_vector(self) -> np.ndarray:
         """計算局部座標系下的重力向量。"""
         inv_torso_rot = self._get_torso_inverse_rotation()
         return self._rotate_vec_by_quat_inv(np.array([0, 0, -1]), inv_torso_rot)
 
+    # 【v4.3.1 修改】 _get_commands 方法
     def _get_commands(self) -> np.ndarray:
         """獲取縮放後的使用者指令。"""
         # [修改] 數據源變更
         return self.state.command * np.array(self.config.command_scaling_factors)
 
+    # 【v4.3.1 修改】 _get_joint_positions 方法
     def _get_joint_positions(self) -> np.ndarray:
         """獲取相對於預設站姿的關節角度。"""
         # [修改] 數據源變更
         return self.state.raw_joint_positions - self.state.sim.default_pose
 
+    # 【v4.3.1 修改】 _get_joint_velocities 方法
     def _get_joint_velocities(self) -> np.ndarray:
         """獲取關節角速度。"""
         # [修改] 數據源變更
         return self.state.raw_joint_velocities
 
+    # 【v4.3.1 修改】 _get_last_action 方法
     def _get_last_action(self) -> np.ndarray:
         """獲取上一幀的 AI 原始輸出。"""
         # [修改] 數據源變更
         return self.state.raw_last_action
 
+    # 【v4.3.1 修改】 _get_linear_velocity 方法
     def _get_linear_velocity(self) -> np.ndarray:
         """獲取局部座標系下的軀幹線速度。"""
         inv_torso_rot = self._get_torso_inverse_rotation()
         # [修改] 數據源變更
         return self._rotate_vec_by_quat_inv(self.state.raw_torso_linear_velocity_world, inv_torso_rot)
 
+    # 【v4.3.1 修改】 _get_full_angular_velocity 方法
     def _get_full_angular_velocity(self) -> np.ndarray:
         """獲取局部座標系下的軀幹角速度。"""
         inv_torso_rot = self._get_torso_inverse_rotation()
         # [修改] 數據源變更
         return self._rotate_vec_by_quat_inv(self.state.raw_torso_angular_velocity_world, inv_torso_rot)
 
+    # 【v4.3.1 修改】 _get_accelerometer 方法
     def _get_accelerometer(self) -> np.ndarray:
         """獲取加速度計讀數。"""
         # [修改] 數據源變更
         return self.state.raw_accelerometer
 
+    # 【v4.3.1 修改】 _get_z_angular_velocity 方法
     def _get_z_angular_velocity(self) -> np.ndarray:
         """獲取局部座標系下 Z 軸的角速度（yaw rate）。"""
         local_ang_vel = self._get_full_angular_velocity()

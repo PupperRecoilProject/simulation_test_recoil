@@ -482,9 +482,10 @@ class SimulationController:
         self.sim.render_from_thread(self.state)
 
     # ------------------------------------------------------------------
+    # 【v4.3.1 修改】 _simulation_step 方法
     def _simulation_step(self) -> None:
         """
-        [v4.3.1 修改]
+        【v4.3.1 修改】
         此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
         """
         # [保留] 讀取狀態和獲取 AI 動作的邏輯不變
@@ -522,7 +523,7 @@ class SimulationController:
             # 這是物理引擎的核心步驟
             mujoco.mj_step(self.sim.model, self.sim.data)
 
-        # [v4.3.1 新增] 將原始物理數據寫入 State
+        # 【v4.3.1 新增】 - 將原始物理數據寫入 State
         # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
         # 作為 ObservationManager 的數據源。
         with self.state.lock:
@@ -539,6 +540,9 @@ class SimulationController:
                  start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
                  end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
                  self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
+            else:
+                 # 如果感測器不存在，用零填充
+                 self.state.raw_accelerometer.fill(0.0)
 
 
 
