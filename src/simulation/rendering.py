@@ -65,7 +65,11 @@ class DebugOverlay:
             self.render_simulation_overlay(viewport, context, state, sim)
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
-        """渲染硬體控制模式的專用介面，使用 MjrRect 進行精確排版。"""
+        """
+        【v4.3.3 修改】
+        渲染硬體控制模式的專用介面。
+        數據源已完全重構為從 SimulationState 讀取，移除了對 hw_controller.hw_state_data 的依賴。
+        """
         # 【v4.0.2 UX 優化】在背景渲染一個半透明遮罩，以明確表示模擬已暫停
         mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.7)
         
@@ -91,17 +95,24 @@ class DebugOverlay:
                 policy_text = f"Active Policy: {pm.primary_policy_name}"
 
         status_text = f"--- Real-time Hardware Status ---\n{state.hardware_status_text}"
+        
+        # 【v4.3.3 修改】 從 state.raw_... 讀取感測器數據
+        # 這裡我們假設 HardwareController 正在運行，並在 state.lock 保護下讀取數據
         sensor_text = ""
-        hw_ctrl = state.hardware_controller_ref
-        if hw_ctrl and hw_ctrl.is_running:
-            with hw_ctrl.lock:
-                imu_acc_str = np.array2string(hw_ctrl.hw_state_data.imu_acc_g, precision=2, suppress_small=True)
-                joint_pos_str = np.array2string(hw_ctrl.hw_state_data.joint_positions_rad, precision=2, suppress_small=True, max_line_width=80)
-                sensor_text = (
-                    f"\n\n--- Sensor Readings (from Robot) ---\n"
-                    f"IMU Acc (g): {imu_acc_str}\n"
-                    f"Joint Pos (rad):\n{joint_pos_str}"
-                )
+        with state.lock:
+            # 格式化加速度計數據
+            acc_str = np.array2string(state.raw_accelerometer, precision=2, suppress_small=True)
+            # 格式化陀螺儀數據
+            gyro_str = np.array2string(state.raw_torso_angular_velocity_world, precision=2, suppress_small=True)
+            # 格式化關節角度數據
+            joint_pos_str = np.array2string(state.raw_joint_positions, precision=2, suppress_small=True, max_line_width=80)
+            
+            sensor_text = (
+                f"\n\n--- Sensor Readings (from Robot) ---\n"
+                f"Accelerometer: {acc_str}\n"
+                f"Gyro (World):  {gyro_str}\n"
+                f"Joint Pos (rad):\n{joint_pos_str}"
+            )
         
         full_text = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{status_text}{sensor_text}"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_left_rect, full_text, " ", context)

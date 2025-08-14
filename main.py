@@ -137,12 +137,13 @@ def main():
     hard_reset()
     
     # 【快捷鍵變更】更新啟動時的提示文字
+    # 【v4.3.3 修改】 移除歷史註解，使輸出更整潔
     print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
     print("    (F: Float, G: Joint Test, B: Manual Ctrl, H: Hardware Mode)")
     print("    (M: Input Mode, R: Hard Reset, X: Soft Reset)")
     print("    (Y: Regen Terrain, P: Save Terrain PNG, 1..: Select Policy)")
     print("    (V: Cycle Terrain, K: Toggle HW AI)")
-    print("    ( ~ : Toggle Serial Console )") # 新增此行，替換舊的 T 鍵提示
+    print("    ( ~ : Toggle Serial Console )")
 
     state.execute_one_step = False
 
