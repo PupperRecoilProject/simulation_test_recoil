@@ -1,5 +1,11 @@
+import os
+import sys
 import time
 import numpy as np
+
+# 為了能從工具資料夾直接執行，將專案根目錄加入模組搜尋路徑
+# Append project root to module search path for direct execution
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.hardware.virtual_teensy import VirtualTeensy
 from src.core.state import SimulationState
