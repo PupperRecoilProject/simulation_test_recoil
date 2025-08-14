@@ -14,32 +14,24 @@ class DebugOverlay:
     """
     def __init__(self):
         self.recipe: List[str] = []
-        self.component_dims: Dict[str, int] = {}
+        # 【v4.3.2 刪除】 不再需要自己維護 component_dims
+        # self.component_dims: Dict[str, int] = {}
         
         self.display_pages_content = [
             ['linear_velocity', 'angular_velocity', 'gravity_vector', 'commands', 'accelerometer'],
             ['joint_positions', 'joint_velocities', 'last_action'],
         ]
-        state_class_ref = SimulationState
-        state_class_ref.num_display_pages = len(self.display_pages_content)
+        # 【v4.3.2 修改】 確保在 SimulationState 中設定 num_display_pages
+        # 這裡的寫法是安全的，因為它修改的是類別屬性
+        SimulationState.num_display_pages = len(self.display_pages_content)
 
+    # 【v4.3.2 修改】 set_recipe 方法
     def set_recipe(self, recipe: List[str]):
         """動態設定當前要顯示的觀察配方。"""
-        # 若新配方與目前相同，直接返回，避免在每一幀都印出訊息
-        if recipe == self.recipe:
+        if self.recipe == recipe:
             return
-
         self.recipe = recipe
-        # 各個觀察向量元件的維度資訊
-        ALL_OBS_DIMS = {
-            'z_angular_velocity': 1, 'gravity_vector': 3, 'commands': 3,
-            'joint_positions': 12, 'joint_velocities': 12, 'foot_contact_states': 4,
-            'linear_velocity': 3, 'angular_velocity': 3, 'last_action': 12,
-            'phase_signal': 1, 'accelerometer': 3,
-        }
-        # 只保留在配方中的元件及其維度
-        self.component_dims = {k: ALL_OBS_DIMS[k] for k in recipe if k in ALL_OBS_DIMS}
-        # 僅在配方改變時輸出提示文字
+        # 【v4.3.2 刪除】 不再需要自己計算 component_dims
         print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
 
     def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
@@ -206,6 +198,7 @@ class DebugOverlay:
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
+    # 【v4.3.2 修改】 render_simulation_overlay 方法
     def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
         """渲染正常的模擬除錯資訊。"""
         def format_vec(label: str, vec, precision=3, label_width=24):
@@ -283,16 +276,24 @@ class DebugOverlay:
         
         bottom_left_text = f"--- ONNX INPUTS (Page {state.display_page + 1}/{state.num_display_pages}) ---\n"
         onnx_input_vec = state.latest_onnx_input
-        if onnx_input_vec.size > 0 and self.recipe and state.display_page < len(self.display_pages_content):
+        
+        # 【v4.3.2 修改】 從 state.observation_manager_ref 獲取 component_dims
+        obs_manager = state.observation_manager_ref
+        
+        if onnx_input_vec.size > 0 and self.recipe and obs_manager and state.display_page < len(self.display_pages_content):
             current_page_components = self.display_pages_content[state.display_page]
-            base_obs_dim = sum(self.component_dims.values()) if self.component_dims else 0
+            
+            # 從 ObservationManager 獲取維度信息
+            component_dims = obs_manager.component_dims
+            
+            base_obs_dim = sum(component_dims.values()) if component_dims else 0
             if base_obs_dim > 0:
                 history_len = len(onnx_input_vec) // base_obs_dim
                 current_frame_obs = onnx_input_vec[-base_obs_dim:]
                 
                 current_full_obs_idx = 0
                 for comp_name_in_recipe in self.recipe:
-                    dim = self.component_dims.get(comp_name_in_recipe, 0)
+                    dim = component_dims.get(comp_name_in_recipe, 0)
                     if dim > 0:
                         if comp_name_in_recipe in current_page_components:
                             start_idx, end_idx = current_full_obs_idx, current_full_obs_idx + dim
