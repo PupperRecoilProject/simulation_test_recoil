@@ -42,7 +42,17 @@ class _DummySim:
 
 
 class _DummyConfig:
+    """簡化版設定，提供最少必要欄位給 SimulationState 使用。"""
     use_virtual_teensy = True
+    num_motors = 12  # 模擬用的馬達數
+    # 最小化的初始調校參數，避免初始化時找不到欄位
+    class _DummyTuning:
+        kp = 0.0
+        kd = 0.0
+        action_scale = 1.0
+        bias = 0.0
+
+    initial_tuning_params = _DummyTuning()
 
 
 def main():
