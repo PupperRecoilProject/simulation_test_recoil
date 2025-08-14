@@ -483,6 +483,11 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def _simulation_step(self) -> None:
+        """
+        [v4.3.1 修改]
+        此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
+        """
+        # [保留] 讀取狀態和獲取 AI 動作的邏輯不變
         with self.state.lock:
             command = self.state.command.copy()
             control_mode = self.state.control_mode
@@ -490,6 +495,7 @@ class SimulationController:
 
         onnx_input, action_final = self.policy_manager.get_action(command)
 
+        # [保留] 根據模式計算最終控制指令的邏輯不變
         if control_mode == "MANUAL_CTRL":
             with self.state.lock:
                 final_ctrl = self.state.manual_final_ctrl.copy()
@@ -499,18 +505,41 @@ class SimulationController:
         else:
             final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
 
+        # [保留] 應用 PD 控制的邏輯不變
         self.sim.apply_position_control(final_ctrl, tuning_params)
 
+        # [保留] 更新 UI 顯示用的數據的邏輯不變
         with self.state.lock:
             self.state.latest_onnx_input = onnx_input.flatten()
             self.state.latest_action_raw = action_final
             self.state.latest_final_ctrl = final_ctrl
 
+        # [保留] 執行物理模擬的迴圈不變
         target_time = self.sim.data.time + self.config.control_dt
         while self.sim.data.time < target_time:
             if not self._running.is_set():
                 break
+            # 這是物理引擎的核心步驟
             mujoco.mj_step(self.sim.model, self.sim.data)
+
+        # [v4.3.1 新增] 將原始物理數據寫入 State
+        # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
+        # 作為 ObservationManager 的數據源。
+        with self.state.lock:
+            # 讀取軀幹的姿態四元數
+            self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
+            # 讀取軀幹在世界座標系下的線速度和角速度
+            self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
+            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
+            # 讀取所有關節的角度和角速度
+            self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
+            self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
+            # 從 XML 中定義的感測器讀取加速度計數據
+            if self.sim.accelerometer_id != -1:
+                 start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
+                 end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
+                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
+
 
 
     # ------------------------------------------------------------------

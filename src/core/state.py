@@ -88,6 +88,15 @@ class SimulationState:
     latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    # [新增] v4.3.1 原始感測器數據 (由數據源更新，供 ObservationManager 使用)
+    # 這是原始數據的暫存區，由 SimulationController 或 HardwareController 填充。
+    raw_torso_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
+    raw_torso_linear_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_torso_angular_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    raw_joint_velocities: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    raw_accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_last_action: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False
@@ -149,6 +158,10 @@ class SimulationState:
         self.latest_final_ctrl = np.zeros(self.config.num_motors)
         self.manual_final_ctrl = np.zeros(self.config.num_motors)
         self.latest_joint_positions = np.zeros(self.config.num_motors)
+        # [新增] v4.3.1 初始化新增的 raw 屬性
+        self.raw_joint_positions = np.zeros(self.config.num_motors)
+        self.raw_joint_velocities = np.zeros(self.config.num_motors)
+        self.raw_last_action = np.zeros(self.config.num_motors)
 
         # 讓 SimulationState 自己訂閱核心數據更新事件
         # 這一步是架構轉變的關鍵：State不再被動地等待被寫入，
@@ -173,6 +186,9 @@ class SimulationState:
             self.latest_onnx_input = onnx_input
             self.latest_action_raw = action_raw
             self.latest_final_ctrl = final_ctrl
+            # [新增] v4.3.1 為了確保 last_action 在模擬和硬體模式下都能被正確更新，我們在此處統一更新 raw_last_action。
+            # action_raw 是AI模型未經任何縮放或修改的原始輸出，這正是 last_action 所需要的。
+            self.raw_last_action = action_raw
 
     def on_command_update(self, command: np.ndarray):
         """當收到來自輸入處理器(搖桿/鍵盤)的指令更新事件時，更新指令狀態。"""

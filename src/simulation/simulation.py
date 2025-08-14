@@ -35,6 +35,13 @@ class Simulation:
             for i in range(self.model.nu):
                 self.model.actuator_biastype[i] = mujoco.mjtBias.mjBIAS_AFFINE
             print("✅ 所有致動器的模式已在執行時被強制設為 AFFINE，以啟用 Python 端的 PD 控制。")
+
+            # [新增] 將 accelerometer_id 作為類別屬性，以便 SimulationController 訪問
+            try:
+                self.accelerometer_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, 'accelerometer')
+            except ValueError:
+                log.warning("在XML中找不到名為 'accelerometer' 的感測器。")
+                self.accelerometer_id = -1
             
         except Exception as e:
             sys.exit(f"❌ 錯誤: 無法載入或處理 XML 檔案 '{config.mujoco_model_file}': {e}")
