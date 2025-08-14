@@ -71,6 +71,10 @@ def main() -> None:
     try:
         config = load_config()
         state = SimulationState(config)
+        if config.use_virtual_teensy:
+            # 🔌 虛擬Teensy模式：不需要實體序列埠也能進入硬體模式
+            state.serial_is_connected = True
+            log.info("虛擬Teensy模式啟用，跳過序列埠連線檢查。")
     except Exception as exc:
         sys.exit(f"failed to initialise: {exc}")
 

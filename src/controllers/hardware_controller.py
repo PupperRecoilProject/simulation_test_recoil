@@ -196,6 +196,8 @@ class HardwareController:
                 self._set_internal_state(HWState.FAILED)
                 return
             self.ser = VirtualTeensy(self.state)
+            # 虛擬模式也視為已接管序列埠，避免 SerialCommunicator 介入
+            self.serial_comm.is_managed_by_hardware_controller = True
         else:
             log.info("🔌 正在啟用【真實硬體】模式...")
             if not self.serial_comm.is_connected:
@@ -244,9 +246,9 @@ class HardwareController:
             except (serial.SerialException, AttributeError) as e:
                 log.warning(f"  -> 警告: 發送停止指令失敗: {e}")
 
-        if not self.config.use_virtual_teensy:
-            self.serial_comm.is_managed_by_hardware_controller = False
-            log.info("  -> 序列埠控制權已交還。")
+        # 真實與虛擬模式皆需要釋放控制權
+        self.serial_comm.is_managed_by_hardware_controller = False
+        log.info("  -> 序列埠控制權已交還。")
 
         self.ser = None
         self._set_internal_state(HWState.STOPPED)

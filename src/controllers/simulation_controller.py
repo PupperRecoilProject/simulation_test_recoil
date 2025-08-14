@@ -165,15 +165,16 @@ class SimulationController:
             if execute_one:
                 with self.state.lock: self.state.execute_one_step = False
 
-            # 【v4.0.2 修正】UX 優化
-            is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
-            
+            # 【v4.0.3 修正】虛擬Teensy下的硬體模式仍須推進模擬
+            is_hw_mode = mode in ["HARDWARE_MODE", "SERIAL_MODE"]
+            is_simulation_active = not is_headless and (not is_hw_mode or self.config.use_virtual_teensy)
+
             if is_simulation_active:
                 # 【模擬活動模式】: 執行物理計算，然後更新狀態並渲染完整畫面
                 self._simulation_step()
                 self.update_derived_states_and_render()
             elif not is_headless:
-                # 【模擬非活動模式 (硬體/序列埠)】: 
+                # 【模擬非活動模式 (真實硬體/序列埠)】:
                 # 不執行任何物理或渲染計算，只處理視窗事件以保持響應。
                 self.sim.poll_window_events()
                 # 加入一個非常短的休眠，以防止此迴圈在空閒時吃掉100%的CPU核心。
@@ -338,6 +339,12 @@ class SimulationController:
         """處理設備連接請求。"""
         log.info(f"接收到連接 '{device}' 的請求...")
         if device == "serial" and self.serial_comm:
+            if self.config.use_virtual_teensy:
+                # 虛擬Teensy模式下，序列埠連線純屬虛構
+                log.info("使用虛擬Teensy，跳過序列埠掃描與連線。")
+                with self.state.lock:
+                    self.state.serial_is_connected = True
+                return
             is_connected = self.serial_comm.scan_and_connect()
             with self.state.lock:
                 self.state.serial_is_connected = is_connected

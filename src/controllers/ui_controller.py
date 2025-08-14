@@ -3,6 +3,7 @@ import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
 from src.core.logger import log, log_queue
+from src.controllers.hardware_controller import HWState  # 導入硬體狀態枚舉
 
 # [新增] 導入我們新創建的事件系統模組和所有UI會用到的事件名稱
 # 解釋:
@@ -325,6 +326,7 @@ class UIController:
 
             hw_running = self.state.hardware_is_running
             hw_ai_active = self.state.hardware_ai_is_active
+            hw_internal = self.hardware_controller.internal_state if self.hardware_controller else None
             
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
@@ -367,11 +369,14 @@ class UIController:
         # 直接從 hardware_controller 讀取其內部狀態來更新 UI
         hw_mode_active = self.state.control_mode == 'HARDWARE_MODE'
         ai_status_text = '硬體AI: N/A'
-        if hw_running and hw_mode_active:
-             ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
-        elif hw_mode_active and not hw_running:
-             ai_status_text = '硬體AI: Starting...' # 或 'Failed'
-        
+        if hw_mode_active:
+            if hw_running:
+                ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
+            elif hw_internal == HWState.FAILED:
+                ai_status_text = '硬體AI: Failed'
+            else:
+                ai_status_text = '硬體AI: Starting...'
+
         self.status_labels['hardware_ai'].set_text(ai_status_text)
 
 
@@ -383,7 +388,7 @@ class UIController:
         self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s" if sim_time is not None else "時間: N/A")
         self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
         self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Connected')
-        self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled' if mode == 'HARDWARE_MODE' else '硬體AI: N/A')
+        # hardware_ai 的文字已在上方統一處理，這裡不再覆寫
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
 
