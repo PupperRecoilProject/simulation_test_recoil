@@ -2,7 +2,7 @@
 import numpy as np
 import time
 from typing import TYPE_CHECKING
-from logger import log
+from src.core.logger import log  # 導入專案內的日誌記錄器
 
 if TYPE_CHECKING:
     from simulation import Simulation
