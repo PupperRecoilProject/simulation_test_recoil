@@ -177,7 +177,7 @@ class Simulation:
         try:
             glfw.make_context_current(self.window)
             viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
-            if state.policy_manager_ref and state.policy_manager_ref.obs_builder:
+            if state.policy_manager_ref and state.policy_manager_ref.observation_manager:
                 self.overlay.set_recipe(state.policy_manager_ref.get_active_recipe())
             self.overlay.render(viewport, self.context, state, self)
             glfw.swap_buffers(self.window)
