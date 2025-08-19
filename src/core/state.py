@@ -82,21 +82,16 @@ class SimulationState:
     latest_onnx_input: np.ndarray = field(default_factory=lambda: np.array([]))
     latest_action_raw: np.ndarray = field(default_factory=lambda: np.zeros(12))
     latest_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    # 硬體輸入解析後的最新 51 維觀測向量
+    latest_observation_51: np.ndarray = field(default_factory=lambda: np.zeros(51))
+    # 上一次送出的動作 (供觀測使用)
+    last_action: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
     # --- 物理狀態 (由主驅動者直接更新) ---
     # 這些是物理世界的最直接反映，由擁有 sim.data 的模組 (SimulationController) 直接更新
     latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
-    # [新增] v4.3.1 原始感測器數據 (由數據源更新，供 ObservationManager 使用)
-    # 這是原始數據的暫存區，由 SimulationController 或 HardwareController 填充。
-    raw_torso_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
-    raw_torso_linear_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    raw_torso_angular_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    raw_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
-    raw_joint_velocities: np.ndarray = field(default_factory=lambda: np.zeros(12))
-    raw_accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    raw_last_action: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False
@@ -125,6 +120,8 @@ class SimulationState:
     # --- 設備連接與狀態 ---
     serial_is_connected: bool = False
     gamepad_is_connected: bool = False
+    # 由 Gamepad Presence Guard 更新，僅用於 UI 顯示
+    ui_gamepad_connected: bool = False
     hardware_is_running: bool = False
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "Not Connected"

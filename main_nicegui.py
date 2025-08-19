@@ -32,6 +32,7 @@ from src.controllers.ui_controller import UIController
 from src.controllers.simulation_controller import SimulationController
 from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
+from src.utils.gamepad_presence_guard import start_gamepad_presence_guard
 # 【v4.3.2 新增】 導入新的 ObservationManager
 from src.simulation.observation_manager import ObservationManager
 
@@ -88,6 +89,10 @@ def main() -> None:
     try:
         config = load_config()
         state = SimulationState(config)
+        if config.use_virtual_teensy:
+            # 🔌 虛擬Teensy模式：不需要實體序列埠也能進入硬體模式
+            state.serial_is_connected = True
+            log.info("虛擬Teensy模式啟用，跳過序列埠連線檢查。")
     except Exception as exc:
         sys.exit(f"failed to initialise: {exc}")
 
@@ -108,6 +113,8 @@ def main() -> None:
 
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
+    # 啟動搖桿存在守門員，只用於 UI 顯示，不影響 handler
+    start_gamepad_presence_guard(state)
 
     # 【v4.3.2 修改】 將 observation_manager 傳入 PolicyManager
     policy_manager = PolicyManager(config, observation_manager, None) # 在 NiceGUI 模式下，overlay 設為 None
