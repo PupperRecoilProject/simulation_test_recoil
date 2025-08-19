@@ -92,6 +92,16 @@ class SimulationState:
     latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+    # --- 原始感測數據 (Raw sensor data from hardware or simulation) ---
+    # 這些欄位儲存最直接的感測器讀數，提供 UI 與策略做即時顯示與分析
+    raw_torso_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
+    raw_torso_angular_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_torso_linear_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_gravity_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+    raw_joint_velocities: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False

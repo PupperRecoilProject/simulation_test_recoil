@@ -9,3 +9,4 @@ pip install Pillow
 pip install scipy  //運動學 hardware 需用
 
 pip install numpy onnxruntime PyYAML nicegui pygame pyserial Pillow scipy
+

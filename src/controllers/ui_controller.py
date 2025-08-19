@@ -334,6 +334,8 @@ class UIController:
             
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
+            # 取出最新的線速度資料（世界座標），若無資料則以零向量表示
+            vel = getattr(self.state, 'raw_torso_linear_velocity_world', np.zeros(3)).copy()
 
             # --- AI 策略狀態 ---
             pm = self.policy_manager
@@ -394,6 +396,7 @@ class UIController:
         # hardware_ai 的文字已在上方統一處理，這裡不再覆寫
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
+        self.status_labels['robot_vel'].set_text(f"速度: [{vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}]")
 
         # --- 更新 AI 策略相關 UI ---
         policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)" if transitioning else f"策略: {primary_policy}"
