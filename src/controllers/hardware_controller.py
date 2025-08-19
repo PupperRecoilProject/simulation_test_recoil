@@ -1,9 +1,12 @@
 # src/controllers/hardware_controller.py
 
-import serial  # 引入 pyserial 函式庫，用於序列埠通訊
-import threading  # 引入執行緒模組，用於建立背景控制迴圈
-import time  # 引入時間模組，用於延遲和計時
-import numpy as np  # 引入 NumPy 用於數值運算
+# 【v4.3.2 修改】 調整 import，移除不再需要的 Enum
+import serial
+import threading
+import time
+from src.core.logger import log
+import numpy as np
+
 from typing import TYPE_CHECKING
 from queue import Queue, Empty  # 引入佇列，用於實現執行緒安全的命令傳遞
 from enum import Enum, auto  # 引入枚舉，用於定義清晰的狀態和命令
@@ -49,6 +52,7 @@ if TYPE_CHECKING:
     from src.core.state import SimulationState
 
 
+
 class RobotStateHardware:
     """一個資料容器，專門儲存從硬體(或虛擬硬體)接收到的最新狀態。"""
 
@@ -83,6 +87,7 @@ class HWState(Enum):
 
 
 class HardwareController:
+
     """
     【v4.0.2】管理硬體AI控制迴圈，採用異步命令和狀態機，確保操作非阻塞。
     這個類別現在是一個獨立的服務，透過命令隊列接收指令，並在背景執行緒中管理其生命週期。
@@ -118,7 +123,7 @@ class HardwareController:
         self._dbg_counter = 0  # 調試計數器，用於節流輸出
 
         self._subscribe_to_events()
-        log.info("✅ 硬體控制器 (v4.0.2 異步版) 已初始化。")
+        log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
 
     def _subscribe_to_events(self):
         """訂閱來自事件系統的外部事件，並將其轉換為內部命令放入隊列。"""
@@ -296,108 +301,7 @@ class HardwareController:
             except (serial.SerialException, AttributeError) as e:
                 log.error(f"發送停止指令失敗: {e}")
 
+    # 【v4.3.2 修改】 _perform_ai_step 方法
     def _perform_ai_step(self):
         """(內部) 執行單步 AI 計算與控制。"""
-        observation = self.construct_observation()
-        if observation.size == 0:
-            return
 
-        _, action_raw = self.policy.get_action_for_hardware(observation)
-
-        # 記錄最新動作，供下一次觀測使用
-        with self.lock, self.state.lock:
-            self.hw_state_data.last_action[:] = action_raw
-            self.state.last_action[:] = action_raw
-
-        # 將原始動作（通常是-1到1的偏移量）轉換為字串指令
-        action_str = " ".join(f"{a:.4f}" for a in action_raw)
-        command_to_send = f"move all {action_str}\n"
-
-        if self.ser and self.ser.is_open:
-            try:
-                self.ser.write(command_to_send.encode("utf-8"))
-            except (serial.SerialException, AttributeError):
-                log.error("AI 步驟中發送指令失敗，連接可能已斷開。")
-                self._set_internal_state(HWState.FAILED)
-
-    def _read_from_port(self):
-        """(執行緒) 在背景持續讀取序列埠數據。"""
-        log.info("[硬體讀取執行緒已啟動] 等待數據...")
-        while self._is_running_event.is_set():
-            if (
-                self.internal_state != HWState.RUNNING
-                or not self.ser
-                or not self.ser.is_open
-            ):
-                time.sleep(0.1)
-                continue
-
-            try:
-                line = self.ser.readline()  # 讀取原始位元組
-                if line:
-                    self.parse_policy_stream(
-                        line.decode("utf-8", errors="ignore").strip()
-                    )
-            except (serial.SerialException, OSError, AttributeError):
-                log.error("❌ 讀取時序列埠斷開或出錯。將狀態設置為 FAILED。")
-                self._set_internal_state(HWState.FAILED)
-                # 這裡不需要 break，讓主控制迴圈決定如何處理 FAILED 狀態
-            except Exception as e:
-                log.error(f"❌ _read_from_port 發生未知錯誤: {e}", exc_info=True)
-                self._set_internal_state(HWState.FAILED)
-
-    def parse_policy_stream(self, line: str):
-        """解析來自Teensy的34維數據流。"""
-        try:
-            parts = line.split(",")
-            if len(parts) != 34:
-                return
-            data_vec = np.array(parts, dtype=np.float32)
-            with self.lock:
-                self.hw_state_data.angular_velocity_radps[:] = data_vec[0:3]
-                self.hw_state_data.gravity_vector_norm[:] = data_vec[3:6]
-                self.hw_state_data.accelerometer_ms2[:] = data_vec[6:9]
-                self.hw_state_data.pitch_rad = data_vec[9]
-                self.hw_state_data.joint_positions_rad[:] = data_vec[10:22]
-                self.hw_state_data.joint_velocities_radps[:] = data_vec[22:34]
-                self.hw_state_data.last_update_time = time.time()
-
-                # 解析完成後立即組裝 51 維觀測向量供外部驗證/策略使用
-                obs51 = construct_observation_51(self.state, self.hw_state_data)
-                self.state.latest_observation_51 = obs51
-
-                # 每 LOG_EVERY_N 筆列印一次，協助觀察資料串流
-                self._dbg_counter += 1
-                if self._dbg_counter % LOG_EVERY_N == 0:
-                    print(f"[VT DEBUG] gyro={self.hw_state_data.angular_velocity_radps}, q0={self.hw_state_data.joint_positions_rad[0]:.3f}")
-        except (ValueError, IndexError):
-            pass  # 在高頻率流中，靜默忽略單次的解析錯誤
-
-    def construct_observation(self) -> np.ndarray:
-        """根據配方，從硬體狀態數據中建構ONNX模型的輸入向量。"""
-        with self.lock, self.state.lock:  # 鎖定兩個需要讀取的資源
-            self.hw_state_data.command = self.state.command * np.array(
-                self.config.command_scaling_factors
-            )
-            obs_components = {
-                "angular_velocity": self.hw_state_data.angular_velocity_radps,
-                "gravity_vector": self.hw_state_data.gravity_vector_norm,
-                "accelerometer": self.hw_state_data.accelerometer_ms2,
-                "pitch": np.array([self.hw_state_data.pitch_rad]),
-                "joint_positions": self.hw_state_data.joint_positions_rad,
-                "joint_velocities": self.hw_state_data.joint_velocities_radps,
-                "last_action": self.hw_state_data.last_action,
-                "commands": self.hw_state_data.command,
-                "linear_velocity": np.zeros(3),
-            }
-
-        recipe = self.policy.get_active_recipe()
-        if not recipe:
-            return np.array([])
-
-        try:
-            final_obs_list = [obs_components[key] for key in recipe]
-            return np.concatenate(final_obs_list).astype(np.float32)
-        except KeyError as e:
-            log.error(f"❌ 觀察向量構建失敗: 缺少 '{e}'。")
-            return np.array([])
