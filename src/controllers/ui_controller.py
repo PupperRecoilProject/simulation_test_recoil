@@ -244,8 +244,9 @@ class UIController:
             )
 
             self.status_labels['joint_info'] = ui.label('')
-            # [修改] 滑桿 on_change 發布關節值調整事件
-            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01,
+            # 【v4.3.4 修改】 為滑桿增加初始值，避免 value 屬性為 None
+            self.joint_control_slider = ui.slider(min=-np.pi, max=-np.pi, step=0.01,
+                                                 value=0.0, # 【新增】設定初始值為 0.0
                                                  on_change=lambda e: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, value=e.value)
                                                  ).props('label-always')
             with ui.row():
@@ -405,13 +406,15 @@ class UIController:
                 slider.set_value(state_value)
 
         # --- 更新關節控制 UI ---
+        # 【v4.3.4 修改】確保 target_abs 為浮點數，增強魯棒性
         if joint_info and self.joint_control_slider is not None:
             idx = joint_info['index']
             if self.joint_selector.value != idx:
                 self.joint_selector.set_value(idx)
 
-            target_abs = joint_info['target_abs']
-            if abs(self.joint_control_slider.value - target_abs) > 1e-4:
+            target_abs = float(joint_info['target_abs']) # 【新增】顯式轉換為浮點數
+            if self.joint_control_slider.value is not None and abs(self.joint_control_slider.value - target_abs) > 1e-4:
+                # 【修改】增加 self.joint_control_slider.value is not None 檢查，作為雙重保險
                 self.joint_control_slider.set_value(target_abs)
 
             # 更新顯示文字
