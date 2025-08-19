@@ -180,7 +180,14 @@ class SimulationController:
                 self.sim.poll_window_events()
                 # 加入一個非常短的休眠，以防止此迴圈在空閒時吃掉100%的CPU核心。
                 time.sleep(0.01)
-        log.info("模擬執行緒已優雅地停止。")
+        
+        # 【🔴 錯誤修正 🔴】將 sim.close() 移至此處。
+        # 當 while 迴圈結束時，代表此執行緒即將退出。
+        # 這是唯一安全的地方來呼叫 sim.close()，以確保 GLFW 在其被創建的同一個執行緒中被銷毀。
+        if not is_headless:
+            self.sim.close()
+            
+        log.info("模擬執行緒已優雅地停止，並已清理GLFW資源。")
 
     def _handle_shutdown(self):
         """【v4.0 新增】處理關閉請求的邏輯。"""
@@ -540,7 +547,7 @@ class SimulationController:
             self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
             # 讀取軀幹在世界座標系下的線速度和角速度
             self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
-            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
+            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3:].copy()
             # 讀取所有關節的角度和角速度
             self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
             

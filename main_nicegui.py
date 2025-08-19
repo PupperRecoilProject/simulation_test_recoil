@@ -47,11 +47,11 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
         from src.simulation.terrain_manager import TerrainManager
         from src.simulation.floating_controller import FloatingController
 
-        sim = Simulation(config)
-        terrain = TerrainManager(sim.model, sim.data)
-        floating = FloatingController(config, sim.model, sim.data, terrain)
+        sim = Simulation(config) # 建立模擬器物件
+        terrain = TerrainManager(sim.model, sim.data) # 建立地形管理器
+        floating = FloatingController(config, sim.model, sim.data, terrain) # 建立懸浮控制器
         # 【v4.3.2 修改】 實例化 ObservationManager
-        obs_manager = ObservationManager(state)
+        obs_manager = ObservationManager(state) # 建立觀測管理器
         return sim, obs_manager, terrain, floating
     else:
         log.info("🚫 Simulation disabled, using mock components.")
@@ -63,11 +63,11 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
             MockFloatingController,
         )
 
-        sim = MockSimulation(config)
-        terrain = MockTerrainManager()
-        floating = MockFloatingController()
+        sim = MockSimulation(config) # 建立模擬的模擬器物件
+        terrain = MockTerrainManager() # 建立模擬的地形管理器
+        floating = MockFloatingController() # 建立模擬的懸浮控制器
         # 【v4.3.2 修改】 實例化 MockObservationManager
-        obs_manager = MockObservationManager()
+        obs_manager = MockObservationManager() # 建立模擬的觀測管理器
         return sim, obs_manager, terrain, floating
 
 
@@ -128,21 +128,27 @@ def main() -> None:
 
     # --- 背景執行緒與資源清理設定 ---
     def start_background_threads() -> None:
+        """當NiceGUI啟動時，開始所有背景工作執行緒。"""
         log.info("NiceGUI 已啟動，啟動背景執行緒...")
         simulation_controller.start()
         xbox_handler.start()
 
     def cleanup_resources() -> None:
+        """當NiceGUI關閉時，安全地釋放所有資源。"""
         log.info("NiceGUI 正在關閉，釋放資源...")
-        simulation_controller.stop()
-        hw_controller.shutdown()
-        serial_comm.close()
-        xbox_handler.close()
-        sim.close()
+        simulation_controller.stop() # 停止模擬執行緒
+        hw_controller.shutdown() # 關閉硬體控制器
+        serial_comm.close() # 關閉序列埠通訊
+        xbox_handler.close() # 關閉搖桿處理器
+        # 【🔴 錯誤修正 🔴】從此處移除 sim.close()
+        # 原因：sim.close() 包含 glfw.terminate()，必須在建立 GLFW 的同一個執行緒（即模擬執行緒）中呼叫。
+        #       將其留在此處（主執行緒）會導致跨執行緒操作，引發 access violation 錯誤。
+        #       正確的呼叫位置已被移至 SimulationController.run() 的結尾。
+        # sim.close() 
         log.info("✅ All resources released.")
 
-    app.on_startup(start_background_threads)
-    app.on_shutdown(cleanup_resources)
+    app.on_startup(start_background_threads) # 註冊啟動時的回呼
+    app.on_shutdown(cleanup_resources) # 註冊關閉時的回呼
 
     # --- 啟動 UI ---
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
