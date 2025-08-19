@@ -1,7 +1,7 @@
 # src/core/state.py
 
 # ... imports 和 TuningParams dataclass 保持不變 ...
-from __future inport annotations
+from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass, field
 from src.core.config import AppConfig
