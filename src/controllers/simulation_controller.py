@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from src.core.logger import log
 
 import numpy as np
-from src.mock.mock_simulation import MockSimulation
 
 from src.core.event_system import (
     event_bus,
@@ -88,7 +87,7 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def _initialize_simulation_state(self) -> None:
-        if isinstance(self.sim, MockSimulation):
+        if self.sim.__class__.__name__ == "MockSimulation":
             log.info("[MOCK] Skip simulation state initialization.")
             return
 
@@ -112,8 +111,9 @@ class SimulationController:
         """
         【v4.0.2 修改版】執行緒主迴圈。
         """
-        is_headless = isinstance(self.sim, MockSimulation)
-        if not is_headless:
+        # 以類名判斷是否為 MockSimulation，避免直接匯入造成 NameError
+        is_headless = self.sim.__class__.__name__ == "MockSimulation"
+        if not is_headless and hasattr(self.sim, "initialize_window_and_context"):
             self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
 
@@ -165,15 +165,17 @@ class SimulationController:
             if execute_one:
                 with self.state.lock: self.state.execute_one_step = False
 
-            # 【v4.0.2 修正】UX 優化
-            is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
-            
+            # 【v4.0.3 修正】虛擬Teensy下的硬體模式仍須推進模擬
+            is_hw_mode = mode in ["HARDWARE_MODE", "SERIAL_MODE"]
+            use_virtual = getattr(self.config, "use_virtual_teensy", False)
+            is_simulation_active = (not is_headless) and (not is_hw_mode or use_virtual)
+
             if is_simulation_active:
                 # 【模擬活動模式】: 執行物理計算，然後更新狀態並渲染完整畫面
                 self._simulation_step()
                 self.update_derived_states_and_render()
-            elif not is_headless:
-                # 【模擬非活動模式 (硬體/序列埠)】: 
+            elif not is_headless and hasattr(self.sim, "poll_window_events"):
+                # 【模擬非活動模式 (真實硬體/序列埠)】:
                 # 不執行任何物理或渲染計算，只處理視窗事件以保持響應。
                 self.sim.poll_window_events()
                 # 加入一個非常短的休眠，以防止此迴圈在空閒時吃掉100%的CPU核心。
@@ -218,7 +220,7 @@ class SimulationController:
         # 【v4.0.2 新增】在完成模式切換後，如果進入了非模擬模式，
         # 我們主動渲染一次“凍結幀”，以確保UI上顯示的是正確的遮罩和文字。
         if new_mode in ["HARDWARE_MODE", "SERIAL_MODE"]:
-            if not isinstance(self.sim, MockSimulation):
+            if self.sim.__class__.__name__ != "MockSimulation":
                 log.info(f"渲染 '{new_mode}' 的凍結畫面...")
                 self.sim.render_from_thread(self.state)
 
@@ -338,6 +340,12 @@ class SimulationController:
         """處理設備連接請求。"""
         log.info(f"接收到連接 '{device}' 的請求...")
         if device == "serial" and self.serial_comm:
+            if self.config.use_virtual_teensy:
+                # 虛擬Teensy模式下，序列埠連線純屬虛構
+                log.info("使用虛擬Teensy，跳過序列埠掃描與連線。")
+                with self.state.lock:
+                    self.state.serial_is_connected = True
+                return
             is_connected = self.serial_comm.scan_and_connect()
             with self.state.lock:
                 self.state.serial_is_connected = is_connected
@@ -459,7 +467,7 @@ class SimulationController:
         【v4.0】更新所有依賴於核心物理狀態的衍生狀態（如地形），並渲染場景。
         此方法現在自給自足，直接從 self.state 獲取所需數據。
         """
-        is_headless = isinstance(self.sim, MockSimulation)
+        is_headless = self.sim.__class__.__name__ == "MockSimulation"
 
         # 步驟 1: 在函式內部，從 state 中讀取本幀需要的所有數據
         with self.state.lock:

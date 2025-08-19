@@ -15,16 +15,25 @@ from src.controllers.ui_controller import UIController
 from src.controllers.simulation_controller import SimulationController
 from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
+from src.utils.gamepad_presence_guard import start_gamepad_presence_guard
 
 
 def create_simulation_components(use_sim: bool, config):
     """根據是否使用模擬，建立對應的模組實例。"""
     if use_sim:
         log.info("✅ Simulation mode enabled.")
-        from src.simulation.simulation import Simulation
-        from src.simulation.observation import ObservationBuilder
-        from src.simulation.terrain_manager import TerrainManager
-        from src.simulation.floating_controller import FloatingController
+        try:
+            # 匯入需要的 MuJoCo 模擬元件
+            from src.simulation.simulation import Simulation
+            from src.simulation.observation import ObservationBuilder
+            from src.simulation.terrain_manager import TerrainManager
+            from src.simulation.floating_controller import FloatingController
+        except ModuleNotFoundError as exc:
+            # 若系統未安裝 MuJoCo，提示並退回至 no-sim 模式
+            if exc.name == "mujoco":
+                log.warning("⚠️ 找不到 MuJoCo 模組，自動切換為 no-sim 模式。")
+                return create_simulation_components(False, config)
+            raise
 
         sim = Simulation(config)
         terrain = TerrainManager(sim.model, sim.data)
@@ -63,6 +72,10 @@ def main() -> None:
     try:
         config = load_config()
         state = SimulationState(config)
+        if config.use_virtual_teensy:
+            # 🔌 虛擬Teensy模式：不需要實體序列埠也能進入硬體模式
+            state.serial_is_connected = True
+            log.info("虛擬Teensy模式啟用，跳過序列埠連線檢查。")
     except Exception as exc:
         sys.exit(f"failed to initialise: {exc}")
 
@@ -80,6 +93,8 @@ def main() -> None:
 
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
+    # 啟動搖桿存在守門員，只用於 UI 顯示，不影響 handler
+    start_gamepad_presence_guard(state)
 
     policy_manager = PolicyManager(config, obs_builder, None) # 在 NiceGUI 模式下，overlay 設為 None
     state.policy_manager_ref = policy_manager

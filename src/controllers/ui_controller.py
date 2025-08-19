@@ -3,6 +3,7 @@ import numpy as np
 import threading
 from typing import TYPE_CHECKING, List
 from src.core.logger import log, log_queue
+from src.controllers.hardware_controller import HWState  # 導入硬體狀態枚舉
 
 # [新增] 導入我們新創建的事件系統模組和所有UI會用到的事件名稱
 # 解釋:
@@ -263,7 +264,12 @@ class UIController:
                 self.status_labels['input_mode'] = ui.label('輸入: KEYBOARD')
                 self.status_labels['sim_time'] = ui.label('時間: 0.00s')
                 self.status_labels['serial_status'] = ui.label('序列埠: Disconnected')
-                self.status_labels['gamepad_status'] = ui.label('搖桿: Disconnected')
+                # 透過 Gamepad Presence Guard 綁定 UI 顯示
+                self.status_labels['gamepad_status'] = ui.label().bind_text_from(
+                    self.state,
+                    'ui_gamepad_connected',
+                    lambda v: '搖桿: Connected' if v else '搖桿: Disconnected',
+                )
                 self.status_labels['hardware_ai'] = ui.label('硬體AI: N/A')
                 self.status_labels['policy_status'] = ui.label(f'策略: {self.policy_manager.primary_policy_name}')
             ui.separator()
@@ -321,13 +327,15 @@ class UIController:
             input_mode = self.state.input_mode
             sim_time = self.state.sim.data.time if self.state.sim else None
             serial_connected = self.state.serial_is_connected
-            gamepad_connected = self.state.gamepad_is_connected
 
             hw_running = self.state.hardware_is_running
             hw_ai_active = self.state.hardware_ai_is_active
+            hw_internal = self.hardware_controller.internal_state if self.hardware_controller else None
             
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
+            # 取出最新的線速度資料（世界座標），若無資料則以零向量表示
+            vel = getattr(self.state, 'raw_torso_linear_velocity_world', np.zeros(3)).copy()
 
             # --- AI 策略狀態 ---
             pm = self.policy_manager
@@ -367,11 +375,14 @@ class UIController:
         # 直接從 hardware_controller 讀取其內部狀態來更新 UI
         hw_mode_active = self.state.control_mode == 'HARDWARE_MODE'
         ai_status_text = '硬體AI: N/A'
-        if hw_running and hw_mode_active:
-             ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
-        elif hw_mode_active and not hw_running:
-             ai_status_text = '硬體AI: Starting...' # 或 'Failed'
-        
+        if hw_mode_active:
+            if hw_running:
+                ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
+            elif hw_internal == HWState.FAILED:
+                ai_status_text = '硬體AI: Failed'
+            else:
+                ai_status_text = '硬體AI: Starting...'
+
         self.status_labels['hardware_ai'].set_text(ai_status_text)
 
 
@@ -382,10 +393,10 @@ class UIController:
         self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
         self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s" if sim_time is not None else "時間: N/A")
         self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
-        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Connected')
-        self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled' if mode == 'HARDWARE_MODE' else '硬體AI: N/A')
+        # hardware_ai 的文字已在上方統一處理，這裡不再覆寫
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
+        self.status_labels['robot_vel'].set_text(f"速度: [{vel[0]:.2f}, {vel[1]:.2f}, {vel[2]:.2f}]")
 
         # --- 更新 AI 策略相關 UI ---
         policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)" if transitioning else f"策略: {primary_policy}"
