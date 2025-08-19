@@ -10,6 +10,7 @@ pip install scipy  //運動學 hardware 需用
 
 pip install numpy onnxruntime PyYAML nicegui pygame pyserial Pillow scipy
 
+
 ### 專案目錄結構與模組化原則
 ```
 simulation_test_recoil/
@@ -75,3 +76,4 @@ simulation_test_recoil/
 *   **根目錄文件**:
     *   **原則**: 存放專案的頂層配置、主要入口點和通用文檔。力求保持根目錄的簡潔和高層次概覽。
     *   **內容**: Git 忽略文件 (`.gitignore`)、應用程式主要配置 (`config.yaml`)、專案概覽工具配置 (`project_overview_config.yaml`)、主入口腳本 (`main.py`, `main_nicegui.py`)、專案總說明 (`readme.md`)、Teensy 韌體文檔 (`tennsy.md`)。
+

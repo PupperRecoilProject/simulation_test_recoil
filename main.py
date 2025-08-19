@@ -170,8 +170,10 @@ def main():
                     t_since_update = time.time() - hw_controller.hw_state_data.last_update_time
                     conn_status = f"Data Delay: {t_since_update:.2f}s" if t_since_update < 1.0 else "Data Timeout!"
                     state.hardware_status_text = f"Connection Status: {conn_status}\n"
-                    state.hardware_status_text += f"LinVel: {np.array2string(hw_controller.hw_state_data.lin_vel_local, precision=2)}\n"
-                    state.hardware_status_text += f"Gyro: {np.array2string(hw_controller.hw_state_data.imu_gyro_radps, precision=2)}"
+                    # 顯示角速度（Gyro）資訊
+                    state.hardware_status_text += f"AngVel: {np.array2string(hw_controller.hw_state_data.angular_velocity_radps, precision=2)}\n"
+                    # 顯示加速度資訊
+                    state.hardware_status_text += f"Accel: {np.array2string(hw_controller.hw_state_data.accelerometer_ms2, precision=2)}"
             else:
                 state.hardware_status_text = "Hardware controller not running."
         
