@@ -1,5 +1,22 @@
-"""Entry point using NiceGUI for the control interface."""
+# main_nicegui.py
+"""
+【全功能主應用程式】
 
+此腳本是專案的主要入口點，提供了一個基於 NiceGUI 的全功能、多執行緒控制台。
+
+主要用途:
+- 日常的機器人模擬與控制。
+- 透過圖形化介面進行精細的參數調校。
+- 控制實體硬體，並支持無模擬的 `--no-sim` (無頭) 模式。
+- 查看詳細的即時日誌和狀態監控。
+
+架構特性:
+- UI、模擬、硬體控制在各自獨立的執行緒中運行，確保了介面的高響應性。
+- 使用事件驅動和中央狀態管理，實現了模組間的解耦和線程安全。
+
+建議：
+- 除非有特定的底層除錯需求，否則應始終使用此腳本作為啟動器。
+"""
 import sys
 import argparse
 from nicegui import ui, app
@@ -15,36 +32,33 @@ from src.controllers.ui_controller import UIController
 from src.controllers.simulation_controller import SimulationController
 from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
-from src.utils.gamepad_presence_guard import start_gamepad_presence_guard
+# 【v4.3.2 新增】 導入新的 ObservationManager
+from src.simulation.observation_manager import ObservationManager
 
 
-def create_simulation_components(use_sim: bool, config):
+# 【v4.3.2 修改】 create_simulation_components 函式
+def create_simulation_components(use_sim: bool, config, state: 'SimulationState'): # 【v4.3.2 新增】 傳入 state
     """根據是否使用模擬，建立對應的模組實例。"""
     if use_sim:
         log.info("✅ Simulation mode enabled.")
-        try:
-            # 匯入需要的 MuJoCo 模擬元件
-            from src.simulation.simulation import Simulation
-            from src.simulation.observation import ObservationBuilder
-            from src.simulation.terrain_manager import TerrainManager
-            from src.simulation.floating_controller import FloatingController
-        except ModuleNotFoundError as exc:
-            # 若系統未安裝 MuJoCo，提示並退回至 no-sim 模式
-            if exc.name == "mujoco":
-                log.warning("⚠️ 找不到 MuJoCo 模組，自動切換為 no-sim 模式。")
-                return create_simulation_components(False, config)
-            raise
+        from src.simulation.simulation import Simulation
+        # 【v4.3.2 刪除】 移除舊的 ObservationBuilder
+        # from src.simulation.observation import ObservationBuilder
+        from src.simulation.terrain_manager import TerrainManager
+        from src.simulation.floating_controller import FloatingController
 
         sim = Simulation(config)
         terrain = TerrainManager(sim.model, sim.data)
         floating = FloatingController(config, sim.model, sim.data, terrain)
-        obs = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
-        return sim, obs, terrain, floating
+        # 【v4.3.2 修改】 實例化 ObservationManager
+        obs_manager = ObservationManager(state)
+        return sim, obs_manager, terrain, floating
     else:
         log.info("🚫 Simulation disabled, using mock components.")
         from src.mock.mock_simulation import (
             MockSimulation,
-            MockObservationBuilder,
+            # 【v4.3.2 修改】 導入 MockObservationManager
+            MockObservationManager,
             MockTerrainManager,
             MockFloatingController,
         )
@@ -52,10 +66,12 @@ def create_simulation_components(use_sim: bool, config):
         sim = MockSimulation(config)
         terrain = MockTerrainManager()
         floating = MockFloatingController()
-        obs = MockObservationBuilder()
-        return sim, obs, terrain, floating
+        # 【v4.3.2 修改】 實例化 MockObservationManager
+        obs_manager = MockObservationManager()
+        return sim, obs_manager, terrain, floating
 
 
+# 【v4.3.2 修改】 main 函式
 def main() -> None:
     """Initialise all components and start UI and simulation threads."""
 
@@ -80,12 +96,15 @@ def main() -> None:
         sys.exit(f"failed to initialise: {exc}")
 
     # --- 核心組件裝配 ---
-    sim, obs_builder, terrain_manager, floating_controller = create_simulation_components(use_sim, config)
+    # 【v4.3.2 修改】 更新變數名，並傳入 state
+    sim, observation_manager, terrain_manager, floating_controller = create_simulation_components(use_sim, config, state)
 
     # 將核心物件的參考存入 state，使其成為全域上下文
     state.sim = sim
     state.terrain_manager_ref = terrain_manager
     state.floating_controller_ref = floating_controller
+    # 【v4.3.2 新增】 將 observation_manager 存入 state
+    state.observation_manager_ref = observation_manager
 
     # 按照依賴順序初始化所有管理器
     serial_comm = SerialCommunicator()
@@ -96,11 +115,12 @@ def main() -> None:
     # 啟動搖桿存在守門員，只用於 UI 顯示，不影響 handler
     start_gamepad_presence_guard(state)
 
-    policy_manager = PolicyManager(config, obs_builder, None) # 在 NiceGUI 模式下，overlay 設為 None
+    # 【v4.3.2 修改】 將 observation_manager 傳入 PolicyManager
+    policy_manager = PolicyManager(config, observation_manager, None) # 在 NiceGUI 模式下，overlay 設為 None
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
 
-    # 初始化 HardwareController，它不再依賴 state
+    # 初始化 HardwareController
     hw_controller = HardwareController(config, policy_manager, state, serial_comm)
     state.hardware_controller_ref = hw_controller
 
@@ -110,11 +130,6 @@ def main() -> None:
 
     # 初始化中央調度器與 UI 控制器
     simulation_controller = SimulationController(state)
-
-    # 根據 UIController 最新的 __init__(self, state) 定義，
-    # 移除多餘的 hw_controller 參數。
-    # UIController 現在只依賴 state，所有它需要知道的硬體狀態
-    # (如 is_running) 都應該由 SimulationController 更新到 state 中。
     ui_controller = UIController(state)
 
     # --- 背景執行緒與資源清理設定 ---
@@ -125,14 +140,8 @@ def main() -> None:
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
-        # 步驟 1: 停止 simulation_controller 的主迴圈
         simulation_controller.stop()
-
-        # 步驟 2: 【v4.0.2 修正】呼叫新的、為關閉而設計的 shutdown 方法
-        # 舊: hw_controller.stop_controller_threads()
         hw_controller.shutdown()
-
-        # 步驟 3: 依次關閉其他資源
         serial_comm.close()
         xbox_handler.close()
         sim.close()

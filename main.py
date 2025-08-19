@@ -1,4 +1,23 @@
 # main.py
+"""
+【輕量級開發者模式】
+
+此腳本提供了一個基於原生 GLFW 視窗的輕量級、單執行緒模擬環境。
+
+主要用途:
+- 快速啟動和測試核心物理模擬。
+- 作為底層演算法（如 AI 策略、控制器邏輯）的開發和除錯平台。
+- 在不依賴 NiceGUI Web UI 的情況下運行模擬。
+
+與 main_nicegui.py 的區別:
+- 此腳本為單執行緒，所有操作（模擬、渲染、輸入）在一個主迴圈中同步執行。
+- UI 極簡，僅透過文字疊加層顯示狀態。
+- 不具備 main_nicegui.py 的非阻塞特性和豐富的圖形化介面。
+
+建議：
+- 日常使用和參數調校，請使用 `main_nicegui.py`。
+- 進行核心演算法開發或需要一個簡單、高效的測試環境時，請使用此腳本。
+"""
 import sys
 import numpy as np
 import mujoco
@@ -8,7 +27,10 @@ from src.core.config import load_config
 from src.core.state import SimulationState
 from src.simulation.simulation import Simulation
 from src.hardware.policy import PolicyManager
-from src.simulation.observation import ObservationBuilder
+# 【v4.3.2 刪除】 移除舊的 ObservationBuilder
+# from src.simulation.observation import ObservationBuilder
+# 【v4.3.2 新增】 導入新的 ObservationManager
+from src.simulation.observation_manager import ObservationManager
 from src.simulation.rendering import DebugOverlay
 from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.input_handlers.xbox_input_handler import XboxInputHandler
@@ -17,6 +39,7 @@ from src.hardware.serial_communicator import SerialCommunicator
 from src.simulation.terrain_manager import TerrainManager
 from src.controllers.hardware_controller import HardwareController
 
+# 【v4.3.2 修改】 main 函式
 def main():
     """主程式入口：初始化所有組件並運行模擬迴圈。"""
     from src.hardware.xbox_controller import XboxController 
@@ -27,7 +50,7 @@ def main():
     state = SimulationState(config)
     sim = Simulation(config)
 
-    # --- 2. 【核心修改】將核心物件的參考存入 state，使其成為全域上下文 ---
+    # --- 2. 將核心物件的參考存入 state，使其成為全域上下文 ---
     state.sim = sim
     
     # --- 3. 按照依賴順序初始化所有管理器 ---
@@ -38,15 +61,23 @@ def main():
     state.floating_controller_ref = floating_controller
     
     serial_comm = SerialCommunicator()
-    state.serial_communicator_ref = serial_comm # 將 serial_comm 存入 state
+    state.serial_communicator_ref = serial_comm
     
     xbox_handler = XboxInputHandler(state)
 
-    obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    # 【v4.3.2 刪除】 刪除舊的 ObservationBuilder 實例化
+    # obs_builder = ObservationBuilder(sim.data, sim.model, sim.torso_id, sim.default_pose, config)
+    
+    # 【v4.3.2 新增】 實例化新的 ObservationManager
+    observation_manager = ObservationManager(state)
+    # 【v4.3.2 新增】 將其參考存入 state 以便全局訪問
+    state.observation_manager_ref = observation_manager
+
     # 在無 GUI 版本中仍建立 DebugOverlay 以顯示文字資訊
     overlay = DebugOverlay()
 
-    policy_manager = PolicyManager(config, obs_builder, overlay)
+    # 【v4.3.2 修改】 將 observation_manager 傳入 PolicyManager
+    policy_manager = PolicyManager(config, observation_manager, overlay)
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
     
@@ -106,12 +137,13 @@ def main():
     hard_reset()
     
     # 【快捷鍵變更】更新啟動時的提示文字
+    # 【v4.3.3 修改】 移除歷史註解，使輸出更整潔
     print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
     print("    (F: Float, G: Joint Test, B: Manual Ctrl, H: Hardware Mode)")
     print("    (M: Input Mode, R: Hard Reset, X: Soft Reset)")
     print("    (Y: Regen Terrain, P: Save Terrain PNG, 1..: Select Policy)")
     print("    (V: Cycle Terrain, K: Toggle HW AI)")
-    print("    ( ~ : Toggle Serial Console )") # 新增此行，替換舊的 T 鍵提示
+    print("    ( ~ : Toggle Serial Console )")
 
     state.execute_one_step = False
 
@@ -173,7 +205,7 @@ def main():
         sim.render(state)
 
     # --- 7. 程式結束，清理資源 ---
-    hw_controller.stop()
+    hw_controller.shutdown() # 【v4.3.2 修正】 使用 shutdown 代替 stop
     sim.close()
     xbox_handler.close()
     serial_comm.close()
