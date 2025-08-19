@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Optional
 from src.core.config import AppConfig
 from src.core.state import SimulationState, TuningParams
 from src.simulation.rendering import DebugOverlay
+# 【v4.3.1 新增】 導入 log
+from src.core.logger import log
 
 if TYPE_CHECKING:
     from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
@@ -18,6 +20,7 @@ class Simulation:
     封裝 MuJoCo 模擬、GLFW 視窗和渲染邏輯。
     【核心變更】將 GLFW 初始化延遲至模擬執行緒。
     """
+    # 【v4.3.1 修改】 擴充 __init__ 方法
     def __init__(self, config: AppConfig):
         """僅初始化 MuJoCo 模型與資料，不建立視窗。"""
         self.config = config
@@ -53,6 +56,15 @@ class Simulation:
             self.default_pose = np.zeros(config.num_motors)
             print("⚠️ 警告: 在 XML 中未找到名為 'home' 的 keyframe，將使用零作為預設姿態。")
 
+        # 【v4.3.1 新增】 將 accelerometer_id 作為類別屬性，以便 SimulationController 訪問
+        try:
+            # 嘗試根據名稱獲取 'accelerometer' 感測器的ID
+            self.accelerometer_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, 'accelerometer')
+        except ValueError:
+            # 如果在 XML 中找不到該感測器，則打印警告並設置為-1
+            log.warning("在XML中找不到名為 'accelerometer' 的感測器。")
+            self.accelerometer_id = -1
+        
         # 視窗與渲染上下文將在模擬執行緒中初始化
 
     def initialize_window_and_context(self):
@@ -165,7 +177,7 @@ class Simulation:
         try:
             glfw.make_context_current(self.window)
             viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.window))
-            if state.policy_manager_ref and state.policy_manager_ref.obs_builder:
+            if state.policy_manager_ref and state.policy_manager_ref.observation_manager:
                 self.overlay.set_recipe(state.policy_manager_ref.get_active_recipe())
             self.overlay.render(viewport, self.context, state, self)
             glfw.swap_buffers(self.window)
