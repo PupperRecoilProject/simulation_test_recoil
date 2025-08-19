@@ -32,6 +32,7 @@ from src.controllers.ui_controller import UIController
 from src.controllers.simulation_controller import SimulationController
 from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
+from src.utils.gamepad_presence_guard import start_gamepad_presence_guard
 # 【v4.3.2 新增】 導入新的 ObservationManager
 from src.simulation.observation_manager import ObservationManager
 

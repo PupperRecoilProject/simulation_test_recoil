@@ -502,6 +502,45 @@ class SimulationController:
             control_mode = self.state.control_mode
             tuning_params = self.state.tuning_params
 
+        # 1. 首先，推進 MuJoCo 物理模擬到目標時間。
+        #    這會更新 sim.data 中的所有物理狀態。
+        target_time = self.sim.data.time + self.config.control_dt
+        while self.sim.data.time < target_time:
+            if not self._running.is_set():
+                break
+            mujoco.mj_step(self.sim.model, self.sim.data)
+
+        # 2. 【v4.3.1 新增】 - 將原始物理數據寫入 State
+        #    在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
+        #    作為 ObservationManager 的數據源。
+        with self.state.lock:
+            # 讀取軀幹的姿態四元數
+            self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
+            # 讀取軀幹在世界座標系下的線速度和角速度
+            self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
+            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
+            # 讀取所有關節的角度和角速度
+            self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
+            self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
+            # 從 XML 中定義的感測器讀取加速度計數據
+            if self.sim.accelerometer_id != -1:
+                 start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
+                 end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
+                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
+            else:
+                 # 如果感測器不存在，用零填充
+                 self.state.raw_accelerometer.fill(0.0)
+
+            # 在這裡也更新 last_action，因為它是 ObservationManager 讀取的一部分
+            # PolicyManager 的 get_action 會將 action_final 賦值給 self.last_action
+            # 但在這裡，我們確保 raw_last_action 作為 ObservationManager 的數據源被更新
+            # 考慮到 PolicyManager.get_action 會更新其自身的 last_action，
+            # 並且 SimulationState 的 on_tick_update 已經負責將 PolicyManager 傳入的 action_raw 賦值給 state.raw_last_action
+            # 這裡就不重複賦值了，讓 PolicyManager 在其執行完成後，透過 EVENT_SIMULATION_TICK 事件
+            # 將其計算出的 `action_final` 傳遞給 `SimulationState.on_tick_update` 並更新 `state.raw_last_action`。
+            # 所以，這裡只需要確保 `raw_` 物理數據是最新即可。
+
+        # 3. 獲取 AI 動作。現在 ObservationManager 可以從已更新的 state.raw_... 中讀取數據了。
         onnx_input, action_final = self.policy_manager.get_action(command)
 
         # [保留] 根據模式計算最終控制指令的邏輯不變
@@ -522,35 +561,8 @@ class SimulationController:
             self.state.latest_onnx_input = onnx_input.flatten()
             self.state.latest_action_raw = action_final
             self.state.latest_final_ctrl = final_ctrl
-
-        # [保留] 執行物理模擬的迴圈不變
-        target_time = self.sim.data.time + self.config.control_dt
-        while self.sim.data.time < target_time:
-            if not self._running.is_set():
-                break
-            # 這是物理引擎的核心步驟
-            mujoco.mj_step(self.sim.model, self.sim.data)
-
-        # 【v4.3.1 新增】 - 將原始物理數據寫入 State
-        # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
-        # 作為 ObservationManager 的數據源。
-        with self.state.lock:
-            # 讀取軀幹的姿態四元數
-            self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
-            # 讀取軀幹在世界座標系下的線速度和角速度
-            self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
-            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
-            # 讀取所有關節的角度和角速度
-            self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
-            self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
-            # 從 XML 中定義的感測器讀取加速度計數據
-            if self.sim.accelerometer_id != -1:
-                 start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
-                 end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
-                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
-            else:
-                 # 如果感測器不存在，用零填充
-                 self.state.raw_accelerometer.fill(0.0)
+            # 【v4.3.1 修正】確保 PolicyManager 的原始輸出也傳遞給 state.raw_last_action
+            self.state.raw_last_action = action_final # 現在這裡更新 raw_last_action 是正確的，因為 action_final 是 PolicyManager 的原始輸出
 
 
 
