@@ -1,4 +1,6 @@
-# hardware_controller.py (v4.0.2 - Cleaned Version)
+# src/controllers/hardware_controller.py
+
+# 【v4.3.2 修改】 調整 import，移除不再需要的 Enum
 import serial
 import threading
 import time
@@ -16,17 +18,9 @@ if TYPE_CHECKING:
     from src.hardware.serial_communicator import SerialCommunicator
     from src.core.state import SimulationState
 
-class RobotStateHardware:
-    def __init__(self):
-        self.angular_velocity_radps = np.zeros(3, dtype=np.float32)
-        self.gravity_vector_norm = np.zeros(3, dtype=np.float32)
-        self.accelerometer_ms2 = np.zeros(3, dtype=np.float32)
-        self.pitch_rad = 0.0
-        self.joint_positions_rad = np.zeros(12, dtype=np.float32)
-        self.joint_velocities_radps = np.zeros(12, dtype=np.float32)
-        self.last_action = np.zeros(12, dtype=np.float32)
-        self.command = np.zeros(3, dtype=np.float32)
-        self.last_update_time = 0.0
+# 【v4.3.2 刪除】 RobotStateHardware 類別
+# 這個類別的所有狀態都已遷移到 SimulationState 的 raw_... 屬性中，
+# 以實現統一的數據流。
 
 class HWCommand(Enum):
     START = auto()
@@ -41,8 +35,9 @@ class HWState(Enum):
     FAILED = auto()
 
 class HardwareController:
-    """【v4.0.2】管理硬體AI控制迴圈，採用異步命令和狀態機，確保非阻塞。"""
+    """【v4.3.2 修改】管理硬體AI控制迴圈，作為原始數據提供者。"""
     
+    # 【v4.3.2 修改】 __init__ 方法
     def __init__(self, config: 'AppConfig', policy: 'PolicyManager', state: 'SimulationState', serial_comm: 'SerialCommunicator'):
         self.config = config
         self.policy = policy
@@ -53,8 +48,9 @@ class HardwareController:
         self.read_thread: threading.Thread | None = None 
         self.control_thread: threading.Thread | None = None 
         
-        self.hw_state_data = RobotStateHardware()
-        self.lock = threading.Lock()
+        # 【v4.3.2 刪除】 刪除獨立的 hw_state_data 和 lock
+        # self.hw_state_data = RobotStateHardware()
+        # self.lock = threading.Lock()
         
         self._is_running_event = threading.Event()
         self.command_queue = Queue()
@@ -63,7 +59,7 @@ class HardwareController:
         self.ai_control_active = False
 
         self._subscribe_to_events()
-        log.info("✅ 硬體控制器 (v4.0.2 異步版) 已初始化。")
+        log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
 
     def _subscribe_to_events(self):
         event_bus.subscribe(EVENT_HARDWARE_AI_TOGGLE_REQUESTED, 
@@ -228,15 +224,20 @@ class HardwareController:
             try: self.ser.write(b"stop\n")
             except serial.SerialException as e: log.error(f"發送停止指令失敗: {e}")
 
+    # 【v4.3.2 修改】 _perform_ai_step 方法
     def _perform_ai_step(self):
         """(內部) 執行單步 AI 計算與控制。"""
-        observation = self.construct_observation()
-        if observation.size == 0: return
-            
-        _, action_raw = self.policy.get_action_for_hardware(observation)
+        # 【v4.3.2 刪除】 不再自行構建觀測向量
+        # observation = self.construct_observation()
+        # if observation.size == 0: return
+
+        # 【v4.3.2 修改】 直接呼叫 get_action_for_hardware，無需傳遞參數。
+        # PolicyManager 會自動從 ObservationManager 獲取數據。
+        _, action_raw = self.policy.get_action_for_hardware()
         
-        with self.lock:
-            self.hw_state_data.last_action[:] = action_raw
+        # 【v4.3.2 刪除】 last_action 的更新已轉移到 SimulationState.on_tick_update
+        # with self.lock:
+        #     self.hw_state_data.last_action[:] = action_raw
         
         action_scale = self.config.initial_tuning_params.action_scale
         default_pose_hardware = np.zeros(12)
@@ -251,42 +252,33 @@ class HardwareController:
                 log.error("AI 步驟中發送指令失敗，連接可能已斷開。")
                 self._set_internal_state(HWState.FAILED)
 
+    # 【v4.3.2 修改】 parse_policy_stream 方法
     def parse_policy_stream(self, line: str):
+        """
+        【v4.3.2 修改】
+        解析來自Teensy的數據流，並將原始數據直接寫入中央的SimulationState。
+        """
         try:
             parts = line.split(',')
             if len(parts) != 34: return
             data_vec = np.array(parts, dtype=np.float32)
-            with self.lock:
-                self.hw_state_data.angular_velocity_radps[:] = data_vec[0:3]
-                self.hw_state_data.gravity_vector_norm[:] = data_vec[3:6]
-                self.hw_state_data.accelerometer_ms2[:] = data_vec[6:9]
-                self.hw_state_data.pitch_rad = data_vec[9]
-                self.hw_state_data.joint_positions_rad[:] = data_vec[10:22]
-                self.hw_state_data.joint_velocities_radps[:] = data_vec[22:34]
-                self.hw_state_data.last_update_time = time.time()
+            
+            # 使用全局 state.lock 保護對 SimulationState 的寫入
+            with self.state.lock:
+                # 注意：Teensy 發送的是世界座標系下的數據，這裡直接寫入
+                self.state.raw_torso_angular_velocity_world[:] = data_vec[0:3]
+                # Teensy 通常直接發送已經計算好的重力向量（相對於機身）
+                self.state.raw_gravity_vector[:] = data_vec[3:6]
+                self.state.raw_accelerometer[:] = data_vec[6:9]
+                # pitch 數據暫時不存入 raw 狀態，因為通常可以從四元數推導
+                # self.state.raw_pitch_rad = data_vec[9] 
+                self.state.raw_joint_positions[:] = data_vec[10:22]
+                self.state.raw_joint_velocities[:] = data_vec[22:34]
+                # 注意：四元數和線速度並不在這個數據流中，ObservationManager 需要能處理這種情況
+                # （例如，在硬體模式下，linear_velocity 可能為零）
+
         except (ValueError, IndexError):
             pass # 在高頻率流中，忽略解析錯誤比打印日誌更好
 
-    def construct_observation(self) -> np.ndarray:
-        with self.lock:
-            obs_components = {
-                'angular_velocity': self.hw_state_data.angular_velocity_radps,
-                'gravity_vector': self.hw_state_data.gravity_vector_norm,
-                'accelerometer': self.hw_state_data.accelerometer_ms2,
-                'pitch': np.array([self.hw_state_data.pitch_rad]),
-                'joint_positions': self.hw_state_data.joint_positions_rad,
-                'joint_velocities': self.hw_state_data.joint_velocities_radps,
-                'last_action': self.hw_state_data.last_action,
-                'commands': self.hw_state_data.command,
-                'linear_velocity': np.zeros(3), 
-            }
-            
-        recipe = self.policy.get_active_recipe()
-        if not recipe: return np.array([])
-        
-        try:
-            final_obs_list = [obs_components[key] for key in recipe]
-            return np.concatenate(final_obs_list).astype(np.float32)
-        except KeyError as e:
-            log.error(f"❌ 觀察向量構建失敗: 缺少 '{e}'。")
-            return np.array([])
+    # 【v4.3.2 刪除】 construct_observation 方法
+    # 此方法的職責已完全轉移給 ObservationManager。
