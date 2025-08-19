@@ -27,7 +27,8 @@ from src.core.event_system import (
     EVENT_MODE_CHANGED,
     EVENT_STATE_UPDATED,
 
-    # ... 根據需要導入其他事件
+    # 【錯誤修正】導入之前遺漏的 TICK 事件，以修復 last_action 無法更新的問題
+    EVENT_SIMULATION_TICK,
 )
 
 try:
@@ -43,19 +44,19 @@ class SimulationController:
     """在獨立執行緒中運行模擬並處理所有狀態變更。"""
 
     def __init__(self, state: SimulationState) -> None:
-        self.state = state
-        self.sim = state.sim
-        self.config = state.config
+        self.state = state # 儲存對中央狀態管理器的參考
+        self.sim = state.sim # 儲存對模擬器物件的參考
+        self.config = state.config # 儲存對應用程式設定的參考
 
-        self.policy_manager = state.policy_manager_ref
-        self.terrain_manager = state.terrain_manager_ref
-        self.floating_controller = state.floating_controller_ref
-        self.xbox_handler = state.xbox_handler_ref
-        self.hardware_controller = state.hardware_controller_ref
+        self.policy_manager = state.policy_manager_ref # 儲存對AI策略管理器的參考
+        self.terrain_manager = state.terrain_manager_ref # 儲存對地形管理器的參考
+        self.floating_controller = state.floating_controller_ref # 儲存對懸浮控制器的參考
+        self.xbox_handler = state.xbox_handler_ref # 儲存對Xbox搖桿處理器的參考
+        self.hardware_controller = state.hardware_controller_ref # 儲存對硬體控制器的參考
         self.serial_comm = state.serial_communicator_ref # 直接獲取 serial_communicator 的參考
 
-        self._running = threading.Event()
-        self.thread: threading.Thread | None = None
+        self._running = threading.Event() # 用於控制執行緒生命週期的事件旗標
+        self.thread: threading.Thread | None = None # 執行緒物件
 
         self._manual_float_active = False        # 追蹤手動模式下懸浮是否已啟用
         self._subscribe_to_events()        # 訂閱所有來自輸入層的請求事件
@@ -65,19 +66,19 @@ class SimulationController:
     # ============================ 事件訂閱輔助函式 ============================
     def _subscribe_to_events(self):
         """將所有事件訂閱邏輯集中到此處。"""
-        event_bus.subscribe(EVENT_MODE_CHANGE_REQUESTED, self.on_mode_change_requested)
-        event_bus.subscribe(EVENT_SIMULATION_RESET_REQUESTED, self.on_simulation_reset_requested)
-        event_bus.subscribe(EVENT_TUNING_PARAM_ADJUSTED, self.on_tuning_param_adjusted)
-        event_bus.subscribe(EVENT_TUNING_PARAM_SELECT_REQUESTED, self.on_tuning_param_select_requested)
-        event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested)
-        event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested)
-        event_bus.subscribe(EVENT_SERIAL_COMMAND_SEND, self.on_serial_command_send_requested)
-        event_bus.subscribe(EVENT_POLICY_CHANGE_REQUESTED, self.on_policy_change_requested)
-        event_bus.subscribe(EVENT_TERRAIN_CHANGE_REQUESTED, self.on_terrain_change_requested)
-        event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
-        event_bus.subscribe(EVENT_JOINT_SELECT_REQUESTED, self.on_joint_select_requested)
-        event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted)
-        event_bus.subscribe(EVENT_SHUTDOWN_REQUESTED, self.on_shutdown_requested)
+        event_bus.subscribe(EVENT_MODE_CHANGE_REQUESTED, self.on_mode_change_requested) # 訂閱模式切換請求
+        event_bus.subscribe(EVENT_SIMULATION_RESET_REQUESTED, self.on_simulation_reset_requested) # 訂閱模擬重置請求
+        event_bus.subscribe(EVENT_TUNING_PARAM_ADJUSTED, self.on_tuning_param_adjusted) # 訂閱參數調整請求
+        event_bus.subscribe(EVENT_TUNING_PARAM_SELECT_REQUESTED, self.on_tuning_param_select_requested) # 訂閱參數選擇請求
+        event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested) # 訂閱輸入模式切換請求
+        event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested) # 訂閱設備連接請求
+        event_bus.subscribe(EVENT_SERIAL_COMMAND_SEND, self.on_serial_command_send_requested) # 訂閱序列埠命令發送請求
+        event_bus.subscribe(EVENT_POLICY_CHANGE_REQUESTED, self.on_policy_change_requested) # 訂閱AI策略切換請求
+        event_bus.subscribe(EVENT_TERRAIN_CHANGE_REQUESTED, self.on_terrain_change_requested) # 訂閱地形切換請求
+        event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled) # 訂閱手動懸浮切換請求
+        event_bus.subscribe(EVENT_JOINT_SELECT_REQUESTED, self.on_joint_select_requested) # 訂閱關節選擇請求
+        event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted) # 訂閱關節值調整請求
+        event_bus.subscribe(EVENT_SHUTDOWN_REQUESTED, self.on_shutdown_requested) # 訂閱應用程式關閉請求
 
         # 【v4.0 修改】確保訂閱了手動懸浮事件
         event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
@@ -88,36 +89,37 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def _initialize_simulation_state(self) -> None:
-        if isinstance(self.sim, MockSimulation):
+        """初始化模擬狀態，包括地形和機器人重置。"""
+        if isinstance(self.sim, MockSimulation): # 檢查是否為無頭(mock)模式
             log.info("[MOCK] Skip simulation state initialization.")
             return
 
-        if self.terrain_manager.is_functional:
+        if self.terrain_manager.is_functional: # 如果地形管理器可用
             # 初始啟動時重置地形管理器，以確保中心點與高度場為最新狀態
             self.terrain_manager.reset()
-        self.hard_reset()
+        self.hard_reset() # 執行硬重置
         print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
 
     # ------------------------------------------------------------------
     def start(self) -> None:
         """啟動模擬執行緒。"""
-        if self.thread and self.thread.is_alive():
+        if self.thread and self.thread.is_alive(): # 如果執行緒已存在且在運行中，則不重複啟動
             return
-        self._running.set()
-        self.thread = threading.Thread(target=self.run, daemon=True)
-        self.thread.start()
+        self._running.set() # 設定運行旗標
+        self.thread = threading.Thread(target=self.run, daemon=True) # 創建執行緒
+        self.thread.start() # 啟動執行緒
 
     # ============================ 主要運行 ============================
     def run(self) -> None:
         """
         【v4.0.2 修改版】執行緒主迴圈。
         """
-        is_headless = isinstance(self.sim, MockSimulation)
+        is_headless = isinstance(self.sim, MockSimulation) # 判斷是否為無圖形介面的無頭模式
         if not is_headless:
-            self.sim.initialize_window_and_context()
-        self._initialize_simulation_state()
+            self.sim.initialize_window_and_context() # 如果有圖形介面，則初始化視窗
+        self._initialize_simulation_state() # 初始化模擬狀態
 
-        while self._running.is_set():
+        while self._running.is_set(): # 當運行旗標為True時，持續循環
             # ======================== [v4.0] 請求處理階段 ========================
             # 在一個極短的鎖定範圍內，原子性地讀取並清除所有掛起的請求。
             with self.state.lock:
@@ -137,18 +139,18 @@ class SimulationController:
                 self.state.manual_float_toggle_request = None
 
             # 在鎖之外，安全地執行請求對應的操作
-            if shutdown_req:
+            if shutdown_req: # 處理關閉請求
                 self._handle_shutdown()
                 continue # 結束迴圈
 
-            if hard_reset_req: self.hard_reset()
+            if hard_reset_req: self.hard_reset() # 處理硬重置請求
             # 【v4.0.1 修正】補上對軟重置請求的處理
-            if soft_reset_req: self.soft_reset()
+            if soft_reset_req: self.soft_reset() # 處理軟重置請求
 
-            if mode_change_req:
+            if mode_change_req: # 處理模式切換請求
                 self._handle_mode_change(mode_change_req)
             
-            if float_toggle_req is not None:
+            if float_toggle_req is not None: # 處理手動懸浮切換請求
                 self._handle_float_toggle(float_toggle_req)
             
             # ======================== 主邏輯與模擬步驟 ========================
@@ -157,13 +159,13 @@ class SimulationController:
                 single_step = self.state.single_step_mode
                 execute_one = self.state.execute_one_step
             
-            if single_step and not execute_one:
-                self.sim.render_from_thread(self.state)
+            if single_step and not execute_one: # 如果是單步模式且未請求執行下一步
+                self.sim.render_from_thread(self.state) # 僅渲染畫面
                 time.sleep(0.01) # 避免空轉
                 continue
             
-            if execute_one:
-                with self.state.lock: self.state.execute_one_step = False
+            if execute_one: # 如果請求執行一步
+                with self.state.lock: self.state.execute_one_step = False # 重置請求旗標
 
             # 【v4.0.2 修正】UX 優化
             is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
@@ -183,10 +185,10 @@ class SimulationController:
     def _handle_shutdown(self):
         """【v4.0 新增】處理關閉請求的邏輯。"""
         log.info("偵測到關閉請求，正在停止主迴圈...")
-        self._running.clear()
+        self._running.clear() # 清除運行旗標以停止循環
         # 確保 NiceGUI 也被通知關閉
         from nicegui import app
-        app.shutdown()
+        app.shutdown() # 觸發NiceGUI的關閉流程
 
     def _handle_mode_change(self, new_mode: str):
         """
@@ -195,17 +197,17 @@ class SimulationController:
         """
         with self.state.lock:
             old_mode = self.state.control_mode
-            if old_mode == new_mode: return
+            if old_mode == new_mode: return # 如果模式未變，則不執行任何操作
 
             # 步驟 1: 處理非物理相關的邏輯
             if new_mode == "HARDWARE_MODE":
                 # 【v4.0.2 修改】呼叫非阻塞的請求函式
                 log.info(f"模式切換: 發出硬體啟動請求...")
-                self.hardware_controller.request_start()
+                self.hardware_controller.request_start() # 請求啟動硬體控制器
             elif old_mode == "HARDWARE_MODE":
                 # 【v4.0.2 修改】呼叫非阻塞的請求函式
                 log.info(f"模式切換: 發出硬體停止請求...")
-                self.hardware_controller.request_stop()
+                self.hardware_controller.request_stop() # 請求停止硬體控制器
             # 【v4.0.2 移除】不再由 SimCtrl 直接修改 HW 狀態，改由 HWCtrl 自己負責
             # self.state.hardware_is_running = success 
             
@@ -230,13 +232,13 @@ class SimulationController:
         """【v4.0 新增】專門處理模式切換中涉及物理修改的部分。"""
         # 離開舊模式時的物理清理
         if old_mode == "FLOATING":
-            self.floating_controller.disable()
+            self.floating_controller.disable() # 禁用懸浮控制器
             self._manual_float_active = False # 確保同步
         
         # 進入新模式時的物理初始化
         if new_mode == "FLOATING":
             current_pos = self.sim.data.body('torso').xpos.copy()
-            self.floating_controller.enable(current_pos)
+            self.floating_controller.enable(current_pos) # 啟用懸浮控制器
             self._manual_float_active = True # 確保同步
         
         # 進入手動/測試模式時，重置關節姿態
@@ -311,7 +313,7 @@ class SimulationController:
                     return
 
             # 根據事件提供的參數類型執行操作
-            if value is not None:  # 來自UI滑桿的絕對值設定
+            if value is not None:  # 來自UI滑桿的absolute值設定
                 setattr(self.state.tuning_params, param_name, value)
             elif direction is not None:  # 來自鍵盤/搖桿的步進調整
                 step = self.config.param_adjust_steps.get(param_name, 0.1)
@@ -494,7 +496,7 @@ class SimulationController:
             control_mode = self.state.control_mode
             tuning_params = self.state.tuning_params
 
-        onnx_input, action_final = self.policy_manager.get_action(command)
+        onnx_input, action_final = self.policy_manager.get_action(command) # 獲取AI模型的動作輸出
 
         # [保留] 根據模式計算最終控制指令的邏輯不變
         if control_mode == "MANUAL_CTRL":
@@ -523,7 +525,14 @@ class SimulationController:
             # 這是物理引擎的核心步驟
             mujoco.mj_step(self.sim.model, self.sim.data)
 
-        # 【v4.3.1 新增】 - 將原始物理數據寫入 State
+        # 【錯誤修正】修復之前被忽略的bug：未發布TICK事件，導致last_action等狀態無法更新
+        # 在物理步驟完成後，發布一個包含最新決策數據的TICK事件
+        event_bus.publish(EVENT_SIMULATION_TICK,
+                          onnx_input=onnx_input.flatten(),
+                          action_raw=action_final,
+                          final_ctrl=final_ctrl)
+
+        # 【v4.3.1 新增 & 錯誤修正】 - 將原始物理數據寫入 State
         # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
         # 作為 ObservationManager 的數據源。
         with self.state.lock:
@@ -534,7 +543,18 @@ class SimulationController:
             self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
             # 讀取所有關節的角度和角速度
             self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
-            self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
+            
+            # ======================= 【🔴 錯誤修正 🔴】 =======================
+            # 原始程式碼: self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
+            # 問題: 這是錯誤的。`qvel` 陣列的前6個元素是自由體(軀幹)的線速度和角速度，
+            #       而剩下的元素才是12個關節的角速度。因此，正確的切片應該從索引6開始。
+            #       然而，一個更穩健、不易出錯的方法是直接使用模型中定義的致動器(actuator)速度。
+            #       `self.sim.data.actuator_velocity` 是一個長度為 nu (馬達數量, 12) 的陣列，
+            #       它直接對應了我們所有馬達關節的角速度，可以避免手動計算索引。
+            # 修正: 改為讀取 `actuator_velocity` 來確保只獲取12個馬達的角速度，避免資料混淆。
+            self.state.raw_joint_velocities = self.sim.data.actuator_velocity.copy()
+            # ================================================================
+
             # 從 XML 中定義的感測器讀取加速度計數據
             if self.sim.accelerometer_id != -1:
                  start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
@@ -548,9 +568,10 @@ class SimulationController:
 
     # ------------------------------------------------------------------
     def stop(self) -> None:
-        self._running.clear()
+        """停止模擬執行緒。"""
+        self._running.clear() # 清除運行旗標
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1)
+            self.thread.join(timeout=1) # 等待執行緒結束
 
 
     # ------------------------------------------------------------------
@@ -571,7 +592,7 @@ class SimulationController:
             if self.state.control_mode == "HARDWARE_MODE":
                 return
 
-            mujoco.mj_resetData(self.sim.model, self.sim.data)
+            mujoco.mj_resetData(self.sim.model, self.sim.data) # 重置MuJoCo模擬數據
             self.sim.data.qpos[0], self.sim.data.qpos[1] = 0, 0
             # 依照目前地形取得原點的高度，確保重置後不會埋在地底
             start_ground_z = self.terrain_manager.get_height_at(0, 0)
@@ -619,6 +640,3 @@ class SimulationController:
             mujoco.mj_forward(self.sim.model, self.sim.data)
             # 【v4.0.1 移除】旗標的清除工作已經在 run() 迴圈的頂部完成
             # self.state.soft_reset_requested = False
-
-
-
