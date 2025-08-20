@@ -255,30 +255,32 @@ class HardwareController:
     # 【v4.3.2 修改】 parse_policy_stream 方法
     def parse_policy_stream(self, line: str):
         """
-        【v4.3.2 修改】
-        解析來自Teensy的數據流，並將原始數據直接寫入中央的SimulationState。
+        【v4.4.2 重構】嚴格按照數據契約解析 Teensy 數據流。
+
+        職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口，與模擬器無關。
         """
         try:
             parts = line.split(',')
-            if len(parts) != 34: return
+            if len(parts) != 34:
+                log.warning(f"...")
+                return
+            
             data_vec = np.array(parts, dtype=np.float32)
             
-            # 使用全局 state.lock 保護對 SimulationState 的寫入
             with self.state.lock:
-                # 注意：Teensy 發送的是世界座標系下的數據，這裡直接寫入
+                # 【v4.4.2 修改】將 Teensy 的數據寫入到新的、無 '_world' 後綴的屬性中
                 self.state.raw_torso_angular_velocity[:] = data_vec[0:3]
-                # Teensy 通常直接發送已經計算好的重力向量（相對於機身）
+                
+                # 【v4.4.2 新增】將 Teensy 數據寫入新增的屬性
                 self.state.raw_gravity_vector[:] = data_vec[3:6]
                 self.state.raw_accelerometer[:] = data_vec[6:9]
-                # pitch 數據暫時不存入 raw 狀態，因為通常可以從四元數推導
-                # self.state.raw_pitch_rad = data_vec[9] 
+                self.state.raw_pitch_rad = data_vec[9]
                 self.state.raw_joint_positions[:] = data_vec[10:22]
                 self.state.raw_joint_velocities[:] = data_vec[22:34]
-                # 注意：四元數和線速度並不在這個數據流中，ObservationManager 需要能處理這種情況
-                # （例如，在硬體模式下，linear_velocity 可能為零）
+        except (ValueError, IndexError) as e:
+            log.warning(f"...")
+            pass
 
-        except (ValueError, IndexError):
-            pass # 在高頻率流中，忽略解析錯誤比打印日誌更好
 
     # 【v4.3.2 刪除】 construct_observation 方法
     # 此方法的職責已完全轉移給 ObservationManager。
