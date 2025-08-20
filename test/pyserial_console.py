@@ -1,93 +1,201 @@
+# test/pyserial_console.py
+"""
+【v4.4.1 修改】【註解規範教學範例】Teensy 數據流實時驗證工具
+
+本檔案旨在作為專案「註解與文檔字符串規範 v4.2.5」的標準教學範例。
+它通過模擬從 v4.4.0 到 v4.4.1 的版本迭代，展示了所有類型的註解規範。
+
+主要用途:
+- 作為一個功能齊全的、獨立的序列埠控制台。
+- 根據預定義的「數據契約」，實時解析、驗證和格式化顯示來自 Teensy 的數據流。
+- 監控數據幀的接收頻率，以評估通信穩定性。
+- 允許使用者在主控台輸入指令並發送給 Teensy，與數據監聽並行。
+
+版本演進歷史 (範例):
+- v4.4.0: 新增了核心的數據流解析、驗證和格式化顯示功能。
+- v4.4.1: 重構了顯示邏輯，修復了資源釋放的 Bug，並恢復了用戶指令輸入功能。
+"""
 import serial
 import time
 import sys
 import threading
-import os # 【新增】導入 os 模組
+import os
+import numpy as np
+from collections import deque
 
-# 【修改】調整 sys.path 以便能夠導入 src 下的模組
-# 讓腳本無論從何處運行，都能正確找到 src 目錄
+# 【v4.4.0 修改】強化路徑設置，確保無論從何處執行都能找到 src
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
-from src.utils.serial_utils import select_serial_port # 【修改】更新 import 路徑
+from src.utils.serial_utils import select_serial_port
 
-# 全域旗標，用於在主執行緒與讀取執行緒間傳遞退出訊號
+# 【v4.4.0 新增】Teensy-PC 數據契約 v1.1
+# 將數據契約程式碼化，作為解析和驗證的唯一依據。
+DATA_CONTRACT = {
+    'total_fields': 34,
+    'fields': {
+        'angular_velocity': {'start': 0, 'len': 3, 'unit': 'rad/s'},
+        'gravity_vector':   {'start': 3, 'len': 3, 'unit': 'norm'},
+        'accelerometer':    {'start': 6, 'len': 3, 'unit': 'm/s^2'},
+        'pitch_angle':      {'start': 9, 'len': 1, 'unit': 'rad'},
+        'joint_positions':  {'start': 10, 'len': 12, 'unit': 'rad'},
+        'joint_velocities': {'start': 22, 'len': 12, 'unit': 'rad/s'},
+    }
+}
+
+# 全域旗標，用於在主執行緒與讀取、寫入執行緒間傳遞退出訊號
 exit_signal = threading.Event()
 
+def parse_and_validate_line(line: str) -> dict:
+    """【v4.4.0 新增】根據 DATA_CONTRACT 解析並驗證單行數據。"""
+    parts = line.strip().split(',')
+    
+    if len(parts) != DATA_CONTRACT['total_fields']:
+        return {
+            'success': False, 
+            'error': f"欄位數量錯誤 (預期 {DATA_CONTRACT['total_fields']}, 實際 {len(parts)})",
+            'raw_line': line
+        }
+    
+    try:
+        data_vec = np.array(parts, dtype=np.float32)
+        parsed_data = {}
+        for name, spec in DATA_CONTRACT['fields'].items():
+            start_idx = spec['start']
+            end_idx = start_idx + spec['len']
+            parsed_data[name] = data_vec[start_idx:end_idx]
+            
+        return {'success': True, 'data': parsed_data}
+        
+    except ValueError as e:
+        return {
+            'success': False,
+            'error': f"數據轉換為浮點數失敗: {e}",
+            'raw_line': line
+        }
+
+def display_validated_data(ser_port: str, result: dict, freq: float):
+    """【v4.4.1 新增】【重構】將數據顯示邏輯從讀取線程中分離出來。"""
+    # 清除終端螢幕以便刷新顯示
+    os.system('cls' if os.name == 'nt' else 'clear')
+    
+    print("--- Teensy 數據流實時驗證工具 (v4.4.1) ---")
+    print(f"連接埠: {ser_port} | 在下方輸入指令 (或 'exit' 退出)")
+    
+    if freq > 0:
+        print(f"數據幀頻率: {freq:.2f} Hz\n")
+    else:
+        print("數據幀頻率: (計算中...)\n")
+
+    if result['success']:
+        print("✅ 數據幀驗證通過\n")
+        # 格式化打印
+        for name, data_array in result['data'].items():
+            spec = DATA_CONTRACT['fields'][name]
+            unit = spec['unit']
+            data_str = np.array2string(data_array, precision=4, suppress_small=True, formatter={'float_kind':lambda x: f"{x:8.4f}"})
+            print(f"{name.replace('_', ' ').title():<18} ({unit}): {data_str}")
+    else:
+        print(f"❌ 數據幀驗證失敗!")
+        print(f"   錯誤: {result['error']}")
+        print(f"   原始數據: \"{result['raw_line'].strip()}\"")
+    
+    # 【v4.4.1 新增】為用戶輸入提供一個清晰的提示符
+    print("\n------------------------------------")
+    print("請輸入指令 > ", end='', flush=True)
+
+
 def read_from_port(ser):
-    """在背景執行緒中持續讀取來自序列埠的資料。"""
-    print("\n[讀取線程已啟動] 等待來自 Teensy 的消息...")
+    """【v4.4.1 修改】【重構】在背景執行緒中持續讀取、解析、驗證數據，並調用顯示函式。"""
+    print("\n[讀取線程已啟動] 等待來自 Teensy 的數據流...")
+    
+    frame_times = deque(maxlen=100)
+    
     while not exit_signal.is_set():
         try:
-            if ser.in_waiting > 0:
-                response = ser.readline().decode('utf-8', errors='ignore').strip()
-                if response:
-                    sys.stdout.write(f"\r[Teensy]: {response}\n")
-                    sys.stdout.flush()
+            if ser and ser.is_open and ser.in_waiting > 0:
+                response = ser.readline().decode('utf-8', errors='ignore')
+                if not response:
+                    continue
+
+                frame_times.append(time.perf_counter())
+                
+                result = parse_and_validate_line(response)
+                
+                freq = 0.0
+                if len(frame_times) > 1:
+                    freq = (len(frame_times) - 1) / (frame_times[-1] - frame_times[0])
+
+                # 【v4.4.1 重構】調用獨立的顯示函式
+                display_validated_data(ser.port, result, freq)
+
         except serial.SerialException:
             print("\n[讀取線程錯誤] 序列埠已斷開。")
+            exit_signal.set() # 【v4.4.1 修復】確保在出錯時也能觸發退出信號
             break
         except Exception as e:
             print(f"\n[讀取線程未知錯誤]: {e}")
+            exit_signal.set() # 【v4.4.1 修復】確保在出錯時也能觸發退出信號
             break
-        time.sleep(0.01)
-
+        
+        time.sleep(0.001)
 
 def main():
-    """主流程：建立連線並處理使用者輸入。"""
-    # 1. 自動或手動選擇序列埠
+    """【v4.4.1 修改】主流程，現在管理讀取線程和用戶指令輸入。"""
     SERIAL_PORT = select_serial_port()
     if not SERIAL_PORT:
         sys.exit(1)
-    BAUD_RATE = 115200  # 與 Teensy 端保持一致的鮑率
+    BAUD_RATE = 115200
     ser = None
+    read_thread = None
+    
     try:
-        print(f"\n正在嘗試連接到您選擇的埠 {SERIAL_PORT}...")
-        # 2. 正式打開序列埠
+        print(f"\n正在連接到 {SERIAL_PORT}...")
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
-        print("等待 Teensy 初始化 (0.5秒)...")
-        # 3. 等待硬體初始化完成
         time.sleep(0.5)
-        # 清空讀寫緩衝區，以免殘留資料影響通訊
         ser.reset_input_buffer()
         ser.reset_output_buffer()
-        print("緩衝區已清空，連接準備就緒。")
-        # 4. 啟動背景讀取執行緒
+        print("連接成功，正在啟動讀取線程...")
+        
         read_thread = threading.Thread(target=read_from_port, args=(ser,))
         read_thread.daemon = True
         read_thread.start()
-        print("\n--- Teensy 控制台已啟動 ---")
-        print("您可以輸入指令 (例如: 'stop', 'printon'), 然後按 Enter。")
-        print("輸入 'exit' 來退出程式。")
-        # 5. 進入主迴圈，等待使用者輸入指令並透過序列埠傳送
-        while True:
+        
+        # 【v4.4.1 修改】在主線程中恢復用戶指令輸入功能
+        while not exit_signal.is_set():
             command = input()
             if command.lower() == 'exit':
+                print("收到 'exit' 指令，正在關閉...")
+                break # 退出主迴圈
+            
+            if ser and ser.is_open:
+                command_to_send = command + '\n'
+                ser.write(command_to_send.encode('utf-8'))
+            else:
+                print("序列埠未連接，無法發送指令。")
                 break
-            command_to_send = command + '\n'
-            ser.write(command_to_send.encode('utf-8'))
+
     except serial.SerialException as e:
-        # 連接或傳輸過程中發生錯誤
-        print(f"--- 致命錯誤 ---")
-        print(f"無法打開或操作序列埠 {SERIAL_PORT}。")
-        print(f"錯誤詳情: {e}")
-    except KeyboardInterrupt:
-        # 使用者按下 Ctrl+C 中斷
-        print("\n偵測到 Ctrl+C，正在終止程式...")
+        print(f"--- 致命錯誤: 無法打開序列埠 {SERIAL_PORT}。錯誤詳情: {e}")
+    except (KeyboardInterrupt, EOFError):
+        # 【v4.4.1 修改】捕獲 EOFError，當 input() 沒有更多輸入時（例如在管道中）
+        print("\n偵測到程序終止信號，正在關閉...")
     except Exception as e:
-        # 其他未預期的錯誤
         print(f"發生未知錯誤: {e}")
     finally:
-        # 確保背景執行緒與序列埠正確關閉
-        exit_signal.set()
+        # 【v4.` 修改】確保退出信號被設置，以便所有線程都能 cleanly 退出
+        print("正在執行清理工作...")
+        exit_signal.set() 
+        
+        if read_thread and read_thread.is_alive():
+            read_thread.join(timeout=1)
+        
         if ser and ser.is_open:
             ser.close()
             print(f"序列埠 {SERIAL_PORT} 已安全關閉。")
-        if 'read_thread' in locals() and read_thread.is_alive():
-            read_thread.join(timeout=1)
+            
         print("程式已退出。")
 
 if __name__ == "__main__":
-    # 直接執行此檔案時，啟動主流程
     main()
