@@ -116,11 +116,20 @@ class ObservationManager:
         u, s = q_inv[1:], q_inv[0]
         return 2 * np.dot(u, v) * u + (s * s - np.dot(u, u)) * v + 2 * s * np.cross(u, v)
 
-    # 【v4.3.1 修改】 _get_gravity_vector 方法
     def _get_gravity_vector(self) -> np.ndarray:
-        """計算局部座標系下的重力向量。"""
-        inv_torso_rot = self._get_torso_inverse_rotation()
-        return self._rotate_vec_by_quat_inv(np.array([0, 0, -1]), inv_torso_rot)
+        """
+        【v4.4.3 重構】計算局部座標系下的重力向量（模式感知）。
+
+        - 在硬體模式下，直接信任並返回 Teensy 預計算好的重力向量。
+        - 在模擬模式下，通過旋轉世界重力向量來計算。
+        """
+        if self.state.control_mode == "HARDWARE_MODE":
+            # 硬體模式：直接返回 Teensy 提供的數據
+            return self.state.raw_gravity_vector
+        else:
+            # 模擬模式：執行基於四元數的計算
+            inv_torso_rot = self._get_torso_inverse_rotation()
+            return self._rotate_vec_by_quat_inv(np.array([0, 0, -1]), inv_torso_rot)
 
     # 【v4.3.1 修改】 _get_commands 方法
     def _get_commands(self) -> np.ndarray:
@@ -146,19 +155,35 @@ class ObservationManager:
         # [修改] 數據源變更
         return self.state.raw_last_action
 
-    # 【v4.3.1 修改】 _get_linear_velocity 方法
     def _get_linear_velocity(self) -> np.ndarray:
-        """獲取局部座標系下的軀幹線速度。"""
-        inv_torso_rot = self._get_torso_inverse_rotation()
-        # [修改] 數據源變更
-        return self._rotate_vec_by_quat_inv(self.state.raw_torso_linear_velocity, inv_torso_rot)
+        """
+        【v4.4.3 修改】獲取局部座標系下的軀幹線速度（模式感知）。
 
-    # 【v4.3.1 修改】 _get_full_angular_velocity 方法
+        - 在硬體模式下，由於 Teensy 未提供線速度數據，返回零向量。
+        - 在模擬模式下，通過旋轉世界線速度向量來計算。
+        """
+        if self.state.control_mode == "HARDWARE_MODE":
+            # 硬體模式：Teensy 未提供此數據，返回零
+            return np.zeros(3)
+        else:
+            # 模擬模式：執行基於四元數的計算
+            inv_torso_rot = self._get_torso_inverse_rotation()
+            return self._rotate_vec_by_quat_inv(self.state.raw_torso_linear_velocity, inv_torso_rot)
+
     def _get_full_angular_velocity(self) -> np.ndarray:
-        """獲取局部座標系下的軀幹角速度。"""
-        inv_torso_rot = self._get_torso_inverse_rotation()
-        # [修改] 數據源變更
-        return self._rotate_vec_by_quat_inv(self.state.raw_torso_angular_velocity, inv_torso_rot)
+        """
+        【v4.4.3 重構】獲取局部座標系下的軀幹角速度（模式感知）。
+
+        - 在硬體模式下，直接信任並返回 Teensy 提供的機身坐標系角速度。
+        - 在模擬模式下，通過旋轉世界角速度向量來計算。
+        """
+        if self.state.control_mode == "HARDWARE_MODE":
+            # 硬體模式：直接返回 Teensy 提供的數據（數據契約定義其為機身坐標系）
+            return self.state.raw_torso_angular_velocity
+        else:
+            # 模擬模式：執行基於四元數的計算
+            inv_torso_rot = self._get_torso_inverse_rotation()
+            return self._rotate_vec_by_quat_inv(self.state.raw_torso_angular_velocity, inv_torso_rot)
 
     # 【v4.3.1 修改】 _get_accelerometer 方法
     def _get_accelerometer(self) -> np.ndarray:
