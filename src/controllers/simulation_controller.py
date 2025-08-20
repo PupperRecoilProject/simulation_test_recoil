@@ -1,3 +1,10 @@
+# src/controllers/simulation_controller.py
+"""
+【v4.1.0 修改版】模擬與狀態協調控制器
+
+在獨立執行緒中運行模擬並處理所有狀態變更。
+"""
+
 from __future__ import annotations
 
 import threading
@@ -485,9 +492,12 @@ class SimulationController:
     # 【v4.3.1 修改】 _simulation_step 方法
     def _simulation_step(self) -> None:
         """
-        【v4.3.1 修改】
+        【v4.3.1 修改】執行物理模擬並更新原始物理數據到 SimulationState。
+        【v4.4.2 修改】同步更新寫入的 raw_ 變數名。
+
         此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
         """
+
         # [保留] 讀取狀態和獲取 AI 動作的邏輯不變
         with self.state.lock:
             command = self.state.command.copy()
@@ -530,8 +540,8 @@ class SimulationController:
             # 讀取軀幹的姿態四元數
             self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
             # 讀取軀幹在世界座標系下的線速度和角速度
-            self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
-            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
+            self.state.raw_torso_linear_velocity = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
+            self.state.raw_torso_angular_velocity = self.sim.data.cvel[self.sim.torso_id, :3].copy()
             # 讀取所有關節的角度和角速度
             self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
             self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()

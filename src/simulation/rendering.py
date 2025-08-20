@@ -103,7 +103,7 @@ class DebugOverlay:
             # 格式化加速度計數據
             acc_str = np.array2string(state.raw_accelerometer, precision=2, suppress_small=True)
             # 格式化陀螺儀數據
-            gyro_str = np.array2string(state.raw_torso_angular_velocity_world, precision=2, suppress_small=True)
+            gyro_str = np.array2string(state.raw_torso_angular_velocity, precision=2, suppress_small=True)
             # 格式化關節角度數據
             joint_pos_str = np.array2string(state.raw_joint_positions, precision=2, suppress_small=True, max_line_width=80)
             

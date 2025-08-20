@@ -266,7 +266,7 @@ class HardwareController:
             # 使用全局 state.lock 保護對 SimulationState 的寫入
             with self.state.lock:
                 # 注意：Teensy 發送的是世界座標系下的數據，這裡直接寫入
-                self.state.raw_torso_angular_velocity_world[:] = data_vec[0:3]
+                self.state.raw_torso_angular_velocity[:] = data_vec[0:3]
                 # Teensy 通常直接發送已經計算好的重力向量（相對於機身）
                 self.state.raw_gravity_vector[:] = data_vec[3:6]
                 self.state.raw_accelerometer[:] = data_vec[6:9]

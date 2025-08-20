@@ -151,14 +151,14 @@ class ObservationManager:
         """獲取局部座標系下的軀幹線速度。"""
         inv_torso_rot = self._get_torso_inverse_rotation()
         # [修改] 數據源變更
-        return self._rotate_vec_by_quat_inv(self.state.raw_torso_linear_velocity_world, inv_torso_rot)
+        return self._rotate_vec_by_quat_inv(self.state.raw_torso_linear_velocity, inv_torso_rot)
 
     # 【v4.3.1 修改】 _get_full_angular_velocity 方法
     def _get_full_angular_velocity(self) -> np.ndarray:
         """獲取局部座標系下的軀幹角速度。"""
         inv_torso_rot = self._get_torso_inverse_rotation()
         # [修改] 數據源變更
-        return self._rotate_vec_by_quat_inv(self.state.raw_torso_angular_velocity_world, inv_torso_rot)
+        return self._rotate_vec_by_quat_inv(self.state.raw_torso_angular_velocity, inv_torso_rot)
 
     # 【v4.3.1 修改】 _get_accelerometer 方法
     def _get_accelerometer(self) -> np.ndarray:

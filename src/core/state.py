@@ -1,4 +1,12 @@
 # state.py
+"""
+【v2.0 修改後】中央狀態管理者 (Central State Manager)
+【v4.4.2 修改】新增 Teensy 數據流相關的原始屬性。
+
+這個類別是整個應用程式的"單一真相來源 (Single Source of Truth)"。
+它不再是一個被動的數據容器，而是一個主動的管理者，通過訂閱事件來
+安全地更新自己的狀態，並為其他模組提供查詢。
+"""
 
 # 所有現有的 imports
 from __future__ import annotations
@@ -91,13 +99,19 @@ class SimulationState:
     # [新增] v4.3.1 原始感測器數據 (由數據源更新，供 ObservationManager 使用)
     # 這是原始數據的暫存區，由 SimulationController 或 HardwareController 填充。
     raw_torso_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
-    raw_torso_linear_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    raw_torso_angular_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # 【v4.4.2 修改】重命名以消除坐標系歧義。註解明確指出坐標系由數據源決定。
+    raw_torso_linear_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_torso_angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    
     raw_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
     raw_joint_velocities: np.ndarray = field(default_factory=lambda: np.zeros(12))
     raw_accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
     raw_last_action: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
+    # 【v4.4.2 新增】新增屬性以接收來自 Teensy 的俯仰角和重力向量數據
+    raw_pitch_rad: float = 0.0
+    raw_gravity_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
+
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
