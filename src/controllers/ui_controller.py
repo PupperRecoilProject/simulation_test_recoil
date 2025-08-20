@@ -245,7 +245,7 @@ class UIController:
 
             self.status_labels['joint_info'] = ui.label('')
             # 【v4.3.4 修改】 為滑桿增加初始值，避免 value 屬性為 None
-            self.joint_control_slider = ui.slider(min=-np.pi, max=-np.pi, step=0.01,
+            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01,
                                                  value=0.0, # 【新增】設定初始值為 0.0
                                                  on_change=lambda e: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, value=e.value)
                                                  ).props('label-always')

@@ -184,7 +184,7 @@ def main():
     except Exception as e:
         print(f"發生未知錯誤: {e}")
     finally:
-        # 【v4.` 修改】確保退出信號被設置，以便所有線程都能 cleanly 退出
+        # 【v4.4.1 修改】確保退出信號被設置，以便所有線程都能 cleanly 退出
         print("正在執行清理工作...")
         exit_signal.set() 
         
