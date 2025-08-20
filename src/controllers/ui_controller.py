@@ -275,11 +275,14 @@ class UIController:
             self.status_labels['robot_vel'] = ui.label('速度: [0.0, 0.0, 0.0]')
 
     def _create_onnx_display(self):
-        """建立 ONNX 觀察向量區域，並設定最小高度避免畫面跳動。"""
-        # 【修正】設定卡片的最小高度，避免文字長度變化造成版面跳動
-        with ui.card().style('min-height: 220px;'):
+        """
+        【v4.4.4 修改】建立 ONNX 觀察向量區域，並設定最小高度避免畫面跳動。
+        """
+        # 【v4.4.4 修改】設定卡片的最小高度，避免文字長度變化造成版面跳動
+        with ui.card().style('min-height: 320px;'):
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
             with ui.grid(columns=2):
+                # 這裡仍然創建所有可能的標籤，以便 UI 佈局穩定
                 obs_components = [
                     'linear_velocity', 'angular_velocity', 'gravity_vector', 'commands',
                     'accelerometer', 'joint_positions', 'joint_velocities', 'last_action'
@@ -434,22 +437,56 @@ class UIController:
 
 
     def _update_onnx_labels(self):
-        if self.state.latest_onnx_input.size == 0 or not self.policy_manager.get_active_recipe():
+        """
+        【v4.4.4 重構】根據當前模型的 recipe 準確解析並更新 ONNX 觀察向量的 UI 顯示。
+
+        此函式現在：
+        1. 在更新前將所有標籤重置為 N/A，以處理模型切換。
+        2. 嚴格按照當前 recipe 的順序和維度，從 state.latest_onnx_input 中切片數據。
+        3. 將切片出的數據更新到對應名稱的標籤中，解決了數據錯位問題。
+        """
+        # 1. 在更新前，先將所有標籤重置為 'N/A'
+        for label in self.onnx_input_labels.values():
+            base_text = label.text.split(':')[0]
+            label.set_text(f'{base_text}: N/A')
+
+        # 獲取當前生效的 recipe 和完整的觀測向量
+        if not self.policy_manager or not self.state.observation_manager_ref:
             return
+            
         recipe = self.policy_manager.get_active_recipe()
         obs_vec = self.state.latest_onnx_input
+        
+        if not recipe or obs_vec.size == 0:
+            return
+
+        # 獲取所有可能元件的維度定義
+        component_dims = self.state.observation_manager_ref.ALL_OBS_DIMS
+        
+        # 2. 嚴格按照 recipe 順序進行遍歷和切片
         current_idx = 0
-        # 從已註冊的 policy_manager 取得各觀察元件的維度
-        component_dims = self.policy_manager.observation_manager.component_dims
         for comp_name in recipe:
-            dim = component_dims.get(comp_name, 0)
-            if dim > 0 and comp_name in self.onnx_input_labels:
-                end_idx = current_idx + dim
-                if end_idx <= len(obs_vec):
-                    value_slice = obs_vec[current_idx:end_idx]
-                    vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
-                    self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
-                current_idx = end_idx
+            dim = component_dims.get(comp_name)
+            if dim is None:
+                continue # 如果 recipe 中有未定義的元件，則跳過
+
+            end_idx = current_idx + dim
+            
+            # 安全檢查，確保切片不會越界
+            if end_idx > obs_vec.size:
+                log.warning(f"ONNX UI 更新警告：觀測向量長度 ({obs_vec.size}) 不足以解析 '{comp_name}' (需要到索引 {end_idx})")
+                break
+            
+            # 提取對應的數據切片
+            value_slice = obs_vec[current_idx:end_idx]
+            
+            # 3. 將數據更新到對應名稱的 UI 標籤中
+            if comp_name in self.onnx_input_labels:
+                vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
+                self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
+            
+            # 移動索引到下一個分量的起始位置
+            current_idx = end_idx
 
 
     def run(self):
