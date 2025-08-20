@@ -61,9 +61,12 @@ class SimulationState:
     # 讓每個 SimulationState 實例都能方便地訪問全域事件匯流排。
     # repr=False 避免在打印 state 物件時產生過長的循環引用輸出。
     events: EventSystem = field(default_factory=lambda: event_bus, repr=False)
+
+    # 【v4.5.0 新增】 渲染執行緒與模擬執行緒之間的數據同步機制
+    render_data_buffer: dict = field(default_factory=dict)
+    render_data_lock: threading.Lock = field(default_factory=threading.Lock)
     
-    # --- 用戶輸入與指令狀態 ---
-    # 這些狀態現在主要由 on_command_update 事件回呼來更新
+    # ... 其餘所有屬性保持不變 ...
     command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
     
@@ -145,7 +148,7 @@ class SimulationState:
     xbox_handler_ref: 'XboxInputHandler' = None
     available_policies: list = field(default_factory=list)
 
-
+    # ... __post_init__ 和所有其他方法保持不變 ...
     def __post_init__(self):
         """
         【修改後】初始化函式。
@@ -257,3 +260,39 @@ class SimulationState:
                 if clear_cmd:
                     self.clear_command()
                 log.info(f"輸入模式已切換至: {self.input_mode}")
+    # 【v4.5.0 新增】 輕量級的狀態修改方法，由事件直接呼叫
+    def update_tuning_param(self, param_name: str = None, value: float = None, direction: int = None):
+        """處理調整參數值的請求。"""
+        with self.lock:
+            if param_name is None:
+                param_keys = ['kp', 'kd', 'action_scale', 'bias']
+                if 0 <= self.tuning_param_index < len(param_keys):
+                    param_name = param_keys[self.tuning_param_index]
+                else:
+                    log.error(f"無效的調校參數索引: {self.tuning_param_index}")
+                    return
+
+            if value is not None:
+                setattr(self.tuning_params, param_name, value)
+            elif direction is not None:
+                step = self.config.param_adjust_steps.get(param_name, 0.1)
+                current_value = getattr(self.tuning_params, param_name)
+                new_value = current_value + step * direction
+                setattr(self.tuning_params, param_name, new_value)
+            else:
+                return
+
+            self.tuning_params.kp = max(0, self.tuning_params.kp)
+            self.tuning_params.kd = max(0, self.tuning_params.kd)
+            self.tuning_params.action_scale = max(0, self.tuning_params.action_scale)
+            log.info(f"參數 '{param_name}' 已調整為: {getattr(self.tuning_params, param_name):.2f}")
+
+    def select_next_tuning_param(self, direction: int):
+        """處理切換當前調校參數的請求。"""
+        with self.lock:
+            num_params = len(self.policy_manager_ref.param_keys)
+            self.tuning_param_index = (self.tuning_param_index + direction) % num_params
+            log.debug(f"調校參數索引已切換至: {self.tuning_param_index}")            
+                
+                
+    

@@ -8,26 +8,17 @@ from src.core.logger import log
 import numpy as np
 from src.mock.mock_simulation import MockSimulation
 
+# 【v4.5.0 修正】 精簡事件導入，只導入 SimulationController 真正關心的事件
 from src.core.event_system import (
     event_bus,
-    EVENT_MODE_CHANGE_REQUESTED,
     EVENT_SIMULATION_RESET_REQUESTED,
-    EVENT_TUNING_PARAM_ADJUSTED,
-    EVENT_TUNING_PARAM_SELECT_REQUESTED,
-    EVENT_INPUT_MODE_CHANGE_REQUESTED,
-    EVENT_DEVICE_CONNECT_REQUESTED,
-    EVENT_SERIAL_COMMAND_SEND,
     EVENT_POLICY_CHANGE_REQUESTED,
     EVENT_TERRAIN_CHANGE_REQUESTED,
     EVENT_MANUAL_FLOAT_TOGGLED,
     EVENT_JOINT_SELECT_REQUESTED,
     EVENT_JOINT_VALUE_ADJUSTED,
     EVENT_SHUTDOWN_REQUESTED,
-    # 【v4.0 新增】導入新的通知事件
-    EVENT_MODE_CHANGED,
-    EVENT_STATE_UPDATED,
-
-    # ... 根據需要導入其他事件
+    EVENT_MODE_CHANGED, # 仍然需要，用於處理模式切換後的狀態清理
 )
 
 try:
@@ -40,8 +31,14 @@ if TYPE_CHECKING:
 
 
 class SimulationController:
-    """在獨立執行緒中運行模擬並處理所有狀態變更。"""
-
+    """
+    【v4.5.0 修改】 在獨立執行緒中運行模擬並處理所有狀態變更。
+    職責已純化為：
+    1.  以固定的 50Hz 頻率驅動 MuJoCo 物理模擬。
+    2.  將原始物理數據寫入 SimulationState 的 raw_ 屬性。
+    3.  將渲染所需的物理數據寫入 SimulationState 的 render_data_buffer。
+    4.  處理與模擬時間步、重置和物理狀態直接相關的請求。
+    """
     def __init__(self, state: SimulationState) -> None:
         self.state = state
         self.sim = state.sim
@@ -50,28 +47,28 @@ class SimulationController:
         self.policy_manager = state.policy_manager_ref
         self.terrain_manager = state.terrain_manager_ref
         self.floating_controller = state.floating_controller_ref
-        self.xbox_handler = state.xbox_handler_ref
         self.hardware_controller = state.hardware_controller_ref
         self.serial_comm = state.serial_communicator_ref # 直接獲取 serial_communicator 的參考
 
         self._running = threading.Event()
         self.thread: threading.Thread | None = None
 
-        self._manual_float_active = False        # 追蹤手動模式下懸浮是否已啟用
-        self._subscribe_to_events()        # 訂閱所有來自輸入層的請求事件
+        self._manual_float_active = False
+        self._subscribe_to_events()
 
-        # 初始化將在執行緒啟動後進行
+        # 【v4.5.0 新增】 預先計算每個控制週期的物理步數，以確保確定性
+        self.num_physics_steps_per_control_step = int(
+            self.config.control_dt / self.config.physics_timestep
+        )
+        if not np.isclose(self.config.control_dt, self.num_physics_steps_per_control_step * self.config.physics_timestep):
+            log.warning(f"Control DT ({self.config.control_dt}) 不是 Physics Timestep ({self.config.physics_timestep}) 的整數倍，可能導致時間漂移。")
 
     # ============================ 事件訂閱輔助函式 ============================
+    # 【v4.5.0 重大修正】 移除所有不再屬於 SimulationController 職責的事件訂閱
     def _subscribe_to_events(self):
         """將所有事件訂閱邏輯集中到此處。"""
-        event_bus.subscribe(EVENT_MODE_CHANGE_REQUESTED, self.on_mode_change_requested)
+        # --- 保留的訂閱 (直接影響物理模擬) ---
         event_bus.subscribe(EVENT_SIMULATION_RESET_REQUESTED, self.on_simulation_reset_requested)
-        event_bus.subscribe(EVENT_TUNING_PARAM_ADJUSTED, self.on_tuning_param_adjusted)
-        event_bus.subscribe(EVENT_TUNING_PARAM_SELECT_REQUESTED, self.on_tuning_param_select_requested)
-        event_bus.subscribe(EVENT_INPUT_MODE_CHANGE_REQUESTED, self.on_input_mode_change_requested)
-        event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, self.on_device_connect_requested)
-        event_bus.subscribe(EVENT_SERIAL_COMMAND_SEND, self.on_serial_command_send_requested)
         event_bus.subscribe(EVENT_POLICY_CHANGE_REQUESTED, self.on_policy_change_requested)
         event_bus.subscribe(EVENT_TERRAIN_CHANGE_REQUESTED, self.on_terrain_change_requested)
         event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
@@ -79,53 +76,61 @@ class SimulationController:
         event_bus.subscribe(EVENT_JOINT_VALUE_ADJUSTED, self.on_joint_value_adjusted)
         event_bus.subscribe(EVENT_SHUTDOWN_REQUESTED, self.on_shutdown_requested)
 
-        # 【v4.0 修改】確保訂閱了手動懸浮事件
-        event_bus.subscribe(EVENT_MANUAL_FLOAT_TOGGLED, self.on_manual_float_toggled)
+        # 【v4.5.0 修正】 仍然需要監聽 MODE_CHANGED 事件，以便在模式切換後進行物理狀態的清理
+        # 注意：它不再監聽 MODE_CHANGE_REQUESTED
+        event_bus.subscribe(EVENT_MODE_CHANGED, self.on_mode_changed)
 
+        log.info("SimulationController 已訂閱其核心職責事件。")
 
-        # 為了向前兼容，保留對舊有 pending_mode 的處理，但鼓勵新程式碼使用事件
-        log.info("SimulationController 已訂閱所有核心請求事件。")
-
-    # ------------------------------------------------------------------
     def _initialize_simulation_state(self) -> None:
+        """【v4.5.0 修改】 此函式不再初始化視窗，只初始化物理狀態"""
         if isinstance(self.sim, MockSimulation):
-            log.info("[MOCK] Skip simulation state initialization.")
+            log.info("[MOCK] 跳過模擬狀態初始化。")
             return
 
         if self.terrain_manager.is_functional:
             # 初始啟動時重置地形管理器，以確保中心點與高度場為最新狀態
             self.terrain_manager.reset()
         self.hard_reset()
-        print("\n--- Simulation Started (SPACE: Pause, N: Step) ---")
+        print("\n--- 模擬已啟動 (SPACE: 暫停, N: 單步) ---")
 
-    # ------------------------------------------------------------------
     def start(self) -> None:
         """啟動模擬執行緒。"""
         if self.thread and self.thread.is_alive():
             return
         self._running.set()
-        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread = threading.Thread(target=self.run, name="SimulationThread", daemon=True)
         self.thread.start()
 
-    # ============================ 主要運行 ============================
     def run(self) -> None:
         """
-        【v4.0.2 修改版】執行緒主迴圈。
+        【v4.5.0 重大修改】執行緒主迴圈。
+        此迴圈現在是一個精確的、固定頻率的控制迴圈，完全與渲染分離。
         """
         is_headless = isinstance(self.sim, MockSimulation)
-        if not is_headless:
-            self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
 
+        last_control_time = time.perf_counter()
+
         while self._running.is_set():
-            # ======================== [v4.0] 請求處理階段 ========================
-            # 在一個極短的鎖定範圍內，原子性地讀取並清除所有掛起的請求。
+            current_time = time.perf_counter()
+            elapsed = current_time - last_control_time
+            
+            if elapsed < self.config.control_dt:
+                time.sleep(self.config.control_dt - elapsed)
+            
+            last_control_time = time.perf_counter()
+
             with self.state.lock:
+                # 【v4.5.0 修正】 模式切換請求現在由 ApplicationManager 處理，此處不再需要
+                # mode_change_req = self.state.mode_change_request
+                # self.state.mode_change_request = None
+                
+                # 其他請求旗標的處理保持不變
                 shutdown_req = self.state.shutdown_requested
                 hard_reset_req = self.state.hard_reset_requested
                 # 【v4.0.1 修正】正確讀取 soft_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
-                mode_change_req = self.state.mode_change_request
                 float_toggle_req = self.state.manual_float_toggle_request
 
                 # 清除已讀取的請求
@@ -138,18 +143,14 @@ class SimulationController:
 
             # 在鎖之外，安全地執行請求對應的操作
             if shutdown_req:
-                self._handle_shutdown()
-                continue # 結束迴圈
-
+                self.stop() # 請求停止自身
+                continue
             if hard_reset_req: self.hard_reset()
             # 【v4.0.1 修正】補上對軟重置請求的處理
             if soft_reset_req: self.soft_reset()
-
-            if mode_change_req:
-                self._handle_mode_change(mode_change_req)
-            
-            if float_toggle_req is not None:
-                self._handle_float_toggle(float_toggle_req)
+            # 【v4.5.0 刪除】 不再直接處理模式切換請求
+            # if mode_change_req: self._handle_mode_change(mode_change_req)
+            if float_toggle_req is not None: self._handle_float_toggle(float_toggle_req)
             
             # ======================== 主邏輯與模擬步驟 ========================
             with self.state.lock:
@@ -158,8 +159,7 @@ class SimulationController:
                 execute_one = self.state.execute_one_step
             
             if single_step and not execute_one:
-                self.sim.render_from_thread(self.state)
-                time.sleep(0.01) # 避免空轉
+                time.sleep(0.01)
                 continue
             
             if execute_one:
@@ -171,63 +171,13 @@ class SimulationController:
             if is_simulation_active:
                 # 【模擬活動模式】: 執行物理計算，然後更新狀態並渲染完整畫面
                 self._simulation_step()
-                self.update_derived_states_and_render()
-            elif not is_headless:
-                # 【模擬非活動模式 (硬體/序列埠)】: 
-                # 不執行任何物理或渲染計算，只處理視窗事件以保持響應。
-                self.sim.poll_window_events()
-                # 加入一個非常短的休眠，以防止此迴圈在空閒時吃掉100%的CPU核心。
-                time.sleep(0.01)
-        log.info("模擬執行緒已優雅地停止。")
+                self._update_derived_and_render_states()
 
-    def _handle_shutdown(self):
-        """【v4.0 新增】處理關閉請求的邏輯。"""
-        log.info("偵測到關閉請求，正在停止主迴圈...")
-        self._running.clear()
-        # 確保 NiceGUI 也被通知關閉
-        from nicegui import app
-        app.shutdown()
-
-    def _handle_mode_change(self, new_mode: str):
-        """
-        【v4.0 新增】安全地處理模式切換。
-        此函式在主迴圈的安全上下文中被呼叫，可以安全地修改物理狀態。
-        """
-        with self.state.lock:
-            old_mode = self.state.control_mode
-            if old_mode == new_mode: return
-
-            # 步驟 1: 處理非物理相關的邏輯
-            if new_mode == "HARDWARE_MODE":
-                # 【v4.0.2 修改】呼叫非阻塞的請求函式
-                log.info(f"模式切換: 發出硬體啟動請求...")
-                self.hardware_controller.request_start()
-            elif old_mode == "HARDWARE_MODE":
-                # 【v4.0.2 修改】呼叫非阻塞的請求函式
-                log.info(f"模式切換: 發出硬體停止請求...")
-                self.hardware_controller.request_stop()
-            # 【v4.0.2 移除】不再由 SimCtrl 直接修改 HW 狀態，改由 HWCtrl 自己負責
-            # self.state.hardware_is_running = success 
-            
-            # 步驟 2: 原子性地更新核心模式狀態
-            self.state.set_control_mode(new_mode)
+    # 【v4.5.0 新增】 此函式用於響應模式已變更的通知，進行物理清理
+    def on_mode_changed(self, old_mode: str, new_mode: str):
+        """監聽模式已變更的通知，執行物理相關的狀態清理。"""
+        log.debug(f"SimulationController 偵測到模式變更: {old_mode} -> {new_mode}")
         
-        # 步驟 3: 在鎖之外，安全地執行物理相關的修改
-        self._handle_mode_change_physics(old_mode, new_mode)
-
-        # 【v4.0.2 新增】在完成模式切換後，如果進入了非模擬模式，
-        # 我們主動渲染一次“凍結幀”，以確保UI上顯示的是正確的遮罩和文字。
-        if new_mode in ["HARDWARE_MODE", "SERIAL_MODE"]:
-            if not isinstance(self.sim, MockSimulation):
-                log.info(f"渲染 '{new_mode}' 的凍結畫面...")
-                self.sim.render_from_thread(self.state)
-
-        # 步驟 4: 發布模式已變更的通知事件
-        event_bus.publish(EVENT_MODE_CHANGED, old_mode=old_mode, new_mode=new_mode)
-        log.info(f"✅ 模式已成功從 '{old_mode}' 切換至 '{new_mode}'。")
-
-    def _handle_mode_change_physics(self, old_mode: str, new_mode: str):
-        """【v4.0 新增】專門處理模式切換中涉及物理修改的部分。"""
         # 離開舊模式時的物理清理
         if old_mode == "FLOATING":
             self.floating_controller.disable()
@@ -242,8 +192,9 @@ class SimulationController:
         # 進入手動/測試模式時，重置關節姿態
         if new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
             log.info(f"進入 {new_mode}，重置關節姿態與速度。")
-            self.sim.data.qpos[7:] = self.sim.default_pose.copy()
-            self.sim.data.qvel[6:] = 0
+            with self.state.lock:
+                self.sim.data.qpos[7:] = self.sim.default_pose.copy()
+                self.sim.data.qvel[6:] = 0
             mujoco.mj_forward(self.sim.model, self.sim.data)
 
     def _handle_float_toggle(self, is_floating: bool):
@@ -266,15 +217,6 @@ class SimulationController:
             self.state.manual_mode_is_floating = self._manual_float_active
         log.info(f"手動懸浮物理狀態已切換為: {self._manual_float_active}")
 
-
-
-    # ============================ 事件回呼處理函式 ============================
-    def on_mode_change_requested(self, mode: str):
-        """【v4.0】處理模式切換請求。只設定請求旗標。"""
-        log.debug(f"接收到模式切換請求 -> {mode}，正在設定請求旗標。")
-        with self.state.lock:
-            self.state.mode_change_request = mode
-
     def on_simulation_reset_requested(self, type: str):
         """【v4.0.1 修復】處理模擬重置請求。只設定請求旗標。"""
         log.debug(f"接收到 '{type}' 重置請求，正在設定旗標。")
@@ -284,82 +226,6 @@ class SimulationController:
             elif type == "soft":
                 # 【v4.0.1 修正】確保 soft reset 旗標被正確設置為 True
                 self.state.soft_reset_requested = True 
-
-    def on_tuning_param_select_requested(self, direction: int):
-        """處理切換當前調校參數的請求。"""
-        with self.state.lock:
-            num_params = len(self.state.policy_manager_ref.param_keys)
-            self.state.tuning_param_index = (self.state.tuning_param_index + direction) % num_params
-            log.debug(f"調校參數索引已切換至: {self.state.tuning_param_index}")
-            
-    def on_tuning_param_adjusted(self, param_name: str = None, value: float = None, direction: int = None):
-        """
-        [v3.1.1] 處理調整參數值的請求。
-        此版本修正了參數來源和默認值的問題。
-        """
-        with self.state.lock:
-            # 如果事件沒有提供 param_name (來自鍵盤/搖桿的步進調整)，
-            # 我們從 state 中獲取當前選中的參數。
-            if param_name is None:
-                # [修正] 參數的鍵名列表應直接從 config 或 state 本身獲取，而不是 policy_manager
-                # 我們可以將它定義在 SimulationState 或 Config 中，為簡潔起見，這裡暫時硬編碼
-                param_keys = ['kp', 'kd', 'action_scale', 'bias']
-                if 0 <= self.state.tuning_param_index < len(param_keys):
-                    param_name = param_keys[self.state.tuning_param_index]
-                else:
-                    log.error(f"無效的調校參數索引: {self.state.tuning_param_index}")
-                    return
-
-            # 根據事件提供的參數類型執行操作
-            if value is not None:  # 來自UI滑桿的絕對值設定
-                setattr(self.state.tuning_params, param_name, value)
-            elif direction is not None:  # 來自鍵盤/搖桿的步進調整
-                step = self.config.param_adjust_steps.get(param_name, 0.1)
-                current_value = getattr(self.state.tuning_params, param_name)
-                new_value = current_value + step * direction
-                setattr(self.state.tuning_params, param_name, new_value)
-            else:
-                log.warning(f"接收到無效的參數調整請求: param_name={param_name}, value={value}, direction={direction}")
-                return
-
-            # 確保參數值在合理範圍內
-            self.state.tuning_params.kp = max(0, self.state.tuning_params.kp)
-            self.state.tuning_params.kd = max(0, self.state.tuning_params.kd)
-            self.state.tuning_params.action_scale = max(0, self.state.tuning_params.action_scale)
-            log.info(f"參數 '{param_name}' 已調整為: {getattr(self.state.tuning_params, param_name):.2f}")
-
-    def on_input_mode_change_requested(self, mode: str):
-        """處理輸入模式切換請求。"""
-        # [修改] 增加一個選項，避免在切換到 VJOY 時清除指令
-        clear_cmd = mode != "VJOY"
-        self.state.toggle_input_mode(mode, clear_cmd=clear_cmd)
-
-    def on_device_connect_requested(self, device: str):
-        """處理設備連接請求。"""
-        log.info(f"接收到連接 '{device}' 的請求...")
-        if device == "serial" and self.serial_comm:
-            is_connected = self.serial_comm.scan_and_connect()
-            with self.state.lock:
-                self.state.serial_is_connected = is_connected
-        elif device == "gamepad" and self.xbox_handler:
-            is_connected = self.xbox_handler.scan_and_connect()
-            with self.state.lock:
-                self.state.gamepad_is_connected = is_connected
-
-    def on_serial_command_send_requested(self, command: str):
-        """
-        [v3.0.1] 處理序列埠命令發送請求。
-        將命令安全地傳遞給 SerialCommunicator。
-        """
-        if self.serial_comm and self.serial_comm.is_connected:
-            try:
-                # 這裡調用 serial_comm 的 send_command，它內部會檢查是否被硬件控制器管理
-                self.serial_comm.send_command(command)
-                log.info(f"成功發送序列埠命令: '{command}'")
-            except Exception as e:
-                log.error(f"發送序列埠命令失敗: {e}")
-        else:
-            log.warning("序列埠未連接，無法發送命令。")
 
     def on_policy_change_requested(self, policy_name: str):
         """處理AI策略切換請求。"""
@@ -438,55 +304,44 @@ class SimulationController:
                     self.state.manual_final_ctrl[idx] += direction
 
     def on_shutdown_requested(self):
+        log.info(f"SimulationController 偵測到關閉請求，正在停止...")
+        self.stop()
+
+    def _update_derived_and_render_states(self) -> None:
         """
-        【新增】處理關閉應用程式的請求。
-        此回呼只負責設定旗標，由主迴圈安全地執行關閉流程。
+        【v4.5.0 新增】 更新所有依賴於核心物理狀態的衍生狀態，並將數據寫入渲染緩衝區。
         """
-        log.info("接收到全域關閉請求，正在設定旗標...")
-        with self.state.lock:
-            self.state.shutdown_requested = True
-
-
-
-    # =========================================================================
-
-    # 【v4.0 移除】移除舊的、不安全的模式處理函式
-    # def process_pending_mode_change(self) -> None: ...
-    # def handle_mode_change(self, old_mode: str, new_mode: str) -> None: ...
-
-    def update_derived_states_and_render(self) -> None:
-        """
-        【v4.0】更新所有依賴於核心物理狀態的衍生狀態（如地形），並渲染場景。
-        此方法現在自給自足，直接從 self.state 獲取所需數據。
-        """
-        is_headless = isinstance(self.sim, MockSimulation)
-
-        # 步驟 1: 在函式內部，從 state 中讀取本幀需要的所有數據
-        with self.state.lock:
-            # 獲取地形更新所需的數據
-            current_pos = self.state.latest_pos.copy()
-            terrain_mode = self.state.terrain_mode
-            
-            # 如果不是無頭模式，則更新 state 中的物理數據以供 UI 讀取
-            if not is_headless:
-                self.state.latest_pos = self.sim.data.body('torso').xpos.copy()
-                self.state.latest_quat = self.sim.data.body('torso').xquat.copy()
-                self.state.latest_joint_positions = self.sim.data.qpos[7:].copy()
-
-        # 步驟 2: 執行衍生狀態的更新 (此處邏輯不變)
-        # 更新地形（如果需要）
+        current_pos = self.sim.data.body('torso').xpos.copy()
+        terrain_mode = self.state.terrain_mode
         if self.terrain_manager.is_functional:
             self.terrain_manager.update(current_pos, terrain_mode)
         
-        # 步驟 3: 執行渲染 (此處邏輯不變)
-        self.sim.render_from_thread(self.state)
+        with self.state.lock:
+            self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
+            self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
+            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
+            self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
+            self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
+            if self.sim.accelerometer_id != -1:
+                 start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
+                 end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
+                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
+            else:
+                 self.state.raw_accelerometer.fill(0.0)
+            
+            self.state.latest_pos = current_pos
+            self.state.latest_quat = self.state.raw_torso_quat
+            self.state.latest_joint_positions = self.state.raw_joint_positions
 
-    # ------------------------------------------------------------------
-    # 【v4.3.1 修改】 _simulation_step 方法
+        with self.state.render_data_lock:
+            if self.state.render_data_buffer is None: self.state.render_data_buffer = {}
+            self.state.render_data_buffer['qpos'] = self.sim.data.qpos.copy()
+
     def _simulation_step(self) -> None:
         """
-        【v4.3.1 修改】
+        【v4.5.0 修改】
         此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
+        物理步進迴圈已被修改為確定性的 for 迴圈。
         """
         # [保留] 讀取狀態和獲取 AI 動作的邏輯不變
         with self.state.lock:
@@ -515,38 +370,12 @@ class SimulationController:
             self.state.latest_action_raw = action_final
             self.state.latest_final_ctrl = final_ctrl
 
-        # [保留] 執行物理模擬的迴圈不變
-        target_time = self.sim.data.time + self.config.control_dt
-        while self.sim.data.time < target_time:
+        for _ in range(self.num_physics_steps_per_control_step):
             if not self._running.is_set():
                 break
             # 這是物理引擎的核心步驟
             mujoco.mj_step(self.sim.model, self.sim.data)
 
-        # 【v4.3.1 新增】 - 將原始物理數據寫入 State
-        # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
-        # 作為 ObservationManager 的數據源。
-        with self.state.lock:
-            # 讀取軀幹的姿態四元數
-            self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
-            # 讀取軀幹在世界座標系下的線速度和角速度
-            self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
-            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
-            # 讀取所有關節的角度和角速度
-            self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
-            self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
-            # 從 XML 中定義的感測器讀取加速度計數據
-            if self.sim.accelerometer_id != -1:
-                 start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
-                 end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
-                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
-            else:
-                 # 如果感測器不存在，用零填充
-                 self.state.raw_accelerometer.fill(0.0)
-
-
-
-    # ------------------------------------------------------------------
     def stop(self) -> None:
         self._running.clear()
         if self.thread and self.thread.is_alive():
@@ -584,8 +413,10 @@ class SimulationController:
                 mujoco.mj_step(self.sim.model, self.sim.data)
 
             self.policy_manager.reset()
+            # 【v4.5.0 修正】 模式切換應透過事件，但此處是內部重置，直接設定是可接受的
             if self.state.control_mode == "FLOATING":
-                self.state.set_control_mode("WALKING")
+                self.state.set_control_mode("WALKING") # 假設 set_control_mode 已被簡化
+            
             self.state.reset_control_state(self.sim.data.time)
             self.state.clear_command()
             self.state.joint_test_offsets.fill(0.0)
@@ -598,7 +429,7 @@ class SimulationController:
             mujoco.mj_forward(self.sim.model, self.sim.data)
 
     def soft_reset(self) -> None:
-        """【v4.0.1 確認】此函式邏輯是正確的，無需修改。"""
+        """執行空中姿態重置。"""
         print("\n--- 正在執行空中姿態重置 ---")
         with self.state.lock:
             if self.state.control_mode == "HARDWARE_MODE":

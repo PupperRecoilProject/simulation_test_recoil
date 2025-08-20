@@ -34,13 +34,15 @@ from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
 # 【v4.3.2 新增】 導入新的 ObservationManager
 from src.simulation.observation_manager import ObservationManager
+# 【v4.5.0 新增】 導入新的渲染執行緒
+from src.simulation.rendering_thread import RenderingThread
 
 
 # 【v4.3.2 修改】 create_simulation_components 函式
 def create_simulation_components(use_sim: bool, config, state: 'SimulationState'): # 【v4.3.2 新增】 傳入 state
     """根據是否使用模擬，建立對應的模組實例。"""
     if use_sim:
-        log.info("✅ Simulation mode enabled.")
+        log.info("✅ 啟用模擬模式。")
         from src.simulation.simulation import Simulation
         # 【v4.3.2 刪除】 移除舊的 ObservationBuilder
         # from src.simulation.observation import ObservationBuilder
@@ -54,7 +56,7 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
         obs_manager = ObservationManager(state)
         return sim, obs_manager, terrain, floating
     else:
-        log.info("🚫 Simulation disabled, using mock components.")
+        log.info("🚫 禁用模擬，使用模擬組件。")
         from src.mock.mock_simulation import (
             MockSimulation,
             # 【v4.3.2 修改】 導入 MockObservationManager
@@ -73,23 +75,23 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
 
 # 【v4.3.2 修改】 main 函式
 def main() -> None:
-    """Initialise all components and start UI and simulation threads."""
+    """初始化所有組件並啟動 UI、模擬和渲染執行緒。"""
 
-    parser = argparse.ArgumentParser(description="Pupper Robot Controller")
-    parser.add_argument("--no-sim", action="store_true", help="run without MuJoCo simulation")
+    parser = argparse.ArgumentParser(description="Pupper 機器人控制器")
+    parser.add_argument("--no-sim", action="store_true", help="在沒有 MuJoCo 模擬的情況下運行")
     args = parser.parse_args()
 
     use_sim = not args.no_sim
 
-    print("\n--- Robot Simulation Controller (NiceGUI edition) ---")
+    print("\n--- 機器人模擬控制器 (NiceGUI 版本) ---")
     if not use_sim:
-        print("========= RUNNING IN NO-SIM MODE =========")
+        print("========= 在無模擬模式下運行 =========")
 
     try:
         config = load_config()
         state = SimulationState(config)
     except Exception as exc:
-        sys.exit(f"failed to initialise: {exc}")
+        sys.exit(f"初始化失敗: {exc}")
 
     # --- 核心組件裝配 ---
     # 【v4.3.2 修改】 更新變數名，並傳入 state
@@ -122,24 +124,33 @@ def main() -> None:
     keyboard_handler = KeyboardInputHandler(state, xbox_handler, terrain_manager)
     sim.register_callbacks(keyboard_handler)
 
-    # 初始化中央調度器與 UI 控制器
+    # 【v4.5.0 修改】 初始化中央調度器、UI 控制器和新的渲染執行緒
     simulation_controller = SimulationController(state)
     ui_controller = UIController(state)
+    rendering_thread = RenderingThread(state, sim) if use_sim else None
 
     # --- 背景執行緒與資源清理設定 ---
     def start_background_threads() -> None:
         log.info("NiceGUI 已啟動，啟動背景執行緒...")
         simulation_controller.start()
         xbox_handler.start()
+        # 【v4.5.0 新增】 啟動渲染執行緒
+        if rendering_thread:
+            rendering_thread.start()
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
         simulation_controller.stop()
+        # 【v4.5.0 新增】 停止渲染執行緒
+        if rendering_thread:
+            rendering_thread.stop()
+            rendering_thread.join(timeout=2) # 等待渲染執行緒結束
+
         hw_controller.shutdown()
         serial_comm.close()
         xbox_handler.close()
-        sim.close()
-        log.info("✅ All resources released.")
+        # 【v4.5.0 刪除】 sim.close() 的職責已轉移到 RenderingThread 內部
+        log.info("✅ 所有資源已釋放。")
 
     app.on_startup(start_background_threads)
     app.on_shutdown(cleanup_resources)
