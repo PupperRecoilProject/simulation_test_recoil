@@ -110,7 +110,8 @@ def main() -> None:
     state.xbox_handler_ref = xbox_handler
 
     # 【v4.3.2 修改】 將 observation_manager 傳入 PolicyManager
-    policy_manager = PolicyManager(config, observation_manager, None) # 在 NiceGUI 模式下，overlay 設為 None
+    # 【v4.4.5 修改】 在 PolicyManager 實例化時傳入 state 參數 (NiceGUI 模式下 overlay 設為 None)
+    policy_manager = PolicyManager(config, observation_manager, None, state)
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
 

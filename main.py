@@ -77,7 +77,8 @@ def main():
     overlay = DebugOverlay()
 
     # 【v4.3.2 修改】 將 observation_manager 傳入 PolicyManager
-    policy_manager = PolicyManager(config, observation_manager, overlay)
+    # 【v4.4.5 修改】 在 PolicyManager 實例化時傳入 state 參數
+    policy_manager = PolicyManager(config, observation_manager, overlay, state)
     state.policy_manager_ref = policy_manager
     state.available_policies = policy_manager.model_names
     
