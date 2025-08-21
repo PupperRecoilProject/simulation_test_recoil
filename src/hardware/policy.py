@@ -156,15 +156,10 @@ class PolicyManager:
         self.target_policy_name = target_name
 
     # ========================== 動作生成與推論區塊 ==========================
-    # 【v4.4.5 重構】get_action 函式
     def get_action(self, command: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         【v4.4.5 重構】模擬模式下，透過 get_component() 獲取數據分量並拼接。
-        【v4.3.2 修改】透過 ObservationManager 獲取觀測數據。
-        
-        說明：此函式現在完全遵循「方案二：內部緩存與接口分離」的設計原則。
-        它負責在每個控制週期開始時清空 ObservationManager 的緩存，
-        然後按每個模型所需，逐個透過 get_component() 獲取數據分量並拼接。
+        【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
         """
         # 【v4.4.5 新增】在每個控制週期的開始，清空 ObservationManager 的內部緩存。
         # 這是為了確保本週期內的數據是最新鮮的。
@@ -180,7 +175,7 @@ class PolicyManager:
             # 【v4.4.5 修改】按需獲取每個分量。
             # ObservationManager 內部緩存機制確保了同一個分量在本週期內只會被計算一次。
             # 【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
-            # 【v4.4.5 修復】將數據獲取邏輯直接改為調用 observation_manager.get_component()。
+            # 數據直接從 observation_manager.get_component() 獲取。
             try:
                 obs_list = [self.observation_manager.get_component(comp_name) for comp_name in recipe]
                 base_obs = np.concatenate(obs_list)
@@ -238,11 +233,7 @@ class PolicyManager:
     def get_action_for_hardware(self) -> tuple[np.ndarray, np.ndarray]:
         """
         【v4.4.5 重構】硬體模式下的數據拾取與推論邏輯。
-        【v4.3.2 修改】透過 ObservationManager 獲取觀測數據。
-        
-        說明：此函式的內部邏輯與 get_action() 完全相同，因為新的架構
-        (帶緩存的 ObservationManager) 已經統一了模擬與硬體模式下的數據獲取方式。
-        兩個函式都遵循「清空緩存 -> 按需請求分量 -> 拼接 -> 推論」的流程。
+        【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
         """
         # 【v4.4.5 新增】在每個控制週期的開始，清空 ObservationManager 的內部緩存。
         self.observation_manager.new_frame()
@@ -257,7 +248,7 @@ class PolicyManager:
             # 【v4.4.5 修改】按需獲取每個分量。
             # ObservationManager 內部緩存機制確保了同一個分量在本週期內只會被計算一次。
             # 【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
-            # 【v4.4.5 修復】將數據獲取邏輯直接改為調用 observation_manager.get_component()。
+            # 數據直接從 observation_manager.get_component() 獲取。
             try:
                 obs_list = [self.observation_manager.get_component(comp_name) for comp_name in recipe]
                 base_obs = np.concatenate(obs_list)
