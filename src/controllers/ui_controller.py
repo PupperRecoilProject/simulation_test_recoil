@@ -276,23 +276,23 @@ class UIController:
 
     def _create_onnx_display(self):
         """
-        【v4.4.4 修改】建立 ONNX 觀察向量區域，並設定最小高度避免畫面跳動。
-        【v4.4.5 重構】此函式不再負責綁定數據，僅創建顯示元素。
+        【v4.4.6 修改】建立標準化觀測數據的顯示區域。
+
+        此面板現在顯示的是 state.std_obs 中的內容，反映的是系統完整的、
+        標準化後的數據狀態，而不再僅僅是某個模型的輸入。
         """
-        # 【v4.4.4 修改】設定卡片的最小高度，避免文字長度變化造成版面跳動
         with ui.card().style('min-height: 320px;'):
-            ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
+            # 【v4.4.6 修改】更新標題以反映其新職責
+            ui.label('標準化觀測數據 (Standardized Observations)').classes('text-lg')
             with ui.grid(columns=2):
-                # 這裡創建所有可能的觀測分量標籤，以確保 UI 佈局穩定。
-                # 實際的數據顯示將由 _update_onnx_labels 負責填充。
                 obs_components = [
                     'linear_velocity', 'angular_velocity', 'gravity_vector', 'commands',
                     'accelerometer', 'joint_positions', 'joint_velocities', 'last_action',
-                    # 未來如果有新的觀測分量需要顯示，可以在此處添加
-                    'pitch_angle', # 增加俯仰角顯示
+                    'pitch_angle', 
                 ]
                 for comp in obs_components:
                     self.onnx_input_labels[comp] = ui.label(f'{comp}: N/A')
+
 
     def _create_log_panel(self):
         with ui.card().classes('w-full'):
@@ -440,32 +440,34 @@ class UIController:
             self.log_area.set_value(log_content)
 
 
+    # 【v4.4.6 重構】_update_onnx_labels 函式
     def _update_onnx_labels(self):
         """
-        【v4.4.5 重構】數據源改為直接從 ObservationManager 請求各分量。
+        【v4.4.6 重構】數據源改為 state.std_obs，實現與模型的完全解耦。
 
-        此函式現在直接從 ObservationManager 請求所有需要顯示的觀測分量。
-        這實現了 UI 顯示與 PolicyManager 數據拼接的完全解耦，
-        並解決了因模型 recipe 變化導致的數據顯示不一致問題。
+        此函式現在直接從 state.std_obs 讀取所有已處理好的觀測分量並顯示。
+        其顯示內容不再隨模型切換而改變，忠實地反映了系統的完整數據狀態。
         """
-        # 【v4.4.5 修改】不再依賴 PolicyManager 的 recipe 或 state.latest_onnx_input
-        if not self.state.observation_manager_ref:
-            return
+        # 【v4.4.6 修改】在一個鎖定的區塊內，從 state 複製一份標準化觀測數據字典
+        with self.state.lock:
+            # 增加 hasattr 檢查以提高魯棒性
+            if hasattr(self.state, 'std_obs'):
+                current_std_obs = self.state.std_obs.copy()
+            else:
+                return # 如果 std_obs 尚未初始化，則提前返回
             
-        obs_manager = self.state.observation_manager_ref
-        
-        # 遍歷 UI 中所有需要顯示的標籤 (在 _create_onnx_display 中定義)
+        # 遍歷 UI 中所有已創建的標籤
         for comp_name, label_ui_element in self.onnx_input_labels.items():
-            # 【v4.4.5 修改】直接向 ObservationManager 請求每個觀測分量
-            # ObservationManager 內部的緩存機制會確保效率。
-            data_array = obs_manager.get_component(comp_name)
+            # 從複製的字典中獲取對應的數據
+            data_array = current_std_obs.get(comp_name)
             
-            # 檢查獲取的數據是否為有效陣列 (即非空或錯誤)
             if data_array is not None and data_array.size > 0:
                 vec_str = np.array2string(data_array, precision=2, suppress_small=True, max_line_width=30)
                 label_ui_element.set_text(f'{comp_name}: {vec_str}')
             else:
+                # 如果 std_obs 中沒有這個數據（例如 pitch_angle 在舊版 state 中可能不存在），則顯示 N/A
                 label_ui_element.set_text(f'{comp_name}: N/A')
+
 
 
     def run(self):

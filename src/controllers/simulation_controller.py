@@ -492,13 +492,13 @@ class SimulationController:
     # 【v4.3.1 修改】 _simulation_step 方法
     def _simulation_step(self) -> None:
         """
+        【v4.4.6 修改】將觸發觀測數據計算的職責移入此函式。
         【v4.3.1 修改】執行物理模擬並更新原始物理數據到 SimulationState。
         【v4.4.2 修改】同步更新寫入的 raw_ 變數名。
-
-        此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
         """
 
-        # [保留] 讀取狀態和獲取 AI 動作的邏輯不變
+        # --- 步驟 1: 獲取 AI 動作 ---
+        # 讀取狀態和獲取 AI 動作的邏輯保持不變
         with self.state.lock:
             command = self.state.command.copy()
             control_mode = self.state.control_mode
@@ -525,17 +525,17 @@ class SimulationController:
             self.state.latest_action_raw = action_final
             self.state.latest_final_ctrl = final_ctrl
 
-        # [保留] 執行物理模擬的迴圈不變
+        # --- 步驟 2: 執行物理模擬 ---
         target_time = self.sim.data.time + self.config.control_dt
         while self.sim.data.time < target_time:
             if not self._running.is_set():
                 break
-            # 這是物理引擎的核心步驟
             mujoco.mj_step(self.sim.model, self.sim.data)
 
         # 【v4.3.1 新增】 - 將原始物理數據寫入 State
         # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
         # 作為 ObservationManager 的數據源。
+        # --- 步驟 3: 更新所有原始數據和標準化觀測數據 ---
         with self.state.lock:
             # 讀取軀幹的姿態四元數
             self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
@@ -553,6 +553,12 @@ class SimulationController:
             else:
                  # 如果感測器不存在，用零填充
                  self.state.raw_accelerometer.fill(0.0)
+                 
+        # 【v4.4.6 新增】在此處，由主控制迴圈觸發一次全量的標準化觀測數據更新。
+        # 這個時間點是絕對安全的，因為它不在任何鎖的內部。
+        # 並且確保了 raw_ 數據是最新鮮的。
+        if self.state.observation_manager_ref:
+            self.state.observation_manager_ref.update_all_observations()
 
 
 

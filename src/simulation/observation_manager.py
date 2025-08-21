@@ -63,35 +63,31 @@ class ObservationManager:
         
         # 註冊所有產生器函式
         self._component_generators = self._register_components()
-        log.info("✅ 觀測管理器 (v4.4.5 帶緩存供給版) 初始化完成。")
 
-    def new_frame(self):
-        """【v4.4.5 新增】開始一個新的控制週期時調用，用於清空緩存。"""
-        self._current_frame_cache.clear()
+        # 【v4.4.6 新增】初始化 state.std_obs 字典
+        with self.state.lock:
+            if not hasattr(self.state, 'std_obs'):
+                self.state.std_obs = {}
+            for name, dim in self.ALL_OBS_DIMS.items():
+                self.state.std_obs[name] = np.zeros(dim)
 
-    def get_component(self, name: str) -> np.ndarray:
-        """
-        【v4.4.5 新增】獲取單個標準化觀測分量（帶緩存）。
+        log.info("✅ 觀測管理器 (v4.4.6 全局狀態版) 初始化完成。")
+    
+    # 【v4.4.6 新增】 全量更新方法
+    def update_all_observations(self):
+        """每個控制週期計算所有觀測分量，並更新到 state.std_obs。"""
+        processed_obs = {}
+        for name, generator_func in self._component_generators.items():
+            processed_obs[name] = generator_func()
         
-        這是 ObservationManager 向外界提供數據的唯一公共接口。
-        它首先檢查內部緩存，如果數據已存在則直接返回；
-        否則，它會調用對應的產生器函式進行計算，將結果存入緩存後再返回。
-        """
-        # 如果在本週期內已經計算過，直接從緩存返回
-        if name in self._current_frame_cache:
-            return self._current_frame_cache[name]
-        
-        # 如果尚未計算，則調用對應的產生器函式進行計算
-        if name in self._component_generators:
-            result = self._component_generators[name]()
-            # 將計算結果存入本週期的緩存
-            self._current_frame_cache[name] = result
-            return result
-        
-        # 如果請求了一個未知的組件，返回一個符合維度的零向量並打印警告
-        log.warning(f"請求了未知的觀測組件: '{name}'")
-        dim = self.ALL_OBS_DIMS.get(name, 0)
-        return np.zeros(dim)
+        with self.state.lock:
+            self.state.std_obs.update(processed_obs)
+
+
+    # 【v4.4.6 刪除】移除 new_frame 和 get_component，因為不再需要內部緩存
+    # def new_frame(self): ...
+    # def get_component(self, name: str) -> np.ndarray: ...
+
 
     # 【v4.4.5 刪除】set_recipe 和 get_observation 方法，它們的職責已被新的架構所取代。
     # def set_recipe(self, recipe: List[str]): ...

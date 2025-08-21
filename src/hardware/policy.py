@@ -156,33 +156,42 @@ class PolicyManager:
         self.target_policy_name = target_name
 
     # ========================== 動作生成與推論區塊 ==========================
+    # 【v4.4.6 重構】get_action 函式
     def get_action(self, command: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
-        【v4.4.5 重構】模擬模式下，透過 get_component() 獲取數據分量並拼接。
-        【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
+        【v4.4.6 重構】從 state.std_obs 中拾取數據並拼接成模型輸入。
+        
+        說明：此函式不再觸發任何計算。它假定 state.std_obs 已經由
+        主控制迴圈（SimulationController）用最新鮮的數據進行了更新。
         """
-        # 【v4.4.5 新增】在每個控制週期的開始，清空 ObservationManager 的內部緩存。
-        # 這是為了確保本週期內的數據是最新鮮的。
-        self.observation_manager.new_frame()
+        # 【v4.4.6 刪除】不再需要由 PolicyManager 觸發任何 ObservationManager 的計算
+        # self.observation_manager.new_frame()
+        # self.observation_manager.update_all_observations()
 
         all_actions = {}
         primary_onnx_input = np.array([])
         
+        # 【v4.4.6 新增】在一個鎖定的區塊內，從 state 複製一份標準化觀測數據字典
+        with self.state.lock:
+            # 增加 hasattr 檢查以提高魯棒性，防止在初始化早期出錯
+            if hasattr(self.state, 'std_obs'):
+                current_std_obs = self.state.std_obs.copy()
+            else:
+                # 如果 std_obs 不存在，則創建一個空的，以避免後續崩潰
+                current_std_obs = {}
+
         # --- 遍歷所有模型，生成動作 ---
         for name, session in self.sessions.items():
             recipe = self.model_recipes[name]
             
-            # 【v4.4.5 修改】按需獲取每個分量。
-            # ObservationManager 內部緩存機制確保了同一個分量在本週期內只會被計算一次。
-            # 【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
-            # 數據直接從 observation_manager.get_component() 獲取。
+            # 【v4.4.6 修改】從複製的字典中拾取數據並拼接
             try:
-                obs_list = [self.observation_manager.get_component(comp_name) for comp_name in recipe]
+                obs_list = [current_std_obs[comp_name] for comp_name in recipe]
                 base_obs = np.concatenate(obs_list)
             except KeyError as e:
-                log.error(f"模型 '{name}' 的配方中包含未知的觀測組件: {e}")
-                # 提供一個符合維度的零向量以避免崩潰，並確保後續流程可以繼續
-                base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS[comp_name] for comp_name in recipe if comp_name in self.observation_manager.ALL_OBS_DIMS)
+                log.error(f"模型 '{name}' 的配方中包含的觀測組件 '{e}' 在 state.std_obs 中不存在。")
+                # 提供一個符合維度的零向量以避免崩潰
+                base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS.get(comp_name, 0) for comp_name in recipe)
                 base_obs = np.zeros(base_obs_dim)
 
             # --- 更新觀測歷史並拼接成 ONNX 輸入 ---
@@ -222,39 +231,41 @@ class PolicyManager:
         else:
             final_action = all_actions[self.primary_policy_name]
 
+        # 【v4.4.6 修改】回寫 last_action 的職責現在更清晰：
+        # PolicyManager 負責產生動作，並將其記錄為下一幀的輸入。
         self.last_action[:] = final_action
-        # 【v4.4.5 修改】將最終動作（final_action）寫回 state.raw_last_action，以供 ObservationManager 在下一幀使用。
         with self.state.lock:
             self.state.raw_last_action = final_action
 
         return primary_onnx_input, final_action
 
-    # 【v4.4.5 重構】get_action_for_hardware 函式
+    # 【v4.4.6 重構】get_action_for_hardware 函式
     def get_action_for_hardware(self) -> tuple[np.ndarray, np.ndarray]:
         """
-        【v4.4.5 重構】硬體模式下的數據拾取與推論邏輯。
-        【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
+        【v4.4.6 重構】硬體模式下的數據拾取與推論邏輯，與 get_action 完全同步。
         """
-        # 【v4.4.5 新增】在每個控制週期的開始，清空 ObservationManager 的內部緩存。
-        self.observation_manager.new_frame()
-
+        # (此函式的內部修改邏輯與 get_action() 完全相同)
+        # 【v4.4.6 刪除】不再觸發計算
+        # self.observation_manager.new_frame()
+        
         all_actions = {}
         primary_onnx_input = np.array([])
         
-        # --- 遍歷所有模型，生成動作 ---
+        with self.state.lock:
+            if hasattr(self.state, 'std_obs'):
+                current_std_obs = self.state.std_obs.copy()
+            else:
+                current_std_obs = {}
+
         for name, session in self.sessions.items():
             recipe = self.model_recipes[name]
             
-            # 【v4.4.5 修改】按需獲取每個分量。
-            # ObservationManager 內部緩存機制確保了同一個分量在本週期內只會被計算一次。
-            # 【v4.4.5 修復】移除對不存在的 self.state.std_obs 的引用。
-            # 數據直接從 observation_manager.get_component() 獲取。
             try:
-                obs_list = [self.observation_manager.get_component(comp_name) for comp_name in recipe]
+                obs_list = [current_std_obs[comp_name] for comp_name in recipe]
                 base_obs = np.concatenate(obs_list)
             except KeyError as e:
-                log.error(f"模型 '{name}' 的配方中包含未知的觀測組件: {e}")
-                base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS[comp_name] for comp_name in recipe if comp_name in self.observation_manager.ALL_OBS_DIMS)
+                log.error(f"模型 '{name}' 的配方中包含的觀測組件 '{e}' 在 state.std_obs 中不存在。")
+                base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS.get(comp_name, 0) for comp_name in recipe)
                 base_obs = np.zeros(base_obs_dim)
 
             # --- 更新觀測歷史並拼接成 ONNX 輸入 ---
