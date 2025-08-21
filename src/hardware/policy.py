@@ -1,4 +1,14 @@
-# policy.py
+# src/hardware/policy.py
+"""
+【v2.0 新增】AI 策略大腦
+【v4.4.5 修改】適應帶緩存的 ObservationManager
+
+管理多個 ONNX 策略模型。它能夠：
+1. 在啟動時載入所有在 config.yaml 中定義的模型。
+2. 為每個模型維護獨立的觀察歷史。
+3. 根據使用者指令，在兩個不同的策略模型之間進行平滑的線性融合（插值）。
+4. 【v4.4.5 修改】不再觸發計算，而是從 ObservationManager 請求已標準化的數據分量。
+"""
 import numpy as np
 import onnxruntime as ort
 import sys
@@ -6,15 +16,16 @@ import os
 import time
 from collections import deque
 from typing import TYPE_CHECKING, List, Dict
+from src.core.logger import log
+
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
     from src.core.config import AppConfig
-    # 【v4.3.2 刪除】 移除舊的 ObservationBuilder 類型提示
-    # from src.simulation.observation import ObservationBuilder
-    # 【v4.3.2 新增】 導入新的 ObservationManager 類型提示
     from src.simulation.observation_manager import ObservationManager
     from src.simulation.rendering import DebugOverlay
+    # 【v4.4.5 新增】為 state 添加類型提示
+    from src.core.state import SimulationState
 
 class PolicyManager:
     """
@@ -26,11 +37,17 @@ class PolicyManager:
     4. 提供獨立的介面供模擬 (`get_action`) 和實體硬體 (`get_action_for_hardware`) 使用。
     """
     # 【v4.3.2 修改】 構造函式簽名，將 obs_builder 替換為 observation_manager
-    def __init__(self, config: 'AppConfig', observation_manager: 'ObservationManager', overlay: 'DebugOverlay'):
+    def __init__(self, config: 'AppConfig', observation_manager: 'ObservationManager', overlay: 'DebugOverlay', state: 'SimulationState'):
+        """
+        【v4.3.2 修改】構造函式，接收 observation_manager。
+        【v4.4.5 修改】新增 state 參數，以便直接訪問。
+        """
         self.config = config # 儲存應用程式的全域設定
         # 【v4.3.2 修改】 更新對觀測管理器的參考
         self.observation_manager = observation_manager # 儲存觀測管理器的新參考
         self.overlay = overlay # 儲存除錯介面(DebugOverlay)的參考
+        # 【v4.4.5 新增】儲存對中央狀態的參考，以便讀取 std_obs
+        self.state = state
         self.sessions: Dict[str, ort.InferenceSession] = {} # 字典，儲存已載入的 ONNX 推論 session，鍵為模型名稱
         self.model_recipes: Dict[str, List[str]] = {} # 字典，儲存每個模型對應的觀察配方
         self.model_history_lengths: Dict[str, int] = {} # 字典，儲存每個模型需要的歷史觀察幀數
@@ -151,42 +168,51 @@ class PolicyManager:
         self.source_policy_name = self.primary_policy_name # 當前的主要模型成為來源
         self.target_policy_name = target_name # 設定目標模型
 
-    # 【v4.3.2 修改】 get_action 方法
     def get_action(self, command: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
-        【v4.3.2 修改】
-        【模擬專用】獲取最終動作。此版本透過 ObservationManager 獲取觀測數據，運行所有模型，並根據狀態進行融合。
-        此函式不再負責建構觀測數據，而是依賴 PolicyManager 初始化時傳入的 ObservationManager 實例。
+        【v4.4.5 重構】模擬模式下，通過 get_component() 獲取數據分量並拼接。
+        【v4.3.2 修改】透過 ObservationManager 獲取觀測數據。
         """
+        # 【v4.4.5 新增】在每個控制週期的開始，清空 ObservationManager 的內部緩存
+        self.observation_manager.new_frame()
+        # 【v4.4.5 新增】觸發 ObservationManager 進行一次全量更新
+        # 這確保了本週期內所有模型都使用同一份新鮮的數據
+        self.observation_manager.update_all_observations()
+
         all_actions = {} # 建立一個字典來儲存本幀所有模型的輸出
         primary_onnx_input = np.array([]) # 用於除錯顯示的輸入
 
+        # 【v4.4.5 修改】從 state.std_obs 獲取數據，而不是在迴圈中觸發計算
+        with self.state.lock:
+            current_std_obs = self.state.std_obs.copy()
+        
         # --- 步驟 1: 運行所有模型，獲取各自的輸出 ---
         for name, session in self.sessions.items():
             recipe = self.model_recipes[name]
             
-            # 【v4.3.2 修改】 設定 ObservationManager 的配方並獲取觀測數據
-            # 在獲取數據前，PolicyManager 負責通知 ObservationManager 當前策略需要哪些數據格式。
-            self.observation_manager.set_recipe(recipe)
-            base_obs = self.observation_manager.get_observation()
-            
-            # 更新對應模型的歷史
+            # 【v4.4.5 修改】從複製的字典中拾取數據並拼接
+            # 這裡不再觸發計算，只是數據的組合
+            try:
+                obs_list = [current_std_obs[comp_name] for comp_name in recipe]
+                base_obs = np.concatenate(obs_list)
+            except KeyError as e:
+                log.error(f"模型 '{name}' 的配方中包含未知的觀測組件: {e}")
+                # 提供一個符合維度的零向量以避免崩潰
+                base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS[comp_name] for comp_name in recipe if comp_name in self.observation_manager.ALL_OBS_DIMS)
+                base_obs = np.zeros(base_obs_dim)
+
             self.obs_histories[name].append(base_obs)
-            
-            # 將歷史觀察拼接成 ONNX 的最終輸入
             onnx_input = np.concatenate(list(self.obs_histories[name])).astype(np.float32).reshape(1, -1)
             
-            # 檢查維度是否匹配，以防萬一
             if onnx_input.shape[1] != session.get_inputs()[0].shape[1]:
-                # 【v4.3.2 修改】 統一註解
-                print(f"⚠️ 警告: 模型 '{name}' 輸入維度不匹配，預期 {session.get_inputs()[0].shape[1]} 但得到 {onnx_input.shape[1]}。將返回零動作。")
+                log.warning(f"模型 '{name}' 輸入維度不匹配，預期 {session.get_inputs()[0].shape[1]} 但得到 {onnx_input.shape[1]}。將返回零動作。")
                 action_raw = np.zeros(self.config.num_motors, dtype=np.float32)
             else:
                 input_name = session.get_inputs()[0].name
                 output_name = session.get_outputs()[0].name
-                action_raw = session.run([output_name], {input_name: onnx_input})[0].flatten() # 執行推論
+                action_raw = session.run([output_name], {input_name: onnx_input})[0].flatten()
             
-            all_actions[name] = action_raw # 將模型的輸出存入字典
+            all_actions[name] = action_raw
 
             # 如果是當前主要模型，儲存其輸入以供除錯介面顯示
             if name == self.primary_policy_name:
@@ -218,32 +244,41 @@ class PolicyManager:
         self.last_action[:] = final_action # 更新 last_action 供下一幀使用
         return primary_onnx_input, final_action # 返回主要模型的輸入和最終融合後的動作
 
-    # 【v4.3.2 修改】 get_action_for_hardware 方法
+# 【v4.4.5 重構】get_action_for_hardware 函式
     def get_action_for_hardware(self) -> tuple[np.ndarray, np.ndarray]:
         """
-        【v4.3.2 修改】
-        【硬體專用】獲取最終動作。此版本不再接收外部觀測，而是從 ObservationManager 獲取。
-        HardwareController 會將原始數據寫入 SimulationState，ObservationManager 從那裡讀取。
+        【v4.4.5 重構】硬體模式下的數據拾取邏輯，與 get_action 保持一致。
+        【v4.3.2 修改】透過 ObservationManager 獲取觀測數據。
+        
+        說明：此函式的內部邏輯與 get_action() 完全相同，因為新的架構
+        (帶緩存的 ObservationManager) 已經統一了模擬與硬體模式下的數據獲取方式。
+        兩個函式都遵循「清空緩存 -> 按需請求分量 -> 拼接 -> 推論」的流程。
         """
+        # 【v4.4.5 新增】在每個控制週期的開始，清空 ObservationManager 的內部緩存
+        self.observation_manager.new_frame()
+        # 【v4.4.5 刪除】不再需要由 PolicyManager 觸發全量更新
+        # self.observation_manager.update_all_observations()
+
         all_actions = {}
         primary_onnx_input = np.array([])
-
+        
         for name, session in self.sessions.items():
             recipe = self.model_recipes[name]
             
-            # 【v4.3.2 修改】 設定 ObservationManager 的配方並獲取觀測數據
-            # PolicyManager 通知 ObservationManager 當前策略需要哪些數據格式。
-            self.observation_manager.set_recipe(recipe)
-            base_obs = self.observation_manager.get_observation()
-            
-            # 硬體模式下， ObservationManager 已經從 state.raw_... 建立了數據，我們將其添加到歷史中
+            # 【v4.4.5 修改】按需獲取每個分量
+            try:
+                obs_list = [self.observation_manager.get_component(comp_name) for comp_name in recipe]
+                base_obs = np.concatenate(obs_list)
+            except KeyError as e:
+                log.error(f"模型 '{name}' 的配方中包含未知的觀測組件: {e}")
+                base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS[comp_name] for comp_name in recipe if comp_name in self.observation_manager.ALL_OBS_DIMS)
+                base_obs = np.zeros(base_obs_dim)
+
             self.obs_histories[name].append(base_obs)
-            
             onnx_input = np.concatenate(list(self.obs_histories[name])).astype(np.float32).reshape(1, -1)
             
-            # 【v4.3.2 修改】 統一註解
             if onnx_input.shape[1] != session.get_inputs()[0].shape[1]:
-                print(f"⚠️ 警告: 模型 '{name}' 輸入維度不匹配，預期 {session.get_inputs()[0].shape[1]} 但得到 {onnx_input.shape[1]}。將返回零動作。")
+                log.warning(f"模型 '{name}' 輸入維度不匹配，預期 {session.get_inputs()[0].shape[1]} 但得到 {onnx_input.shape[1]}。將返回零動作。")
                 action_raw = np.zeros(self.config.num_motors, dtype=np.float32)
             else:
                 input_name = session.get_inputs()[0].name
@@ -255,7 +290,7 @@ class PolicyManager:
             if name == self.primary_policy_name:
                 primary_onnx_input = onnx_input
 
-        # 融合邏輯與 get_action 完全相同
+        # 根據狀態決定最終動作 (融合邏輯)
         if self.is_transitioning:
             elapsed = time.time() - self.transition_start_time
             duration = self.config.policy_transition_duration
@@ -270,46 +305,36 @@ class PolicyManager:
         else:
             final_action = all_actions[self.primary_policy_name]
 
-        self.last_action[:] = final_action # last_action 也需要為硬體模式更新
+        self.last_action[:] = final_action
+        # 【v4.4.5 修改】確保在硬體模式下也寫回 last_action
+        with self.state.lock:
+            self.state.raw_last_action = final_action
+
         return primary_onnx_input, final_action
 
-    # 【v4.3.2 修改】 reset 方法
+    # 【v4.4.5 重構】reset 函式
     def reset(self):
         """
-        【v4.3.2 修改】
-        重置所有模型的觀察歷史，並同步更新除錯介面和 ObservationManager。
+        【v4.4.5 修改】簡化 reset 邏輯，不再需要處理 recipe 相關的設置。
+        【v4.3.2 修改】重置所有模型的觀察歷史。
         """
-        # 重置主模型的觀察配方，PolicyManager 通知 ObservationManager 當前策略需要哪些數據格式。
-        active_recipe = self.model_recipes[self.primary_policy_name]
-        self.observation_manager.set_recipe(active_recipe)
-        
-        if self.overlay:
-            self.overlay.set_recipe(active_recipe)
+        # 【v4.4.5 刪除】不再需要與 overlay 或 observation_manager 交互 recipe
+        # if self.overlay:
+        #     self.overlay.set_recipe(...)
+        # active_recipe = self.model_recipes[self.primary_policy_name]
+        # self.observation_manager.set_recipe(active_recipe)
 
-        # 為每個模型初始化獨立的、填滿零的觀察歷史佇列
         for name in self.model_names:
             recipe = self.model_recipes[name]
-            # 【v4.3.2 修改】 根據新的 ObservationManager 來計算基礎觀測維度
-            # 不再需要調用 set_recipe
-            base_obs_dim = 0
-            for comp_name in recipe:
-                # 從 ObservationManager 的 ALL_OBS_DIMS 獲取維度
-                dim = self.observation_manager.ALL_OBS_DIMS.get(comp_name)
-                if dim is None:
-                    # 這裡可以選擇打印警告或拋出錯誤，取決於嚴格程度
-                    continue
-                base_obs_dim += dim
+            # 計算基礎維度
+            base_obs_dim = sum(self.observation_manager.ALL_OBS_DIMS[comp_name] for comp_name in recipe if comp_name in self.observation_manager.ALL_OBS_DIMS)
             
             history_length = self.model_history_lengths[name]
             
-            # 建立一個固定長度的雙向佇列 (deque)，當新元素加入時，舊元素會自動被擠出
             self.obs_histories[name] = deque(
                 [np.zeros(base_obs_dim, dtype=np.float32)] * history_length,
                 maxlen=history_length
             )
         
-        # 恢復 PolicyManager 的 observation_manager 為主要模型的配方，以供後續使用
-        self.observation_manager.set_recipe(active_recipe)
-        
-        self.is_transitioning = False # 強制停止任何正在進行的轉換
+        self.is_transitioning = False
         print(f"✅ 所有策略狀態已重置。主要模型: '{self.primary_policy_name}'。")

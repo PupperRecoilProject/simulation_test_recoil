@@ -1,4 +1,17 @@
 # src/simulation/observation_manager.py (4.3.1 新檔案)
+"""
+【v4.4.5 修改】觀測向量管理器 (全量數據供給者版)
+
+【v4.3.1 新增】 觀測向量管理器
+
+這是觀測向量生成的唯一權威。它從中央的 SimulationState 中讀取
+原始感測器數據，並根據指定的「配方」將它們組合成最終的 ONNX 模型輸入。
+
+【v4.4.5 架構重構說明】
+此版本移除了 recipe 驅動的「按需計算」模式，轉而採用「帶緩存的數據供給」模式。
+- 它不再由外部通過 set_recipe() 指揮，而是通過 get_component() 為所有消費者提供統一的數據接口。
+- 內部緩存機制確保了在單一控制週期內，每個觀測分量只會被計算一次，兼顧了數據的完整性和計算的高效性。
+"""
 
 # [v4.3.1 修正] 導入缺失的模組
 import numpy as np
@@ -9,22 +22,31 @@ from src.core.logger import log
 if TYPE_CHECKING:
     from src.core.state import SimulationState
 
-# 【v4.3.1 新增】 ObservationManager 類別
 class ObservationManager:
     """
-    【v4.3.1 新增】 觀測向量管理器
+    【v4.4.5 重構】帶內部緩存的數據供給者。
+    【v4.3.1 新增】觀測向量管理器。
 
     這是觀測向量生成的唯一權威。它從中央的 SimulationState 中讀取
-    原始感測器數據，並根據指定的「配方」將它們組合成最終的 ONNX 模型輸入。
+    原始感測器數據，並將它們處理成標準化的觀測分量。
+
+    v4.4.5 架構重構說明:
+    此版本引入了內部緩存機制，轉為「帶緩存的數據供給」模式，
+    以兼顧數據完整性與計算高效性。
     """
+
     def __init__(self, state: "SimulationState"):
-        # 儲存對中央狀態的參考，這是所有數據的來源
+        """【v4.4.5 修改】初始化函式，增加了內部緩存屬性。"""
         self.state = state
         self.config = state.config
         
-        # 來自舊 ObservationBuilder 的配方和維度資訊
-        self.recipe: List[str] = []
-        self.component_dims: Dict[str, int] = {}
+        # 【v4.4.5 刪除】不再需要 recipe 和 component_dims 公共屬性
+        # self.recipe: List[str] = []
+        # self.component_dims: Dict[str, int] = {}
+
+        # 【v4.4.5 新增】本週期已計算觀測數據的內部緩存
+        # 這個緩存在每個控制週期的開始被清空。
+        self._current_frame_cache: Dict[str, np.ndarray] = {}
 
         # 定義所有可能的觀測元件及其維度
         self.ALL_OBS_DIMS: Dict[str, int] = {
@@ -36,48 +58,44 @@ class ObservationManager:
             'angular_velocity': 3,
             'linear_velocity': 3,
             'accelerometer': 3,
-            # 其他可能的元件...
             'z_angular_velocity': 1,
-            'foot_contact_states': 4,
-            'phase_signal': 1,
         }
         
         # 註冊所有產生器函式
         self._component_generators = self._register_components()
-        log.info("✅ 觀測管理器 (ObservationManager) 初始化完成。")
+        log.info("✅ 觀測管理器 (v4.4.5 帶緩存供給版) 初始化完成。")
 
-    # 【v4.3.1 新增】 set_recipe 方法
-    def set_recipe(self, recipe: List[str]):
-        """動態設定當前要使用的觀測配方。"""
-        if self.recipe == recipe:
-            return # 如果配方未改變，則不執行任何操作
-        self.recipe = recipe
-        # 根據新配方，更新當前啟用的元件維度字典
-        self.component_dims = {k: self.ALL_OBS_DIMS[k] for k in recipe if k in self.ALL_OBS_DIMS}
-        # 檢查是否有未知的元件
-        for component in self.recipe:
-            if component not in self._component_generators:
-                log.warning(f"新配方中的元件 '{component}' 不存在，將被忽略。")
-    
-    # 【v4.3.1 新增】 get_observation 方法
-    def get_observation(self) -> np.ndarray:
+    def new_frame(self):
+        """【v4.4.5 新增】開始一個新的控制週期時調用，用於清空緩存。"""
+        self._current_frame_cache.clear()
+
+    def get_component(self, name: str) -> np.ndarray:
         """
-        根據當前設定的配方，依序呼叫產生器函式並拼接成最終的觀測向量。
-        此函式不接受任何參數，因為所有需要的數據都來自 self.state。
+        【v4.4.5 新增】獲取單個標準化觀測分量（帶緩存）。
+        
+        這是 ObservationManager 向外界提供數據的唯一公共接口。
+        它首先檢查內部緩存，如果數據已存在則直接返回；
+        否則，它會調用對應的產生器函式進行計算，將結果存入緩存後再返回。
         """
-        obs_list = []
-        # 遍歷配方中的每一個元件名稱
-        for name in self.recipe:
-            if name in self._component_generators:
-                # 呼叫對應的產生器函式
-                obs_list.append(self._component_generators[name]())
+        # 如果在本週期內已經計算過，直接從緩存返回
+        if name in self._current_frame_cache:
+            return self._current_frame_cache[name]
         
-        # 如果列表為空，返回一個空的浮點數陣列
-        if not obs_list:
-            return np.array([], dtype=np.float32)
+        # 如果尚未計算，則調用對應的產生器函式進行計算
+        if name in self._component_generators:
+            result = self._component_generators[name]()
+            # 將計算結果存入本週期的緩存
+            self._current_frame_cache[name] = result
+            return result
         
-        # 將所有元件的向量拼接成一個長向量
-        return np.concatenate(obs_list).astype(np.float32)
+        # 如果請求了一個未知的組件，返回一個符合維度的零向量並打印警告
+        log.warning(f"請求了未知的觀測組件: '{name}'")
+        dim = self.ALL_OBS_DIMS.get(name, 0)
+        return np.zeros(dim)
+
+    # 【v4.4.5 刪除】set_recipe 和 get_observation 方法，它們的職責已被新的架構所取代。
+    # def set_recipe(self, recipe: List[str]): ...
+    # def get_observation(self) -> np.ndarray: ...
 
 
     # ------------------- 向量計算輔助函式 -------------------
