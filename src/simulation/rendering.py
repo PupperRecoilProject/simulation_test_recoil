@@ -34,35 +34,36 @@ class DebugOverlay:
         # 【v4.3.2 刪除】 不再需要自己計算 component_dims
         print(f"  -> DebugOverlay 切換配方至: {self.recipe}")
 
-    def render(self, viewport, context, state: SimulationState, sim: "Simulation"):
+    # 【v4.5.0 重大修正】 新增 data_to_render 參數，以接收來自 RenderingThread 的、線程安全的 MjData
+    def render(self, viewport, context, state: SimulationState, sim: "Simulation", data_to_render):
         """
-        【核心修改】統一渲染邏輯。
-        無論在哪種模式下，都會先渲染3D場景，然後再疊加對應模式的文字資訊。
+        【v4.5.0 最終修正】 移除殘留的地形更新邏輯。
         """
-        # --- 步驟 1: 始終更新和渲染 3D 場景 ---
-        if not (sim.mouse_button_left or sim.mouse_button_right):
-             sim.cam.lookat = sim.data.body('torso').xpos
-
-        terrain_manager = getattr(state, 'terrain_manager_ref', None)
-        if terrain_manager and terrain_manager.needs_physics_and_scene_update:
-            mujoco.mjr_uploadHField(sim.model, sim.context, terrain_manager.hfield_id)
-            terrain_manager.needs_physics_and_scene_update = False
-            print("🔄 地形幾何已上傳至 GPU 進行渲染。")
+        # 【v4.5.0 刪除】 移除以下區塊，因為此邏輯已移至 RenderingThread
+        # terrain_manager = getattr(state, 'terrain_manager_ref', None)
+        # if terrain_manager and terrain_manager.needs_physics_and_scene_update:
+        #     mujoco.mjr_uploadHField(sim.model, sim.context, terrain_manager.hfield_id)
+        #     terrain_manager.needs_physics_and_scene_update = False
+        #     print("🔄 地形幾何已上傳至 GPU 進行渲染。")
         
-        mujoco.mjv_updateScene(sim.model, sim.data, sim.opt, None, sim.cam, mujoco.mjtCatBit.mjCAT_ALL, sim.scene)
-        mujoco.mjr_render(viewport, sim.scene, sim.context)
+        # 【v4.5.0 刪除】 移除多餘的 mjv_updateScene 和 mjr_render，因為它們現在由 RenderingThread 呼叫
+        # mujoco.mjv_updateScene(sim.model, sim.data, sim.opt, None, sim.cam, mujoco.mjtCatBit.mjCAT_ALL, sim.scene)
+        # mujoco.mjr_render(viewport, sim.scene, sim.context)
         
-        # --- 步驟 2: 根據當前模式，選擇並疊加對應的文字資訊 ---
+        # --- 步驟 1: 根據當前模式，選擇並疊加對應的文字資訊 ---
         if state.control_mode == "HARDWARE_MODE":
             self.render_hardware_overlay(viewport, context, state)
         elif state.control_mode == "SERIAL_MODE":
             self.render_serial_console(viewport, context, state)
         elif state.control_mode == "JOINT_TEST":
-            self.render_joint_test_overlay(viewport, context, state, sim)
+            # 【v4.5.0 修正】 傳入 data_to_render
+            self.render_joint_test_overlay(viewport, context, state, sim, data_to_render)
         elif state.control_mode == "MANUAL_CTRL":
-            self.render_manual_ctrl_overlay(viewport, context, state, sim)
+            # 【v4.5.0 修正】 傳入 data_to_render
+            self.render_manual_ctrl_overlay(viewport, context, state, sim, data_to_render)
         else:
-            self.render_simulation_overlay(viewport, context, state, sim)
+            # 【v4.5.0 修正】 傳入 data_to_render
+            self.render_simulation_overlay(viewport, context, state, sim, data_to_render)
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """
@@ -147,7 +148,8 @@ class DebugOverlay:
         help_buf = "See NiceGUI console for input"
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, console_rect, help_buf, " ", context)
     
-    def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+    # 【v4.5.0 修正】 新增 data_to_render 參數
+    def render_joint_test_overlay(self, viewport, context, state: SimulationState, sim: "Simulation", data_to_render):
         """渲染關節手動測試模式的專用介面。"""
         mujoco.mjr_rectangle(viewport, 0.2, 0.25, 0.3, 0.9)
         help_text = (
@@ -176,7 +178,8 @@ class DebugOverlay:
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.45), 0, int(viewport.width * 0.55), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
-    def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+    # 【v4.5.0 修正】 新增 data_to_render 參數
+    def render_manual_ctrl_overlay(self, viewport, context, state: SimulationState, sim: "Simulation", data_to_render):
         """渲染手動 Final Ctrl 模式的專用介面。"""
         floating_status = "Floating" if state.manual_mode_is_floating else "On Ground"
         help_title = f"--- MANUAL CTRL MODE ({floating_status}) ---"
@@ -195,7 +198,8 @@ class DebugOverlay:
         ]
         num_joints_per_col = 6
         left_col_text, right_col_text = "", ""
-        current_joint_positions = sim.data.qpos[7:]
+        # 【v4.5.0 修正】 從 data_to_render 讀取當前關節位置
+        current_joint_positions = data_to_render.qpos[7:]
         for i, name in enumerate(joint_names):
             prefix = ">> " if i == state.manual_ctrl_index else "   "
             target_val = state.manual_final_ctrl[i]
@@ -209,8 +213,8 @@ class DebugOverlay:
         right_col_rect = mujoco.MjrRect(int(viewport.width * 0.40), 0, int(viewport.width * 0.60), viewport.height)
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, right_col_rect, right_col_text, None, context)
 
-    # 【v4.3.2 修改】 render_simulation_overlay 方法
-    def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation"):
+    # 【v4.5.0 修正】 新增 data_to_render 參數
+    def render_simulation_overlay(self, viewport, context, state: SimulationState, sim: "Simulation", data_to_render):
         """渲染正常的模擬除錯資訊。"""
         def format_vec(label: str, vec, precision=3, label_width=24):
             if vec is None or vec.size == 0: return f"{label:<{label_width}}None"
@@ -257,12 +261,14 @@ class DebugOverlay:
 
         p = state.tuning_params
         prefixes = ["   "] * 4
-        prefixes[state.tuning_param_index] = ">> "
+        if 0 <= state.tuning_param_index < 4:
+            prefixes[state.tuning_param_index] = ">> "
 
+        # 【v4.5.0 修正】 從 data_to_render 讀取模擬時間
         top_left_text = (
             f"Mode: {state.control_mode} | Input: {state.input_mode}\n"
             f"{policy_text}\n"
-            f"Time: {sim.data.time:.2f} s\n"
+            f"Time: {data_to_render.time:.2f} s\n"
             f"Terrain: {terrain_name}\n\n"
             f"--- Devices ---\n"
             f"Serial Console: {serial_status}\n"
@@ -276,7 +282,8 @@ class DebugOverlay:
             f"{format_vec('User Cmd:', state.command)}\n"
         )
         if state.control_mode == "FLOATING":
-            current_height = sim.data.qpos[2]
+            # 【v4.5.0 修正】 從 data_to_render 讀取懸浮高度
+            current_height = data_to_render.qpos[2]
             target_world_z = state.floating_controller_ref.data.mocap_pos[state.floating_controller_ref.mocap_index][2]
             top_left_text += (
                 f"\n--- Floating Info ---\n"
@@ -313,19 +320,21 @@ class DebugOverlay:
                         current_full_obs_idx += dim
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, viewport, bottom_left_text, None, context)
         
-        torso_lin_vel = sim.data.cvel[sim.torso_id, 3:]
-        torso_ang_vel_local = self._get_local_ang_vel(sim.data, sim.torso_id)
+        # 【v4.5.0 修正】 從 data_to_render 讀取狀態
+        torso_lin_vel = data_to_render.cvel[sim.torso_id, 3:]
+        torso_ang_vel_local = self._get_local_ang_vel(data_to_render, sim.torso_id)
         bottom_right_text = (
             f"--- ONNX OUTPUTS & STATE ---\n"
             f"{format_vec('Final Action:', state.latest_action_raw)}\n"
             f"{format_vec('Final Ctrl:', state.latest_final_ctrl)}\n\n"
             f"--- Robot State (Sim) ---\n"
-            f"{format_vec('Torso Z:', np.array([sim.data.qpos[2]]))}\n"
+            f"{format_vec('Torso Z:', np.array([data_to_render.qpos[2]]))}\n"
             f"{format_vec('Lin Vel (World):', torso_lin_vel)}\n"
             f"{format_vec('Ang Vel (Local):', torso_ang_vel_local)}"
         )
         mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT, viewport, bottom_right_text, None, context)
     
+    # 【v4.5.0 修正】 此函式現在接收 data 物件作為參數
     def _get_local_ang_vel(self, data, torso_id):
         """輔助函式，計算局部角速度用於顯示。"""
         torso_quat = data.xquat[torso_id]

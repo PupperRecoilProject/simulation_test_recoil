@@ -4,6 +4,7 @@ import threading
 import time
 import glfw
 import mujoco
+import numpy as np # 【v4.5.1 修正】 導入 numpy
 from typing import TYPE_CHECKING
 
 from src.core.logger import log
@@ -14,13 +15,9 @@ if TYPE_CHECKING:
 
 class RenderingThread(threading.Thread):
     """
-    【v4.5.0 新增】 一個專門用於處理 MuJoCo/GLFW 渲染的獨立執行緒。
-
-    職責:
-    1.  擁有並管理 GLFW 視窗和 MuJoCo 渲染上下文的唯一所有權。
-    2.  在其自己的主迴圈中，以盡力而為 (best-effort) 的方式持續渲染場景。
-    3.  從 SimulationState 的一個安全緩衝區中讀取最新的物理狀態進行渲染。
-    4.  處理所有與視窗直接相關的事件 (滑鼠、鍵盤、視窗關閉)。
+    【v4.5.0】
+    一個專門的執行緒，負責擁有 GLFW 視窗、OpenGL 上下文以及所有與渲染相關的 MuJoCo 物件。
+    它以固定的頻率從 SimulationState 的緩衝區讀取最新的物理狀態 (qpos)，並將其渲染到螢幕上。
     """
 
     def __init__(self, state: "SimulationState", sim: "Simulation"):
@@ -28,8 +25,8 @@ class RenderingThread(threading.Thread):
         初始化渲染執行緒。
 
         Args:
-            state (SimulationState): 對中央狀態管理器的引用。
-            sim (Simulation): 對底層 MuJoCo 模擬接口的引用。
+            state: 對全局 SimulationState 的參考。
+            sim: 對 Simulation 物件的參考，用於獲取模型和視窗相關屬性。
         """
         super().__init__(name="RenderingThread", daemon=True)
         self.state = state
@@ -38,61 +35,79 @@ class RenderingThread(threading.Thread):
         log.info("✅ 渲染執行緒已初始化。")
 
     def run(self):
-        """
-        渲染執行緒的主迴圈。
-        此方法在執行緒啟動時被呼叫，並負責初始化 GLFW 和渲染上下文。
-        """
+        """渲染執行緒的主迴圈。"""
         try:
-            # --- 步驟 1: 在此執行緒中初始化所有與 OpenGL/GLFW 相關的資源 ---
+            # 步驟 1: 在此執行緒中初始化 GLFW 視窗和 MuJoCo 渲染上下文
             self.sim.initialize_window_and_context()
             if not self.sim.window:
                 log.error("❌ 渲染執行緒：GLFW 視窗初始化失敗，執行緒即將退出。")
                 return
 
-            log.info("✅ 渲染執行緒：GLFW 視窗與渲染上下文已成功初始化。")
+            # 步驟 2: 為此執行緒創建一個獨立的、專用於渲染的 MjData 實例
+            self.render_data = mujoco.MjData(self.sim.model)
+            log.info("✅ 渲染執行緒：已創建獨立的 MjData 實例。")
 
-            # --- 步驟 2: 渲染主迴圈 ---
+            # 步驟 3: 進入主渲染迴圈
             while not self._stop_event.is_set() and not glfw.window_should_close(self.sim.window):
-                # a. 從 SimulationState 的渲染緩衝區獲取最新數據
+                # 從共享緩衝區安全地讀取最新的數據包
                 with self.state.render_data_lock:
-                    render_data = self.state.render_data_buffer
-                    # 將緩衝區中的數據同步到本地的 sim.data
-                    # 這是確保渲染數據與物理計算數據分離的關鍵
-                    if render_data:
-                        self.sim.data.qpos[:] = render_data.get('qpos', self.sim.data.qpos)
-                        # 注意：直接修改 xpos, xquat 等衍生量可能不安全或無效
-                        # 最穩健的方式是僅同步 qpos/qvel/ctrl，然後呼叫 mj_forward
-                        mujoco.mj_forward(self.sim.model, self.sim.data)
+                    data_packet = self.state.render_data_buffer
 
-                # b. 執行完整的渲染流程
+                if data_packet:
+                    # 更新本地 MjData 的時間和 qpos
+                    self.render_data.time = data_packet.get('time', self.render_data.time)
+                    qpos_data = data_packet.get('qpos')
+                    if qpos_data is not None:
+                        self.render_data.qpos[:] = qpos_data
+
+                    # 【v4.5.1 修正】
+                    # 在調用任何可能因無效數據而掛起的 MuJoCo 函式之前，
+                    # 增加一個防禦性檢查，以驗證物理狀態數據是否有效。
+                    if not np.isfinite(self.render_data.qpos).all():
+                        error_msg = f"偵測到無效的物理狀態 (NaN/inf)，渲染已中止。qpos: {self.render_data.qpos}"
+                        log.error(f"❌ {error_msg}")
+                        raise RuntimeError(error_msg) # 主動拋出異常，將凍結轉為崩潰
+
+                    # 使用更新後的數據計算正向運動學，為渲染做準備
+                    mujoco.mj_forward(self.sim.model, self.render_data)
+
+                # --- 更新與渲染場景 ---
+                terrain_manager = self.state.terrain_manager_ref
+                if terrain_manager:
+                    if terrain_manager.needs_physics_and_scene_update:
+                        mujoco.mjr_uploadHField(self.sim.model, self.sim.context, terrain_manager.hfield_id) # 上傳高度場數據到 GPU
+                        terrain_manager.needs_physics_and_scene_update = False
+
                 viewport = mujoco.MjrRect(0, 0, *glfw.get_framebuffer_size(self.sim.window))
                 
                 # 更新配方以確保 DebugOverlay 正確顯示
                 if self.state.policy_manager_ref and self.state.policy_manager_ref.observation_manager:
-                    self.sim.overlay.set_recipe(self.state.policy_manager_ref.get_active_recipe())
+                    self.sim.overlay.set_recipe(self.state.policy_manager_ref.get_active_recipe()) # 設定除錯疊層的配方
                 
-                self.sim.overlay.render(viewport, self.sim.context, self.state, self.sim)
+                # 【v4.5.1 最終權威修正】
+                # 修正對攝影機 (cam) 的存取路徑。
+                # 攝影機物件由 self.sim (Simulation 實例) 所擁有，而非 self (RenderingThread 實例)。
+                if not (self.sim.mouse_button_left or self.sim.mouse_button_right):
+                    self.sim.cam.lookat = self.render_data.body('torso').xpos # 讓攝影機追蹤軀幹
+
+                # 【v4.5.1 最終權威修正】 修正所有渲染相關物件的存取路徑
+                mujoco.mjv_updateScene(self.sim.model, self.render_data, self.sim.opt, None, self.sim.cam, mujoco.mjtCatBit.mjCAT_ALL, self.sim.scene)
+                mujoco.mjr_render(viewport, self.sim.scene, self.sim.context)
+                self.sim.overlay.render(viewport, self.sim.context, self.state, self.sim, self.render_data)
                 
-                # c. 交換緩衝區 (會受 VSync 阻塞)
-                glfw.swap_buffers(self.sim.window)
-
-                # d. 處理視窗事件
-                glfw.poll_events()
-
-                # e. 短暫休眠，避免在 VSync 禁用時空轉耗盡 CPU
-                time.sleep(0.001)
+                glfw.swap_buffers(self.sim.window) # 交換緩衝區以顯示
+                glfw.poll_events() # 處理視窗事件
+                time.sleep(0.001) # 短暫休眠以釋放 CPU
 
         except Exception as e:
             log.error(f"❌ 渲染執行緒發生未處理的異常: {e}", exc_info=True)
         finally:
             log.info("渲染執行緒正在清理資源並退出...")
             if self.sim.window:
-                glfw.terminate()
+                glfw.terminate() # 確保 GLFW 被終止
                 self.sim.window = None
 
     def stop(self):
-        """
-        向渲染執行緒發送停止信號。
-        """
+        """向執行緒發送停止信號。"""
         self._stop_event.set()
         log.info("渲染執行緒已請求停止。")

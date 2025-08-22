@@ -21,6 +21,8 @@ EVENT_HARDWARE_CONNECT_REQUESTED = "request.hardware_connect"
 EVENT_HARDWARE_DISCONNECT_REQUESTED = "request.hardware_disconnect"
 EVENT_HARDWARE_AI_TOGGLE_REQUESTED = "request.hardware_ai_toggle"
 EVENT_SIMULATION_RESET_REQUESTED = "request.simulation_reset" # (包含 hard 和 soft)
+# 【v4.5.1 修正】 新增 terrain_manager.py 所需的事件定義
+EVENT_SIMULATION_RELOAD_REQUESTED = "request.simulation_reload" # 當模型文件(如hfield)變更，請求完整重載模擬時發布
 EVENT_SHUTDOWN_REQUESTED = "request.shutdown"
 EVENT_COMMAND_UPDATED = "request.command_updated"
 

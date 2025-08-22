@@ -19,6 +19,7 @@
 """
 import sys
 import argparse
+import time
 from nicegui import ui, app
 
 # --- 我們的模組導入 ---
@@ -36,11 +37,17 @@ from src.core.logger import log
 from src.simulation.observation_manager import ObservationManager
 # 【v4.5.0 新增】 導入新的渲染執行緒
 from src.simulation.rendering_thread import RenderingThread
+from src.core.event_system import (
+    event_bus, 
+    EVENT_SIMULATION_RESET_REQUESTED, 
+    EVENT_MODE_CHANGE_REQUESTED, 
+    EVENT_SHUTDOWN_REQUESTED,
+    EVENT_DEVICE_CONNECT_REQUESTED,
+    EVENT_MODE_CHANGED,
+)
 
-
-# 【v4.3.2 修改】 create_simulation_components 函式
-def create_simulation_components(use_sim: bool, config, state: 'SimulationState'): # 【v4.3.2 新增】 傳入 state
-    """根據是否使用模擬，建立對應的模組實例。"""
+def create_simulation_components(use_sim: bool, config, state: 'SimulationState'):
+    # 此函式無需修改
     if use_sim:
         log.info("✅ 啟用模擬模式。")
         from src.simulation.simulation import Simulation
@@ -57,14 +64,7 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
         return sim, obs_manager, terrain, floating
     else:
         log.info("🚫 禁用模擬，使用模擬組件。")
-        from src.mock.mock_simulation import (
-            MockSimulation,
-            # 【v4.3.2 修改】 導入 MockObservationManager
-            MockObservationManager,
-            MockTerrainManager,
-            MockFloatingController,
-        )
-
+        from src.mock.mock_simulation import MockSimulation, MockObservationManager, MockTerrainManager, MockFloatingController
         sim = MockSimulation(config)
         terrain = MockTerrainManager()
         floating = MockFloatingController()
@@ -75,8 +75,7 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
 
 # 【v4.3.2 修改】 main 函式
 def main() -> None:
-    """初始化所有組件並啟動 UI、模擬和渲染執行緒。"""
-
+    """【v4.5.0 最終修正版】初始化所有組件並作為全局協調者。"""
     parser = argparse.ArgumentParser(description="Pupper 機器人控制器")
     parser.add_argument("--no-sim", action="store_true", help="在沒有 MuJoCo 模擬的情況下運行")
     args = parser.parse_args()
@@ -84,8 +83,7 @@ def main() -> None:
     use_sim = not args.no_sim
 
     print("\n--- 機器人模擬控制器 (NiceGUI 版本) ---")
-    if not use_sim:
-        print("========= 在無模擬模式下運行 =========")
+    if not use_sim: print("========= 在無模擬模式下運行 =========")
 
     try:
         config = load_config()
@@ -96,27 +94,14 @@ def main() -> None:
     # --- 核心組件裝配 ---
     # 【v4.3.2 修改】 更新變數名，並傳入 state
     sim, observation_manager, terrain_manager, floating_controller = create_simulation_components(use_sim, config, state)
-
-    # 將核心物件的參考存入 state，使其成為全域上下文
-    state.sim = sim
-    state.terrain_manager_ref = terrain_manager
-    state.floating_controller_ref = floating_controller
-    # 【v4.3.2 新增】 將 observation_manager 存入 state
-    state.observation_manager_ref = observation_manager
-
-    # 按照依賴順序初始化所有管理器
+    state.sim, state.terrain_manager_ref, state.floating_controller_ref, state.observation_manager_ref = sim, terrain_manager, floating_controller, observation_manager
     serial_comm = SerialCommunicator()
     state.serial_communicator_ref = serial_comm
 
     xbox_handler = XboxInputHandler(state)
     state.xbox_handler_ref = xbox_handler
-
-    # 【v4.3.2 修改】 將 observation_manager 傳入 PolicyManager
-    policy_manager = PolicyManager(config, observation_manager, None) # 在 NiceGUI 模式下，overlay 設為 None
-    state.policy_manager_ref = policy_manager
-    state.available_policies = policy_manager.model_names
-
-    # 初始化 HardwareController
+    policy_manager = PolicyManager(config, observation_manager, None)
+    state.policy_manager_ref, state.available_policies = policy_manager, policy_manager.model_names
     hw_controller = HardwareController(config, policy_manager, state, serial_comm)
     state.hardware_controller_ref = hw_controller
 
@@ -129,7 +114,54 @@ def main() -> None:
     ui_controller = UIController(state)
     rendering_thread = RenderingThread(state, sim) if use_sim else None
 
-    # --- 背景執行緒與資源清理設定 ---
+    # --- 全局協調邏輯 ---
+    def global_shutdown():
+        log.info("--- (全局協調) 正在執行關閉程序 ---")
+        app.shutdown()
+    
+    def global_hard_reset():
+        log.info("--- (全局協調) 正在執行硬重置 ---")
+        if simulation_controller: simulation_controller.hard_reset()
+        if policy_manager: policy_manager.reset()
+        log.info("--- (全局協調) 硬重置完成 ---")
+        
+    def global_soft_reset():
+        log.info("--- (全局協調) 正在執行軟重置 ---")
+        if simulation_controller: simulation_controller.soft_reset()
+        if policy_manager: policy_manager.reset()
+        log.info("--- (全局協調) 軟重置完成 ---")
+    
+    def handle_reset_request(type: str):
+        if type == "hard": global_hard_reset()
+        elif type == "soft": global_soft_reset()
+
+    def handle_mode_change_request(mode: str):
+        with state.lock:
+            log.info(f"--- (全局協調) 處理模式切換請求 -> {mode} ---")
+            old_mode = state.control_mode
+            state.set_control_mode(mode)
+            event_bus.publish(EVENT_MODE_CHANGED, old_mode=old_mode, new_mode=mode)
+    
+    def handle_device_connect_request(device: str):
+        log.info(f"--- (全局協調) 處理連接 '{device}' 的請求... ---")
+        if device == "serial" and serial_comm:
+            is_connected = serial_comm.scan_and_connect()
+            with state.lock: state.serial_is_connected = is_connected
+        elif device == "gamepad" and xbox_handler:
+            is_connected = xbox_handler.scan_and_connect()
+            with state.lock: state.gamepad_is_connected = is_connected
+
+    event_bus.subscribe(EVENT_SIMULATION_RESET_REQUESTED, handle_reset_request)
+    event_bus.subscribe(EVENT_MODE_CHANGE_REQUESTED, handle_mode_change_request)
+    event_bus.subscribe(EVENT_SHUTDOWN_REQUESTED, global_shutdown)
+    event_bus.subscribe(EVENT_DEVICE_CONNECT_REQUESTED, handle_device_connect_request)
+    
+    # 【v4.5.0 最終修正】 在啟動時進行一次同步的、權威的初始化
+    if use_sim:
+        log.info("--- (主執行緒) 正在執行初始設定與重置 ---")
+        terrain_manager.initial_generate()
+        global_hard_reset() # 在所有執行緒啟動前，先在主執行緒中完成第一次重置
+
     def start_background_threads() -> None:
         log.info("NiceGUI 已啟動，啟動背景執行緒...")
         simulation_controller.start()
@@ -140,16 +172,13 @@ def main() -> None:
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
-        simulation_controller.stop()
-        # 【v4.5.0 新增】 停止渲染執行緒
+        if simulation_controller: simulation_controller.stop()
         if rendering_thread:
             rendering_thread.stop()
-            rendering_thread.join(timeout=2) # 等待渲染執行緒結束
-
-        hw_controller.shutdown()
-        serial_comm.close()
-        xbox_handler.close()
-        # 【v4.5.0 刪除】 sim.close() 的職責已轉移到 RenderingThread 內部
+            rendering_thread.join(timeout=2)
+        if xbox_handler: xbox_handler.close()
+        if hw_controller: hw_controller.shutdown()
+        if serial_comm: serial_comm.close()
         log.info("✅ 所有資源已釋放。")
 
     app.on_startup(start_background_threads)
@@ -157,8 +186,7 @@ def main() -> None:
 
     # --- 啟動 UI ---
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
-    ui.run(title="Pupper Robot Console", port=8080)
+    ui.run(title="Pupper Robot Console", port=8080, reload=False)
 
-
-if __name__ in {"__main__", "__mp_main__"}:
+if __name__ == "__main__":
     main()

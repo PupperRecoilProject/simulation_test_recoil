@@ -33,9 +33,9 @@
       4. solimp="... 0.001": 恢復較有彈性的接觸模型（與舊版一致），這是解決鎖死問題的關鍵。雖然腳可能在極端邊緣稍微陷入，但能保證模擬的穩定性。
     -->
     <geom name="floor" type="hfield" hfield="terrain" material="groundplane"
-          condim="3" contype="1" conaffinity="1"
-          solimp="0.99 0.999 0.001" solref="0.001 1"
-          friction="1.5 0.1 0.1"/>
+      condim="3" contype="1" conaffinity="1"
+      solimp="0.99 0.999 0.001" solref="-1 -1"
+      friction="1.5 0.1 0.1"/>
     
     <body name="anchor" pos="0 0 0.35" mocap="true">
       <geom type="sphere" size="0.02" rgba="1 0 0 0.5" contype="0" conaffinity="0"/>

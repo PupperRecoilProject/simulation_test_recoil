@@ -1,8 +1,21 @@
+<!-- assets/pupper_mjx.xml -->
+
 <!-- =================================================================
      Pupper Model - Final Version with Global PD(Kp, Kv) Settings
      ================================================================= -->
 <mujoco model="pupper_global_pd">
-  <compiler angle="radian" meshdir="assets/mesh" autolimits="true"/> <!-- assets to assets/mesh -->
+  <!-- 【v4.5.0 修正】 移除 autolimits="true" 以強制 MuJoCo 遵守手動設定的 <size> -->
+  <compiler angle="radian" meshdir="assets/mesh"/>
+  <!--
+    【v4.5.0 修正】 增加求解器記憶體分配
+    將此定義直接放入機器人模型中，以確保其在任何場景下都生效。
+    - nconmax: 最大接觸點數量。
+    - njmax:   最大純量約束數量 (nefc 的上限)。
+    根據最新的錯誤日誌，nefc 峰值達到 44。我們設定一個遠超此值的
+    安全裕度，例如 1000，以應對未來更複雜的模型或地形。
+  -->
+  <size nconmax="200" njmax="1000"/>
+
   
   <!-- 【核心修正】增加求解器迭代次數以提高接觸計算的精度 -->
   <option iterations="1" ls_iterations="5" timestep="0.004" integrator="Euler">

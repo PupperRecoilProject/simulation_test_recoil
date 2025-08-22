@@ -202,3 +202,17 @@ class Simulation:
                 # 在極端情況下（如視窗被強制關閉），poll_events 可能會出錯，這裡做一個保護
                 pass
 
+# ... inside Simulation class ...
+    # 【v4.5.0 新增】 一個新的渲染入口函式，接收外部的 MjData
+    def update_scene_and_render(self, viewport, data_to_render, state):
+        # 確保在任何情況下相機都能追蹤
+        if not (self.mouse_button_left or self.mouse_button_right):
+            self.cam.lookat = data_to_render.body('torso').xpos
+
+        # 【v4.5.0 修正】 傳入要渲染的 data 物件
+        mujoco.mjv_updateScene(self.model, data_to_render, self.opt, None, self.cam, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
+        mujoco.mjr_render(viewport, self.scene, self.context)
+        # 【v4.5.0 修正】 overlay 的 render 也需要接收正確的 data
+        self.overlay.render(viewport, self.context, state, self, data_to_render)
+
+# ... rendering.py 中的 overlay.render 也需要接收 data_to_render 參數 ...
