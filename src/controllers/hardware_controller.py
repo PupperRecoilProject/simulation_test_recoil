@@ -232,8 +232,9 @@ class HardwareController:
         # if observation.size == 0: return
 
         # 【v4.3.2 修改】 直接呼叫 get_action_for_hardware，無需傳遞參數。
-        # PolicyManager 會自動從 ObservationManager 獲取數據。
-        _, action_raw = self.policy.get_action_for_hardware()
+        # 【v4.4.7 修改】 調用統一的 get_action API，並傳入當前的 command 狀態。
+        # PolicyManager 會自動從 state.std_obs 獲取數據。
+        _, action_raw = self.policy.get_action(self.state.command)
         
         # 【v4.3.2 刪除】 last_action 的更新已轉移到 SimulationState.on_tick_update
         # with self.lock:
