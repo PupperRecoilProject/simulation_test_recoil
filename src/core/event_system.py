@@ -2,6 +2,8 @@
 import threading
 from collections import defaultdict
 from src.core.logger import log
+# 【v4.5.3 最終權威修正】 導入 queue 模組以實現異步事件處理
+import queue
 
 # ===================================================================
 # 1. 系統事件字典 (System Event Dictionary)
@@ -50,8 +52,9 @@ EVENT_MODE_CHANGED = "notification.mode_changed"   # 控制模式已成功切換
 # ===================================================================
 class EventSystem:
     """
-    一個執行緒安全的事件匯流排。
-    它作為系統中所有模組通信的中介，實現了完全的解耦。
+    【v4.5.3 最終權威修正】
+    一個執行緒安全的、異步的事件匯流排。
+    它使用一個專門的工作執行緒來處理所有事件回呼，從而避免了死鎖。
     """
     def __init__(self):
         # _subscribers: 字典，鍵是事件名稱(str)，值是訂閱該事件的回呼函式列表。
@@ -59,8 +62,35 @@ class EventSystem:
         self._subscribers = defaultdict(list)
         # _lock: 一個執行緒鎖，用來保護 _subscribers 字典在多執行緒環境下的讀寫安全。
         self._lock = threading.Lock()
-        log.info("✅ 事件匯流排已初始化。")
+        
+        # 創建一個執行緒安全的隊列來存放待處理的事件任務
+        self._event_queue = queue.Queue()
+        
+        # 創建並啟動一個背景工作執行緒
+        self._worker_thread = threading.Thread(target=self._worker, daemon=True, name="EventWorkerThread")
+        self._worker_thread.start()
+        
+        log.info("✅ 異步事件匯流排已初始化並啟動工作執行緒。")
 
+    def _worker(self):
+        """
+        工作執行緒的主迴圈。它會永遠運行，等待並處理隊列中的事件。
+        """
+        while True:
+            # 從隊列中阻塞式地獲取一個任務。任務是一個元組 (callback, args, kwargs)
+            # 如果隊列中放入了 None，則執行緒結束。
+            task = self._event_queue.get()
+            if task is None:
+                break
+                
+            callback, event_name, args, kwargs = task
+            try:
+                # 在工作執行緒中安全地執行回呼函式
+                callback(*args, **kwargs)
+            except Exception as e:
+                # 捕捉並記錄回呼函式中的異常，確保一個訂閱者的失敗不會影響工作執行緒。
+                log.error(f"執行事件 '{event_name}' 的回呼 '{callback.__name__}' 時出錯: {e}", exc_info=True)
+    
     def subscribe(self, event_name: str, callback):
         """
         將一個回呼函式註冊到指定的事件上。
@@ -90,14 +120,21 @@ class EventSystem:
             # 這樣做可以避免在迭代過程中修改列表而導致的錯誤。
             callbacks_to_run = self._subscribers.get(event_name, [])[:]
         
-        log.debug(f"發布事件 '{event_name}' (有 {len(callbacks_to_run)} 個訂閱者)")
+        log.debug(f"發布事件 '{event_name}' -> 將 {len(callbacks_to_run)} 個任務放入隊列")
         for callback in callbacks_to_run:
-            try:
-                # 執行回呼函式，並將所有參數傳遞給它
-                callback(*args, **kwargs)
-            except Exception as e:
-                # 捕捉並記錄回呼函式中的異常，確保一個訂閱者的失敗不會影響其他訂閱者。
-                log.error(f"執行事件 '{event_name}' 的回呼 '{callback.__name__}' 時出錯: {e}", exc_info=True)
+            # 將 (回呼函式, 事件名, 參數) 元組放入隊列
+            task = (callback, event_name, args, kwargs)
+            self._event_queue.put(task)
+            
+    def stop(self):
+        """
+        優雅地停止工作執行緒。
+        """
+        log.info("正在請求關閉事件匯流排工作執行緒...")
+        self._event_queue.put(None) # 發送一個 "毒丸" 來終止迴圈
+        self._worker_thread.join(timeout=1) # 等待執行緒結束
+        log.info("✅ 事件匯流排工作執行緒已停止。")
+
 
 # 創建一個全域唯一的事件匯流排實例，供整個應用程式使用。
 # 這種單例模式確保了所有模組都與同一個神經中樞通信。

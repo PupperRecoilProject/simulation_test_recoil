@@ -404,24 +404,26 @@ class UIController:
             if abs(slider.value - state_value) > 1e-4:
                 slider.set_value(state_value)
 
-        # --- 更新關節控制 UI ---
+        # 【v4.5.3 最終權威修正】
+        # 根本原因：UI 計時器在模式切換後，可能會在滑桿元件的 .value 屬性
+        # 從 None 初始化為 float 之前就嘗試讀取它，導致 TypeError。
+        # 解決方案：增加一個防禦性檢查，確保 .value 不是 None 之後才進行計算。
         if joint_info and self.joint_control_slider is not None:
-            idx = joint_info['index']
-            if self.joint_selector.value != idx:
-                self.joint_selector.set_value(idx)
-
-            target_abs = joint_info['target_abs']
-            if abs(self.joint_control_slider.value - target_abs) > 1e-4:
-                self.joint_control_slider.set_value(target_abs)
-
-            # 更新顯示文字
-            actual_abs = joint_info['actual_abs']
-            error = target_abs - actual_abs
-            if joint_info['mode'] == 'offset':
-                text = f"模式: 偏移 | Offset={joint_info['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
-            else:
-                text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
-            self.status_labels['joint_info'].set_text(text)
+            # 防禦性檢查，確保 slider 的 value 屬性已準備就緒
+            if self.joint_control_slider.value is not None:
+                idx = joint_info['index']
+                if self.joint_selector.value != idx:
+                    self.joint_selector.set_value(idx)
+                target_abs = joint_info['target_abs']
+                if abs(self.joint_control_slider.value - target_abs) > 1e-4:
+                    self.joint_control_slider.set_value(target_abs)
+                actual_abs = joint_info['actual_abs']
+                error = target_abs - actual_abs
+                if joint_info['mode'] == 'offset':
+                    text = f"模式: 偏移 | Offset={joint_info['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
+                else:
+                    text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
+                self.status_labels['joint_info'].set_text(text)
 
         # --- 更新 ONNX 觀察向量和日誌 ---
         self._update_onnx_labels()
