@@ -14,7 +14,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from src.core.config import AppConfig
 from src.core.logger import log
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict
 import threading
 
 # 導入我們新創建的事件系統模組和核心事件
@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from src.hardware.serial_communicator import SerialCommunicator
     from src.simulation.simulation import Simulation
     from src.input_handlers.xbox_input_handler import XboxInputHandler
+    from src.simulation.observation_manager import ObservationManager # 【v4.4.7 新增】為新屬性增加類型提示
+
 
 # TuningParams 資料類別
 @dataclass
@@ -96,6 +98,13 @@ class SimulationState:
     latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+    # 【v4.4.7 新增】標準化觀測數據字典 (Standardized Observations)
+    # 這是 v4.4.7 方案的核心 "單一權威數據源"。
+    # ObservationManager 會在每一幀計算所有可能的觀測數據，並填充此字典。
+    # 所有消費者 (PolicyManager, UIController) 都應從此處讀取數據。
+    std_obs: Dict[str, np.ndarray] = field(default_factory=dict)
+
     # [新增] v4.3.1 原始感測器數據 (由數據源更新，供 ObservationManager 使用)
     # 這是原始數據的暫存區，由 SimulationController 或 HardwareController 填充。
     raw_torso_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
@@ -154,6 +163,8 @@ class SimulationState:
     floating_controller_ref: 'FloatingController' = None
     terrain_manager_ref: 'TerrainManager' = None
     policy_manager_ref: 'PolicyManager' = None
+    # 【v4.4.7 新增】明確加入 observation_manager_ref 的類型提示
+    observation_manager_ref: 'ObservationManager' = None
     hardware_controller_ref: 'HardwareController' = None
     serial_communicator_ref: 'SerialCommunicator' = None
     xbox_handler_ref: 'XboxInputHandler' = None

@@ -494,19 +494,21 @@ class SimulationController:
         """
         【v4.3.1 修改】執行物理模擬並更新原始物理數據到 SimulationState。
         【v4.4.2 修改】同步更新寫入的 raw_ 變數名。
+        【v4.4.7 修改】在方法結尾新增對觀測管理器的統一調用。
 
         此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
         """
 
-        # [保留] 讀取狀態和獲取 AI 動作的邏輯不變
+        # 讀取狀態和獲取 AI 動作的邏輯不變
         with self.state.lock:
             command = self.state.command.copy()
             control_mode = self.state.control_mode
             tuning_params = self.state.tuning_params
 
+        # 【v4.4.7 修改】 PolicyManager 的 get_action 內部邏輯將改變，但此處的調用方式不變
         onnx_input, action_final = self.policy_manager.get_action(command)
 
-        # [保留] 根據模式計算最終控制指令的邏輯不變
+        # 根據模式計算最終控制指令的邏輯不變
         if control_mode == "MANUAL_CTRL":
             with self.state.lock:
                 final_ctrl = self.state.manual_final_ctrl.copy()
@@ -516,16 +518,16 @@ class SimulationController:
         else:
             final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
 
-        # [保留] 應用 PD 控制的邏輯不變
+        # 應用 PD 控制的邏輯不變
         self.sim.apply_position_control(final_ctrl, tuning_params)
 
-        # [保留] 更新 UI 顯示用的數據的邏輯不變
+        # 更新 UI 顯示用的數據的邏輯不變
         with self.state.lock:
             self.state.latest_onnx_input = onnx_input.flatten()
             self.state.latest_action_raw = action_final
             self.state.latest_final_ctrl = final_ctrl
 
-        # [保留] 執行物理模擬的迴圈不變
+        # 執行物理模擬的迴圈不變
         target_time = self.sim.data.time + self.config.control_dt
         while self.sim.data.time < target_time:
             if not self._running.is_set():
@@ -553,6 +555,12 @@ class SimulationController:
             else:
                  # 如果感測器不存在，用零填充
                  self.state.raw_accelerometer.fill(0.0)
+        
+        # 【v4.4.7 新增】觸發標準化觀測數據的全量更新
+        # 這是 v4.4.7 方案的關鍵步驟。在所有原始數據都準備好之後，
+        # 我們統一調用 ObservationManager 來計算所有標準化觀測值，
+        # 並將它們存儲在 state.std_obs 中，供下一幀的所有消費者使用。
+        self.state.observation_manager_ref.update_all_observations()
 
 
 

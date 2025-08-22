@@ -433,23 +433,30 @@ class UIController:
             self.log_area.set_value(log_content)
 
 
+    # 【v4.4.7 重構】徹底重寫 _update_onnx_labels 方法
     def _update_onnx_labels(self):
-        if self.state.latest_onnx_input.size == 0 or not self.policy_manager.get_active_recipe():
-            return
-        recipe = self.policy_manager.get_active_recipe()
-        obs_vec = self.state.latest_onnx_input
-        current_idx = 0
-        # 從已註冊的 policy_manager 取得各觀察元件的維度
-        component_dims = self.policy_manager.observation_manager.component_dims
-        for comp_name in recipe:
-            dim = component_dims.get(comp_name, 0)
-            if dim > 0 and comp_name in self.onnx_input_labels:
-                end_idx = current_idx + dim
-                if end_idx <= len(obs_vec):
-                    value_slice = obs_vec[current_idx:end_idx]
-                    vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
-                    self.onnx_input_labels[comp_name].set_text(f'{comp_name}: {vec_str}')
-                current_idx = end_idx
+        """
+        【v4.4.7 重構】
+        從 state.std_obs 這個單一權威數據源讀取數據並更新 UI。
+        這個新實現解決了數據錯位、缺失和與模型耦合的所有問題。
+        """
+        with self.state.lock:
+            # 從 state 中安全地獲取標準化觀測數據字典的快照
+            std_obs_snapshot = self.state.std_obs.copy()
+
+        # 遍歷 UI 中所有已知的 ONNX 標籤
+        for comp_name, label_widget in self.onnx_input_labels.items():
+            # 從觀測數據快照中獲取對應的數據
+            value_slice = std_obs_snapshot.get(comp_name)
+
+            # 根據數據是否存在來決定顯示內容
+            if value_slice is not None:
+                # 如果數據存在，格式化並顯示它
+                vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
+                label_widget.set_text(f'{comp_name}: {vec_str}')
+            else:
+                # 如果數據不存在（例如在第一幀），顯示 N/A
+                label_widget.set_text(f'{comp_name}: N/A')
 
 
     def run(self):
