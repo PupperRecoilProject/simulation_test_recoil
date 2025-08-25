@@ -499,6 +499,8 @@ class SimulationController:
         此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
         """
 
+        log.info("--- _simulation_step START ---") # 增加起始 log
+
         # 讀取狀態和獲取 AI 動作的邏輯不變
         with self.state.lock:
             command = self.state.command.copy()
@@ -561,6 +563,9 @@ class SimulationController:
         # 我們統一調用 ObservationManager 來計算所有標準化觀測值，
         # 並將它們存儲在 state.std_obs 中，供下一幀的所有消費者使用。
         self.state.observation_manager_ref.update_all_observations()
+
+        log.info("--- _simulation_step END ---") # 增加結束 log
+
 
 
 

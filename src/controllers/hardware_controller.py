@@ -254,16 +254,25 @@ class HardwareController:
                 self._set_internal_state(HWState.FAILED)
 
     # 【v4.3.2 修改】 parse_policy_stream 方法
+    # 【v4.6.0 修改】 增加 strip() 並強化錯誤處理
     def parse_policy_stream(self, line: str):
         """
         【v4.4.2 重構】嚴格按照數據契約解析 Teensy 數據流。
+        【v4.6.0 修改】增加 .strip() 來移除換行符，並強化錯誤日誌記錄。
 
-        職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口，與模擬器無關。
+        職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
         """
         try:
+            # 【v4.6.0 修改】 在分割前，使用 .strip() 移除字串頭尾的空白字符，特別是尾部的 '\r\n'
+            clean_line = line.strip()
+            if not clean_line:  # 如果是空行則直接忽略
+                return
+            
             parts = line.split(',')
+
             if len(parts) != 34:
-                log.warning(f"...")
+                # 【v4.6.0 修改】 將警告升級為更詳細的日誌，方便除錯
+                log.warning(f"數據幀欄位數量錯誤。預期 34，收到 {len(parts)}。原始數據: '{clean_line}'")
                 return
             
             data_vec = np.array(parts, dtype=np.float32)
@@ -278,9 +287,11 @@ class HardwareController:
                 self.state.raw_pitch_rad = data_vec[9]
                 self.state.raw_joint_positions[:] = data_vec[10:22]
                 self.state.raw_joint_velocities[:] = data_vec[22:34]
+        
+        # 【v4.6.0 修改】 捕獲異常時，打印更詳細的錯誤日誌，而不是靜默 pass
         except (ValueError, IndexError) as e:
-            log.warning(f"...")
-            pass
+            log.error(f"解析數據幀失敗: {e}。原始數據: '{line.strip()}'")
+            # 不再使用 pass，錯誤應該被明確報告
 
 
     # 【v4.3.2 刪除】 construct_observation 方法
