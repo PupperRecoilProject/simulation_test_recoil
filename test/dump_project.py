@@ -2,6 +2,7 @@
 import os
 import sys
 from datetime import datetime
+import subprocess  # 【新增】匯入 subprocess 模組
 
 # --- 組態設定 ---
 
@@ -9,7 +10,7 @@ from datetime import datetime
 EXCLUDE_DIRS = {
     '.git', 'node_modules', '__pycache__', 'venv', '.vscode',
     'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'venv_test_no_mujoco',
-    'output' # 【新增】忽略 output 目錄
+    'output' # 【既有】忽略 output 目錄
 }
 
 # 2. 定義一個「內容跳過清單」。
@@ -23,6 +24,29 @@ SKIP_CONTENT_EXTENSIONS = {
 
 # 3. (可選) 如果只想包含特定類型的檔案，可以設定這個清單
 INCLUDE_EXTENSIONS = set()
+
+
+# --- 【新增】獲取 Git 分支名稱的函式 ---
+def get_git_branch():
+    """
+    嘗試獲取當前的 Git 分支名稱。
+    如果成功，返回分支名稱字串。
+    如果失敗 (例如不在 Git 倉庫中或未安裝 Git)，則返回 None。
+    """
+    try:
+        # 'git rev-parse --abbrev-ref HEAD' 是獲取當前分支名稱的標準且安全的方式
+        result = subprocess.check_output(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            stderr=subprocess.PIPE, # 抑制錯誤訊息輸出到控制台
+            text=True, # 將輸出解碼為文字
+            encoding='utf-8'
+        )
+        return result.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # CalledProcessError: git 命令執行失敗 (例如，不在 git repo 中)
+        # FileNotFoundError: 系統中找不到 'git' 命令
+        print("警告：無法獲取 Git 分支資訊。可能不在 Git 倉庫中，或未安裝 Git。")
+        return None
 
 
 # --- 樹狀結構產生函式 (無須修改) ---
@@ -85,8 +109,11 @@ def generate_code_dump(root_dir, output_filename_base, project_name): # 函式�
     processed_files_count = 0
     
     try:
-        with open(full_output_path, 'w', encoding='utf-8', errors='ignore') as outfile: # 【修改】寫入完整路徑
+        with open(full_output_path, 'w', encoding='utf-8', errors='ignore') as outfile:
+            # 【修改】在檔案開頭寫入 Git 分支資訊
             outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
+            if git_branch:
+                outfile.write(f"# Git 當前分支: {git_branch}\n")
             outfile.write("=" * 80 + "\n\n")
 
             outfile.write("#" + "-" * 78 + "#\n")
@@ -176,9 +203,15 @@ if __name__ == "__main__":
     # 【修改】只生成基礎文件名，路徑拼接在 generate_code_dump 內部處理
     output_filename_base = f"{project_name}_dump_{timestamp_str}.txt"
     
-    print(f"設定專案根目錄為: {os.path.abspath(project_root)}")
-    print(f"將從 '{os.path.abspath(target_dir)}' 開始掃描...")
-    print(f"輸出檔案將命名為: {output_filename_base} (儲存於 output/ 目錄)") # 【修改】
+    # 【新增】呼叫函式以獲取 Git 分支名稱
+    current_branch = get_git_branch()
     
-    # 傳入基礎文件名，而不是完整路徑
-    generate_code_dump(target_dir, output_filename_base, project_name)
+    print(f"設定專案根目錄為: {os.path.abspath(project_root)}")
+    # 【新增】在控制台輸出中也顯示分支名稱
+    if current_branch:
+        print(f"偵測到目前 Git 分支為: {current_branch}")
+    print(f"將從 '{os.path.abspath(target_dir)}' 開始掃描...")
+    print(f"輸出檔案將命名為: {output_filename_base} (儲存於 output/ 目錄)")
+    
+    # 【修改】將獲取到的分支名稱傳入主函式
+    generate_code_dump(target_dir, output_filename_base, project_name, current_branch)
