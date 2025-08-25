@@ -274,18 +274,36 @@ class UIController:
             self.status_labels['robot_pos'] = ui.label('位置: [0.0, 0.0, 0.0]')
             self.status_labels['robot_vel'] = ui.label('速度: [0.0, 0.0, 0.0]')
 
+
     def _create_onnx_display(self):
-        """建立 ONNX 觀察向量區域，並設定最小高度避免畫面跳動。"""
-        # 【修正】設定卡片的最小高度，避免文字長度變化造成版面跳動
-        with ui.card().style('min-height: 220px;'):
+        """
+        【v4.6.0 重構】建立 ONNX 觀察向量區域。
+        此版本不再使用硬編碼列表，而是動態地從 ObservationManager 的
+        權威維度字典 (ALL_OBS_DIMS) 中創建所有 UI 標籤，確保 UI
+        能夠自動適應未來新增的觀測元件。
+        """
+        # 為了容納所有可能的觀測元件，我們將最小高度稍微調高
+        with ui.card().style('min-height: 250px;'):
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
             with ui.grid(columns=2):
-                obs_components = [
-                    'linear_velocity', 'angular_velocity', 'gravity_vector', 'commands',
-                    'accelerometer', 'joint_positions', 'joint_velocities', 'last_action'
-                ]
-                for comp in obs_components:
-                    self.onnx_input_labels[comp] = ui.label(f'{comp}: N/A')
+                # 【v4.6.0 修改】 核心修改：動態生成 UI 標籤
+                # 我們直接從 observation_manager 實例中獲取 ALL_OBS_DIMS 字典。
+                # 這是觀測元件的「單一事實來源」。
+                # .items() 會返回 (鍵, 值) 對，即 (元件名, 維度)。
+                # 我們對其進行排序，以確保 UI 上的顯示順序是固定的、可預測的。
+                if self.state.observation_manager_ref:
+                    all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
+                    
+                    for comp_name, dim in all_components:
+                        # 為字典中的每一個元件，都創建一個 ui.label，並將其
+                        # 存儲在 self.onnx_input_labels 字典中，以便後續更新。
+                        # 初始文字設置為 'N/A'，等待 update_ui_elements 填充真實數據。
+                        self.onnx_input_labels[comp_name] = ui.label(f'{comp_name}: N/A')
+                else:
+                    # 這是一個防禦性程式碼，如果 observation_manager 尚未初始化，
+                    # UI 會顯示一條清晰的錯誤訊息，而不是崩潰。
+                    ui.label("錯誤: ObservationManager 未初始化!")
+
 
     def _create_log_panel(self):
         with ui.card().classes('w-full'):
@@ -310,23 +328,26 @@ class UIController:
             log.info(f"> {command_text}")
 
 
+    # 【v4.6.0 重構】 完整重寫此函式以修復關節滑桿的 bug 並提升程式碼清晰度
     def update_ui_elements(self):
         """
         [v3.0.1] 定期從 SimulationState 讀取最新數據，並更新所有UI元件。
-        這是一個單向的數據流：State -> UI。
+        【v4.6.0 重構】重構關節控制 UI 的更新邏輯，並將數據獲取與 UI 更新分離。
         """
-        # ============================ 步驟 1: 在鎖內快速複製所有需要的狀態值 ============================
+        # =================================================================
+        # === 階段一：原子性地從 State 中獲取所有需要的數據快照 (Atomic Data Fetching) ===
+        # =================================================================
+        # 透過在一個 'with self.state.lock:' 區塊內完成所有數據讀取，
+        # 我們確保了本幀 UI 所顯示的所有數據都來自同一個時間點，避免了數據不一致。
         with self.state.lock:
             # --- 通用狀態 ---
             mode = self.state.control_mode
             input_mode = self.state.input_mode
-            sim_time = self.state.sim.data.time if self.state.sim else None
+            sim_time = self.state.sim.data.time if self.state.sim and hasattr(self.state.sim, 'data') else 0.0
             serial_connected = self.state.serial_is_connected
             gamepad_connected = self.state.gamepad_is_connected
-
             hw_running = self.state.hardware_is_running
             hw_ai_active = self.state.hardware_ai_is_active
-            
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
 
@@ -350,41 +371,47 @@ class UIController:
             }
 
             # --- 關節控制狀態 ---
-            joint_info = None
+            joint_info_data = None
             if mode in ["JOINT_TEST", "MANUAL_CTRL"]:
+                num_motors = self.state.config.num_motors
+                default_pose = self.state.sim.default_pose.copy() if self.state.sim else np.zeros(num_motors)
+                
                 if mode == "JOINT_TEST":
                     idx = self.state.joint_test_index
-                    target_abs = self.state.sim.default_pose[idx] + self.state.joint_test_offsets[idx]
-                    offset = self.state.joint_test_offsets[idx]
-                    joint_info = {"mode": "offset", "index": idx, "target_abs": target_abs, "offset": offset}
+                    joint_info_data = {
+                        "mode": "offset", "index": idx,
+                        "offset": self.state.joint_test_offsets[idx],
+                        "default_angle": default_pose[idx],
+                        "actual_angle": self.state.latest_joint_positions[idx]
+                    }
                 else: # MANUAL_CTRL
                     idx = self.state.manual_ctrl_index
-                    target_abs = self.state.manual_final_ctrl[idx]
-                    joint_info = {"mode": "absolute", "index": idx, "target_abs": target_abs}
-                
-                # 共享的資訊
-                joint_info["actual_abs"] = self.state.latest_joint_positions[joint_info['index']]
+                    joint_info_data = {
+                        "mode": "absolute", "index": idx,
+                        "target_angle": self.state.manual_final_ctrl[idx],
+                        "actual_angle": self.state.latest_joint_positions[idx]
+                    }
 
-        # 直接從 hardware_controller 讀取其內部狀態來更新 UI
-        hw_mode_active = self.state.control_mode == 'HARDWARE_MODE'
-        ai_status_text = '硬體AI: N/A'
-        if hw_running and hw_mode_active:
-             ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Disabled'
-        elif hw_mode_active and not hw_running:
-             ai_status_text = '硬體AI: Starting...' # 或 'Failed'
-        
-        self.status_labels['hardware_ai'].set_text(ai_status_text)
-
-
-        # ============================ 步驟 2: 在鎖外安全地更新所有 UI 元件 ============================
+        # =================================================================
+        # === 階段二：使用數據快照安全地更新所有 UI 元件 (UI Update) ===
+        # =================================================================
+        # 從這裡開始，我們不再訪問 self.state，只使用上面複製的局部變量。
 
         # --- 更新通用狀態標籤 ---
         self.status_labels['mode'].set_text(f"模式: {mode}")
         self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
-        self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s" if sim_time is not None else "時間: N/A")
+        self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s")
         self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
-        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Connected')
-        self.status_labels['hardware_ai'].set_text('硬體AI: Active' if hw_ai_active else '硬體AI: Disabled' if mode == 'HARDWARE_MODE' else '硬體AI: N/A')
+        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Disconnected')
+        
+        ai_status_text = '硬體AI: N/A'
+        if mode == 'HARDWARE_MODE':
+            if hw_running:
+                ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Standby'
+            else:
+                ai_status_text = '硬體AI: Starting...'
+        self.status_labels['hardware_ai'].set_text(ai_status_text)
+        
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
 
@@ -401,29 +428,28 @@ class UIController:
         # --- 更新參數調校滑桿 ---
         for key, slider in self.param_sliders.items():
             state_value = tuning_params_copy[key]
-            # 只有在值有顯著差異時才更新，避免浮點數誤差導致的無限循環
             if abs(slider.value - state_value) > 1e-4:
                 slider.set_value(state_value)
 
-        # --- 更新關節控制 UI ---
-        # 【v4.3.4 修改】確保 target_abs 為浮點數，增強魯棒性
-        if joint_info and self.joint_control_slider is not None:
-            idx = joint_info['index']
+        # --- 【v4.6.0 重構】更新關節控制 UI ---
+        if joint_info_data and self.joint_control_slider is not None:
+            idx = joint_info_data['index']
+            actual_angle = joint_info_data['actual_angle']
+
+            if joint_info_data['mode'] == 'offset':
+                target_abs = joint_info_data['default_angle'] + joint_info_data['offset']
+                text = f"模式: 偏移 | Offset={joint_info_data['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_angle:+.2f} | Err={target_abs - actual_angle:+.2f}"
+            else: # 'absolute'
+                target_abs = joint_info_data['target_angle']
+                text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_angle:+.2f} | Err={target_abs - actual_angle:+.2f}"
+            
             if self.joint_selector.value != idx:
                 self.joint_selector.set_value(idx)
 
-            target_abs = float(joint_info['target_abs']) # 【新增】顯式轉換為浮點數
-            if self.joint_control_slider.value is not None and abs(self.joint_control_slider.value - target_abs) > 1e-4:
-                # 【修改】增加 self.joint_control_slider.value is not None 檢查，作為雙重保險
-                self.joint_control_slider.set_value(target_abs)
+            target_abs_float = float(target_abs)
+            if self.joint_control_slider.value is not None and abs(self.joint_control_slider.value - target_abs_float) > 1e-4:
+                self.joint_control_slider.set_value(target_abs_float)
 
-            # 更新顯示文字
-            actual_abs = joint_info['actual_abs']
-            error = target_abs - actual_abs
-            if joint_info['mode'] == 'offset':
-                text = f"模式: 偏移 | Offset={joint_info['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
-            else:
-                text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_abs:+.2f} | Err={error:+.2f}"
             self.status_labels['joint_info'].set_text(text)
 
         # --- 更新 ONNX 觀察向量和日誌 ---

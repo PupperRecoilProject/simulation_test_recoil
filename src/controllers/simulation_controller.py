@@ -118,6 +118,7 @@ class SimulationController:
     def run(self) -> None:
         """
         【v4.0.2 修改版】執行緒主迴圈。
+        【v4.6.0 修改】分離物理更新與數據處理，確保數據流在所有模式下暢通。
         """
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
@@ -172,19 +173,27 @@ class SimulationController:
             if execute_one:
                 with self.state.lock: self.state.execute_one_step = False
 
-            # 【v4.0.2 修正】UX 優化
+            # 【v4.6.0 修改】將 is_simulation_active 的判斷移至此處
+            is_headless = isinstance(self.sim, MockSimulation)
             is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
             
+            # --- 步驟 1: 物理更新 (僅在模擬模式下執行) ---
             if is_simulation_active:
-                # 【模擬活動模式】: 執行物理計算，然後更新狀態並渲染完整畫面
                 self._simulation_step()
+            else:
+                # 在非模擬模式下，給主迴圈一個短暫休眠以控制頻率
+                time.sleep(1.0 / self.config.control_freq)
+
+            # --- 步驟 2: 數據處理 (在所有模式下執行) ---
+            # 【v4.6.0 新增】將此調用移至此處，確保無論模式如何，數據處理鏈路都會被觸發。
+            # 這是解決硬體模式下 UI 數據靜止問題的關鍵。
+            if self.state.observation_manager_ref:
+                self.state.observation_manager_ref.update_all_observations()
+
+            # --- 步驟 3: 渲染 (在所有可視模式下執行) ---
+            if not is_headless:
                 self.update_derived_states_and_render()
-            elif not is_headless:
-                # 【模擬非活動模式 (硬體/序列埠)】: 
-                # 不執行任何物理或渲染計算，只處理視窗事件以保持響應。
-                self.sim.poll_window_events()
-                # 加入一個非常短的休眠，以防止此迴圈在空閒時吃掉100%的CPU核心。
-                time.sleep(0.01)
+
         log.info("模擬執行緒已優雅地停止。")
 
     def _handle_shutdown(self):
@@ -499,7 +508,7 @@ class SimulationController:
         此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
         """
 
-        log.info("--- _simulation_step START ---") # 增加起始 log
+        # log.info("--- _simulation_step START ---") # 增加起始 log
 
         # 讀取狀態和獲取 AI 動作的邏輯不變
         with self.state.lock:
@@ -558,13 +567,11 @@ class SimulationController:
                  # 如果感測器不存在，用零填充
                  self.state.raw_accelerometer.fill(0.0)
         
-        # 【v4.4.7 新增】觸發標準化觀測數據的全量更新
-        # 這是 v4.4.7 方案的關鍵步驟。在所有原始數據都準備好之後，
-        # 我們統一調用 ObservationManager 來計算所有標準化觀測值，
-        # 並將它們存儲在 state.std_obs 中，供下一幀的所有消費者使用。
-        self.state.observation_manager_ref.update_all_observations()
+        # 【v4.4.7 新增】【v4.6.0 刪除】觸發標準化觀測數據的全量更新
+        # 這一行將被移動到 run() 迴圈的公共區域，以確保在所有模式下都能執行。
+        # self.state.observation_manager_ref.update_all_observations()
 
-        log.info("--- _simulation_step END ---") # 增加結束 log
+        # log.info("--- _simulation_step END ---") # 增加結束 log
 
 
 
