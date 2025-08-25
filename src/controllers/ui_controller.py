@@ -255,24 +255,25 @@ class UIController:
                 ui.button('+0.1', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, direction=0.1)).props('dense')
                 ui.button('歸零 (Clear)', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, clear=True)).props('dense')
 
-
+    
     def _create_status_display(self):
+        """【v4.6.1 修改】"""
         with ui.card():
             ui.label('即時狀態 (Real-time Status)').classes('text-lg')
-            with ui.grid(columns=3):
-                self.status_labels['mode'] = ui.label('模式: WALKING')
-                self.status_labels['input_mode'] = ui.label('輸入: KEYBOARD')
-                self.status_labels['sim_time'] = ui.label('時間: 0.00s')
-                self.status_labels['serial_status'] = ui.label('序列埠: Disconnected')
-                self.status_labels['gamepad_status'] = ui.label('搖桿: Disconnected')
-                self.status_labels['hardware_ai'] = ui.label('硬體AI: N/A')
-                self.status_labels['policy_status'] = ui.label(f'策略: {self.policy_manager.primary_policy_name}')
-            ui.separator()
+            # [保留] ... (grid 佈局與現有標籤) ...
             ui.label('運動指令 (Command)').classes('font-bold')
             self.status_labels['command'] = ui.label('vy: 0.00, vx: 0.00, wz: 0.00')
             ui.label('機器人狀態 (Robot State)').classes('font-bold')
             self.status_labels['robot_pos'] = ui.label('位置: [0.0, 0.0, 0.0]')
             self.status_labels['robot_vel'] = ui.label('速度: [0.0, 0.0, 0.0]')
+
+            # 【v4.6.1 新增】 為 ONNX 策略的輸出增加顯示區域
+            ui.separator().classes('my-2') # 增加一條分隔線
+            ui.label('AI 策略輸出 (Policy Output)').classes('font-bold')
+            # 用於顯示 AI 模型未經處理的原始輸出
+            self.status_labels['action_raw'] = ui.label('原始動作: N/A')
+            # 用於顯示經過 action_scale 和 default_pose 處理後的最終控制目標
+            self.status_labels['final_ctrl'] = ui.label('最終控制: N/A')
 
 
     def _create_onnx_display(self):
@@ -333,6 +334,7 @@ class UIController:
         """
         [v3.0.1] 定期從 SimulationState 讀取最新數據，並更新所有UI元件。
         【v4.6.0 重構】重構關節控制 UI 的更新邏輯，並將數據獲取與 UI 更新分離。
+        
         """
         # =================================================================
         # === 階段一：原子性地從 State 中獲取所有需要的數據快照 (Atomic Data Fetching) ===
@@ -350,6 +352,9 @@ class UIController:
             hw_ai_active = self.state.hardware_ai_is_active
             command = self.state.command.copy()
             pos = self.state.latest_pos.copy()
+            # 【v4.6.1 新增】 獲取 AI 輸出相關的數據
+            action_raw = self.state.latest_action_raw.copy()
+            final_ctrl = self.state.latest_final_ctrl.copy()
 
             # --- AI 策略狀態 ---
             pm = self.policy_manager
@@ -415,6 +420,15 @@ class UIController:
         self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
         self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
 
+        # 【v4.6.1 新增】 更新 AI 策略輸出的顯示
+        # 我們也使用一個輔助函式來格式化向量，保持風格一致
+        def format_vec_short(vec):
+            return np.array2string(vec, precision=2, suppress_small=True, max_line_width=50)
+
+        self.status_labels['action_raw'].set_text(f"原始動作: {format_vec_short(action_raw)}")
+        self.status_labels['final_ctrl'].set_text(f"最終控制: {format_vec_short(final_ctrl)}")
+
+
         # --- 更新 AI 策略相關 UI ---
         policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)" if transitioning else f"策略: {primary_policy}"
         self.status_labels['policy_status'].set_text(policy_text)
@@ -460,28 +474,28 @@ class UIController:
 
 
     # 【v4.4.7 重構】徹底重寫 _update_onnx_labels 方法
+    # 【v4.6.1 修改】引入固定寬度的數字格式化
     def _update_onnx_labels(self):
         """
-        【v4.4.7 重構】
-        從 state.std_obs 這個單一權威數據源讀取數據並更新 UI。
-        這個新實現解決了數據錯位、缺失和與模型耦合的所有問題。
+        【v4.6.1 修改】
+        引入固定寬度的數字格式化，使 UI 顯示更整齊、不跳動，風格與 pyserial_console 對齊。
         """
         with self.state.lock:
-            # 從 state 中安全地獲取標準化觀測數據字典的快照
             std_obs_snapshot = self.state.std_obs.copy()
 
-        # 遍歷 UI 中所有已知的 ONNX 標籤
         for comp_name, label_widget in self.onnx_input_labels.items():
-            # 從觀測數據快照中獲取對應的數據
             value_slice = std_obs_snapshot.get(comp_name)
 
-            # 根據數據是否存在來決定顯示內容
             if value_slice is not None:
-                # 如果數據存在，格式化並顯示它
-                vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
+                # 【v4.6.1 修改】 使用新的格式化方式
+                # 這個 formatter 確保每個數字都佔用 7 個字符寬度，小數點後保留 3 位。
+                # 這將使得所有向量的排版都非常整齊。
+                vec_str = np.array2string(value_slice, 
+                                          precision=3, 
+                                          suppress_small=True, 
+                                          formatter={'float_kind': lambda x: f"{x:7.3f}"})
                 label_widget.set_text(f'{comp_name}: {vec_str}')
             else:
-                # 如果數據不存在（例如在第一幀），顯示 N/A
                 label_widget.set_text(f'{comp_name}: N/A')
 
 
