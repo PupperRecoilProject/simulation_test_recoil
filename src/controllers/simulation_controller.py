@@ -227,9 +227,17 @@ class SimulationController:
                 elif direction is not None: self.state.manual_final_ctrl[idx] += direction
 
     def _update_derived_and_render_states(self) -> None:
-        """
-        【v4.5.0 新增】 更新所有依賴於核心物理狀態的衍生狀態，並將數據寫入渲染緩衝區。
-        """
+        # 【v4.5.3 最終權威修正 - 數據汙染防護】
+        # 根本原因：物理模擬 (mj_step) 可能產生無效數值 (NaN/inf)，這些汙染數據
+        # 如果被傳遞給渲染執行緒，會導致其崩潰。
+        #
+        # 解決方案：在數據的源頭進行「消毒」。在更新任何共享狀態或緩衝區之前，
+        # 立即檢查原始物理數據的有效性。如果數據無效，則中止本次更新，
+        # 防止汙染擴散，並給予物理引擎在下一幀自我恢復的機會。
+        if not np.isfinite(self.sim.data.qpos).all():
+            log.warning(f"偵測到不穩定的物理狀態 (qpos)，已跳過本幀狀態更新。")
+            return
+
         current_pos = self.sim.data.body('torso').xpos.copy()
         with self.state.lock: terrain_mode = self.state.terrain_mode
         if self.terrain_manager.is_functional: self.terrain_manager.update(current_pos, terrain_mode)
