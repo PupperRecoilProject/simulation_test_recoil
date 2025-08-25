@@ -4,6 +4,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 from src.core.logger import log
+import queue
 
 import numpy as np
 from src.mock.mock_simulation import MockSimulation
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 
 class SimulationController:
     """
+    【v4.5.3 修改】 在獨立執行緒中運行模擬並透過隊列處理狀態變更。
     【v4.5.0 修改】 在獨立執行緒中運行模擬並處理所有狀態變更。
     職責已純化為：
     1.  以固定的 50Hz 頻率驅動 MuJoCo 物理模擬。
@@ -49,6 +51,8 @@ class SimulationController:
         
         self._running = threading.Event()
         self.thread: threading.Thread | None = None
+        
+        self.mode_change_queue = queue.Queue()
 
         self._manual_float_active = False
         
@@ -99,16 +103,13 @@ class SimulationController:
                 time.sleep(self.config.control_dt - elapsed)
             
             last_control_time = time.perf_counter()
-
-            # 處理輕量級的、不影響全局協調的請求
-            with self.state.lock:
-                float_toggle_req = self.state.manual_float_toggle_request
-                self.state.manual_float_toggle_request = None
-
-            if float_toggle_req is not None:
-                self._handle_float_toggle(float_toggle_req)
             
-            # ======================== 主邏輯與模擬步驟 ========================
+            try:
+                new_mode_request = self.mode_change_queue.get_nowait()
+                self._execute_mode_change(new_mode_request)
+            except queue.Empty:
+                pass
+
             with self.state.lock:
                 mode = self.state.control_mode
                 single_step = self.state.single_step_mode
@@ -125,16 +126,32 @@ class SimulationController:
             is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
             
             if is_simulation_active:
-                # 【模擬活動模式】: 執行物理計算，然後更新狀態並渲染完整畫面
-                self._simulation_step()
+                # 【v4.5.3 最終權威修正 - 時序問題】
+                # 根本原因：舊的順序是先 _simulation_step (使用 T-1 的數據)，
+                # 然後才 _update_derived_and_render_states (生成 T 的數據)，
+                # 這導致 AI 控制存在一幀的延遲。
+                #
+                # 解決方案：顛倒執行順序。
+                # 1. 首先，更新所有衍生狀態，確保 AI 能看到最新的物理世界。
+                # 2. 然後，執行模擬步驟，讓 AI 根據最新的狀態做出決策。
+                
+                # 步驟 1: 更新狀態，讓 AI 看到最新的物理數據
                 self._update_derived_and_render_states()
+                
+                # 步驟 2: 執行模擬，讓 AI 根據最新數據行動
+                self._simulation_step()
 
-    # 【v4.5.0 新增】 此函式用於響應模式已變更的通知，進行物理清理
     def on_mode_changed(self, old_mode: str, new_mode: str):
-        """監聽模式已變更的通知，執行物理相關的狀態清理。"""
-        log.debug(f"SimulationController 偵測到模式變更: {old_mode} -> {new_mode}")
+        """[事件回呼] 接收到模式變更通知後，僅將請求放入隊列。"""
+        self.mode_change_queue.put(new_mode)
         
-        # 離開舊模式時的物理清理
+    def _execute_mode_change(self, new_mode: str):
+        """[內部執行] 在主迴圈的安全上下文中，執行實際的模式切換邏輯。"""
+        log.debug(f"SimCtrl 正在從隊列執行模式切換 -> {new_mode}")
+        
+        with self.state.lock:
+            old_mode = self.state.previous_control_mode
+        
         if old_mode == "FLOATING":
             self.floating_controller.disable()
             self._manual_float_active = False # 確保同步
@@ -149,22 +166,6 @@ class SimulationController:
         if new_mode in ["JOINT_TEST", "MANUAL_CTRL"]:
             # 進入手動模式時，只需重置姿態，無需重置位置
             self.soft_reset()
-
-    def _handle_float_toggle(self, is_floating: bool):
-        """【v4.0 新增】安全地處理手動懸浮請求。"""
-        is_manual_mode = self.state.control_mode in ["JOINT_TEST", "MANUAL_CTRL"]
-        if not is_manual_mode: return
-        if is_floating and not self._manual_float_active:
-            current_pos = self.sim.data.body('torso').xpos.copy()
-            self.floating_controller.enable(current_pos)
-            self._manual_float_active = True
-        elif not is_floating and self._manual_float_active:
-            self.floating_controller.disable()
-            self._manual_float_active = False
-        
-        # 更新 state 中的真實狀態
-        with self.state.lock:
-            self.state.manual_mode_is_floating = self._manual_float_active
 
     def on_policy_change_requested(self, policy_name: str):
         """處理AI策略切換請求。"""
@@ -189,10 +190,17 @@ class SimulationController:
             event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard")
 
     def on_manual_float_toggled(self, is_floating: bool):
-        """【v4.0】處理手動模式下的懸浮開關請求。只設定請求旗標。"""
-        log.debug(f"接收到手動懸浮切換請求 -> {is_floating}，正在設定請求旗標。")
+        is_manual_mode = self.state.control_mode in ["JOINT_TEST", "MANUAL_CTRL"]
+        if not is_manual_mode: return
+        if is_floating and not self._manual_float_active:
+            current_pos = self.sim.data.body('torso').xpos.copy()
+            self.floating_controller.enable(current_pos)
+            self._manual_float_active = True
+        elif not is_floating and self._manual_float_active:
+            self.floating_controller.disable()
+            self._manual_float_active = False
         with self.state.lock:
-            self.state.manual_float_toggle_request = is_floating
+            self.state.manual_mode_is_floating = self._manual_float_active
 
     def on_joint_select_requested(self, index: int):
         """處理關節選擇請求。"""
@@ -228,7 +236,7 @@ class SimulationController:
         with self.state.lock:
             self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
             self.state.raw_torso_linear_velocity_world = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
-            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3].copy()
+            self.state.raw_torso_angular_velocity_world = self.sim.data.cvel[self.sim.torso_id, :3:].copy()
             self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
             self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
             if self.sim.accelerometer_id != -1:
