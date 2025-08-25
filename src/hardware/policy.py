@@ -6,6 +6,8 @@ import os
 import time
 from collections import deque
 from typing import TYPE_CHECKING, List, Dict
+# 【v4.5.3 最終權威修正】 導入 log 物件以進行時序檢驗
+from src.core.logger import log
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
@@ -170,7 +172,10 @@ class PolicyManager:
             self.observation_manager.set_recipe(recipe)
             base_obs = self.observation_manager.get_observation()
             
-            # 更新對應模型的歷史
+            # 【時序檢驗探針 2】 記錄 AI 決策時的時間戳
+            decision_time = time.perf_counter()
+            log.info(f"[PolicyManager] AI 決策 @ {decision_time:.6f}")
+            
             self.obs_histories[name].append(base_obs)
             
             # 將歷史觀察拼接成 ONNX 的最終輸入

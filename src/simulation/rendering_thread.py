@@ -57,6 +57,14 @@ class RenderingThread(threading.Thread):
                     # 更新本地 MjData 的時間和 qpos
                     self.render_data.time = data_packet.get('time', self.render_data.time)
                     qpos_data = data_packet.get('qpos')
+                    
+                    # 【時序檢驗探針 3】 記錄渲染時間並計算延遲
+                    render_time = time.perf_counter()
+                    production_time = data_packet.get('production_timestamp')
+                    if production_time:
+                        delay_ms = (render_time - production_time) * 1000
+                        log.info(f"[RenderThread] 數據渲染 @ {render_time:.6f} | 延遲: {delay_ms:.2f} ms")
+                    
                     if qpos_data is not None:
                         self.render_data.qpos[:] = qpos_data
 

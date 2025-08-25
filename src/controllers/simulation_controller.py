@@ -244,7 +244,14 @@ class SimulationController:
                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
             self.state.latest_pos, self.state.latest_quat, self.state.latest_joint_positions = current_pos, self.state.raw_torso_quat, self.state.raw_joint_positions
         with self.state.render_data_lock:
-            self.state.render_data_buffer = {'time': self.sim.data.time, 'qpos': self.sim.data.qpos.copy()}
+            # 【時序檢驗探針 1】 記錄數據的生產時間戳
+            production_time = time.perf_counter()
+            self.state.render_data_buffer = {
+                'time': self.sim.data.time, 
+                'qpos': self.sim.data.qpos.copy(),
+                'production_timestamp': production_time  # 將高精度時間戳放入數據包
+            }
+            log.info(f"[SimCtrl] 數據生產 @ {production_time:.6f} (Sim Time: {self.sim.data.time:.4f})")
 
     def _simulation_step(self) -> None:
         """
