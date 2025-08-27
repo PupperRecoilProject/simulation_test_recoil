@@ -47,7 +47,6 @@ class UIController:
         self.serial_comm = state.serial_communicator_ref
         self.xbox_handler = state.xbox_handler_ref
 
-        self.status_labels = {}
         self.param_sliders = {}
         self.onnx_input_labels = {}
         self.log_area = None
@@ -60,6 +59,76 @@ class UIController:
             self.ui_terrain_selection = self.state.terrain_manager_ref.single_terrain_names[self.state.single_terrain_index]
         else:
             self.ui_terrain_selection = 'INFINITE'
+
+        # ===================================================================
+        # === 【v4.7.0 新增】UI 元素定義區 (Single Source of Truth) ===
+        # ===================================================================
+        # 存放最終創建的 ui.label 物件
+        self.status_labels = {}
+
+        # 【v4.7.0 新增】狀態標籤描述字典
+        # 這是 UI 狀態顯示的唯一真相來源。它定義了每個標籤的:
+        # - title: 在 UI 上顯示的靜態標題。
+        # - getter: 一個從 state 快照中提取對應數據的函式。
+        # - formatter: 一個將提取出的數據轉換為顯示字串的函式。
+        self._label_descriptors = {
+            'mode': {
+                'title': '模式',
+                'getter': lambda s: s.control_mode,
+                'formatter': str
+            },
+            'input_mode': {
+                'title': '輸入',
+                'getter': lambda s: s.input_mode,
+                'formatter': str
+            },
+            'sim_time': {
+                'title': '時間',
+                'getter': lambda s: s.sim.data.time if s.sim and hasattr(s.sim, 'data') else 0.0,
+                'formatter': lambda v: f"{v:.2f}s"
+            },
+            'serial_status': {
+                'title': '序列埠',
+                'getter': lambda s: s.serial_is_connected,
+                'formatter': lambda v: 'Connected' if v else 'Disconnected'
+            },
+            'gamepad_status': {
+                'title': '搖桿',
+                'getter': lambda s: s.gamepad_is_connected,
+                'formatter': lambda v: 'Connected' if v else 'Disconnected'
+            },
+            'hardware_ai': {
+                'title': '硬體AI',
+                'getter': lambda s: (s.control_mode, s.hardware_is_running, s.hardware_ai_is_active),
+                'formatter': lambda v: 'Active' if v[2] else 'Standby' if v[1] else 'Starting...' if v[0] == 'HARDWARE_MODE' else 'N/A'
+            },
+            'policy_status': {
+                'title': '策略',
+                'getter': lambda s: (s.policy_manager_ref.is_transitioning, s.policy_manager_ref.source_policy_name, s.policy_manager_ref.target_policy_name, s.policy_manager_ref.transition_alpha, s.policy_manager_ref.primary_policy_name),
+                'formatter': lambda v: f"Blending {v[1]}->{v[2]} ({v[3]*100:.0f}%)" if v[0] else v[4]
+            },
+            'command': {
+                'title': '運動指令',
+                'getter': lambda s: s.command,
+                'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}"
+            },
+            'robot_pos': {
+                'title': '位置',
+                'getter': lambda s: s.latest_pos,
+                'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"
+            },
+            # --- 【v4.7.0 目標】新增 AI 輸出顯示 ---
+            'action_raw': {
+                'title': '原始動作 (Raw)',
+                'getter': lambda s: s.latest_action_raw,
+                'formatter': lambda v: np.array2string(v, precision=3, suppress_small=True, formatter={'float_kind': lambda x: f"{x:7.3f}"})
+            },
+            'final_ctrl': {
+                'title': '最終控制 (Ctrl)',
+                'getter': lambda s: s.latest_final_ctrl,
+                'formatter': lambda v: np.array2string(v, precision=3, suppress_small=True, formatter={'float_kind': lambda x: f"{x:7.3f}"})
+            }
+        }
 
         self._setup_ui()
 
@@ -257,22 +326,21 @@ class UIController:
 
 
     def _create_status_display(self):
+        # 【v4.7.0 重構】數據驅動的 UI 元素創建
+        # 此函式現在遍歷 _label_descriptors 字典，動態地創建所有狀態標籤。
+        # 這使得未來新增或修改狀態顯示變得極為簡單，只需修改字典即可。
         with ui.card():
             ui.label('即時狀態 (Real-time Status)').classes('text-lg')
-            with ui.grid(columns=3):
-                self.status_labels['mode'] = ui.label('模式: WALKING')
-                self.status_labels['input_mode'] = ui.label('輸入: KEYBOARD')
-                self.status_labels['sim_time'] = ui.label('時間: 0.00s')
-                self.status_labels['serial_status'] = ui.label('序列埠: Disconnected')
-                self.status_labels['gamepad_status'] = ui.label('搖桿: Disconnected')
-                self.status_labels['hardware_ai'] = ui.label('硬體AI: N/A')
-                self.status_labels['policy_status'] = ui.label(f'策略: {self.policy_manager.primary_policy_name}')
-            ui.separator()
-            ui.label('運動指令 (Command)').classes('font-bold')
-            self.status_labels['command'] = ui.label('vy: 0.00, vx: 0.00, wz: 0.00')
-            ui.label('機器人狀態 (Robot State)').classes('font-bold')
-            self.status_labels['robot_pos'] = ui.label('位置: [0.0, 0.0, 0.0]')
-            self.status_labels['robot_vel'] = ui.label('速度: [0.0, 0.0, 0.0]')
+            with ui.grid(columns=3): # 可根據標籤數量調整佈局
+                for key, desc in self._label_descriptors.items():
+                    # 為字典中的每一個描述符，創建一個 ui.label。
+                    # 初始文本從 state 中獲取，確保 UI 在創建時就顯示真實數據。
+                    with self.state.lock:
+                        initial_value = desc['getter'](self.state)
+                        initial_text = desc['formatter'](initial_value)
+                    
+                    # 將創建的 label 物件存儲起來，以便後續更新。
+                    self.status_labels[key] = ui.label(f"{desc['title']}: {initial_text}")
 
 
     def _create_onnx_display(self):
@@ -318,7 +386,7 @@ class UIController:
 
     def _send_serial_command(self):
         """
-        [v3.0.1] 從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
+        【v3.0.1】從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
         不再直接調用 serial_comm。
         """
         command_text = self.serial_command_buffer.value
@@ -328,54 +396,34 @@ class UIController:
             log.info(f"> {command_text}")
 
 
-    # 【v4.6.0 重構】 完整重寫此函式以修復關節滑桿的 bug 並提升程式碼清晰度
     def update_ui_elements(self):
         """
-        [v3.0.1] 定期從 SimulationState 讀取最新數據，並更新所有UI元件。
+        【v3.0.1】定期從 SimulationState 讀取最新數據，並更新所有UI元件。
         【v4.6.0 重構】重構關節控制 UI 的更新邏輯，並將數據獲取與 UI 更新分離。
+        【v4.7.0 重構】採用數據驅動模型，自動化更新所有由描述字典管理的標籤。
         """
         # =================================================================
-        # === 階段一：原子性地從 State 中獲取所有需要的數據快照 (Atomic Data Fetching) ===
+        # === 階段一：原子性地從 State 中獲取數據快照 (Atomic Data Snapshot) ===
         # =================================================================
-        # 透過在一個 'with self.state.lock:' 區塊內完成所有數據讀取，
-        # 我們確保了本幀 UI 所顯示的所有數據都來自同一個時間點，避免了數據不一致。
         with self.state.lock:
-            # --- 通用狀態 ---
-            mode = self.state.control_mode
-            input_mode = self.state.input_mode
-            sim_time = self.state.sim.data.time if self.state.sim and hasattr(self.state.sim, 'data') else 0.0
-            serial_connected = self.state.serial_is_connected
-            gamepad_connected = self.state.gamepad_is_connected
-            hw_running = self.state.hardware_is_running
-            hw_ai_active = self.state.hardware_ai_is_active
-            command = self.state.command.copy()
-            pos = self.state.latest_pos.copy()
+            # 我們傳遞整個 state 物件的參考，讓 getter 函式自己去解析。
+            # 這比手動複製每個變量更簡潔、更具擴展性。
+            state_snapshot = self.state
 
-            # --- AI 策略狀態 ---
-            pm = self.policy_manager
-            transitioning = pm.is_transitioning
-            alpha = pm.transition_alpha
-            src_policy = pm.source_policy_name
-            tgt_policy = pm.target_policy_name
-            primary_policy = pm.primary_policy_name
-
-            # --- 地形狀態 ---
-            terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
-
-            # --- 參數調校狀態 ---
+            # 【保留】非描述性數據仍需手動獲取
+            # 參數調校狀態 (用於滑桿)
             tuning_params_copy = {
                 'kp': self.state.tuning_params.kp,
                 'kd': self.state.tuning_params.kd,
                 'action_scale': self.state.tuning_params.action_scale,
                 'bias': self.state.tuning_params.bias
             }
-
-            # --- 關節控制狀態 ---
+            # 關節控制狀態
             joint_info_data = None
+            mode = self.state.control_mode # 模式判斷仍然需要
             if mode in ["JOINT_TEST", "MANUAL_CTRL"]:
                 num_motors = self.state.config.num_motors
                 default_pose = self.state.sim.default_pose.copy() if self.state.sim else np.zeros(num_motors)
-                
                 if mode == "JOINT_TEST":
                     idx = self.state.joint_test_index
                     joint_info_data = {
@@ -391,51 +439,45 @@ class UIController:
                         "target_angle": self.state.manual_final_ctrl[idx],
                         "actual_angle": self.state.latest_joint_positions[idx]
                     }
+            # 地形狀態
+            terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
 
         # =================================================================
         # === 階段二：使用數據快照安全地更新所有 UI 元件 (UI Update) ===
         # =================================================================
-        # 從這裡開始，我們不再訪問 self.state，只使用上面複製的局部變量。
-
-        # --- 更新通用狀態標籤 ---
-        self.status_labels['mode'].set_text(f"模式: {mode}")
-        self.status_labels['input_mode'].set_text(f"輸入: {input_mode}")
-        self.status_labels['sim_time'].set_text(f"時間: {sim_time:.2f}s")
-        self.status_labels['serial_status'].set_text('序列埠: Connected' if serial_connected else '序列埠: Disconnected')
-        self.status_labels['gamepad_status'].set_text('搖桿: Connected' if gamepad_connected else '搖桿: Disconnected')
         
-        ai_status_text = '硬體AI: N/A'
-        if mode == 'HARDWARE_MODE':
-            if hw_running:
-                ai_status_text = '硬體AI: Active' if hw_ai_active else '硬體AI: Standby'
-            else:
-                ai_status_text = '硬體AI: Starting...'
-        self.status_labels['hardware_ai'].set_text(ai_status_text)
+        # --- 【v4.7.0 新增】自動化更新所有由描述字典管理的標籤 ---
+        for key, desc in self._label_descriptors.items():
+            # 使用 .get() 進行最終防禦，確保即使描述字典和創建的標籤不匹配也不會崩潰。
+            if label_widget := self.status_labels.get(key):
+                try:
+                    value = desc['getter'](state_snapshot)
+                    formatted_text = desc['formatter'](value)
+                    label_widget.set_text(f"{desc['title']}: {formatted_text}")
+                except Exception as e:
+                    # 防禦性程式碼：如果 getter 或 formatter 出錯，只打印警告，不讓 UI 崩潰。
+                    log.warning(f"UI 更新失敗 for key '{key}': {e}")
         
-        self.status_labels['command'].set_text(f"vy: {command[0]:.2f}, vx: {command[1]:.2f}, wz: {command[2]:.2f}")
-        self.status_labels['robot_pos'].set_text(f"位置: [{pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f}]")
-
-        # --- 更新 AI 策略相關 UI ---
-        policy_text = f"策略: Blending {src_policy} -> {tgt_policy} ({alpha*100:.0f}%)" if transitioning else f"策略: {primary_policy}"
-        self.status_labels['policy_status'].set_text(policy_text)
+        # --- 更新非描述性/複雜的 UI 元件 (保留現有邏輯) ---
+        # 更新 AI 策略下拉選單
+        primary_policy = state_snapshot.policy_manager_ref.primary_policy_name
         if self.status_labels['policy_selector'].value != primary_policy:
             self.status_labels['policy_selector'].set_value(primary_policy)
-
-        # --- 更新地形選擇 UI ---
+        
+        # 更新地形選擇 UI
         if self.ui_terrain_selection != terrain_name:
             self.ui_terrain_selection = terrain_name
 
-        # --- 更新參數調校滑桿 ---
+        # 更新參數調校滑桿
         for key, slider in self.param_sliders.items():
             state_value = tuning_params_copy[key]
             if abs(slider.value - state_value) > 1e-4:
                 slider.set_value(state_value)
 
-        # --- 【v4.6.0 重構】更新關節控制 UI ---
+        # 更新關節控制 UI
         if joint_info_data and self.joint_control_slider is not None:
             idx = joint_info_data['index']
             actual_angle = joint_info_data['actual_angle']
-
             if joint_info_data['mode'] == 'offset':
                 target_abs = joint_info_data['default_angle'] + joint_info_data['offset']
                 text = f"模式: 偏移 | Offset={joint_info_data['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_angle:+.2f} | Err={target_abs - actual_angle:+.2f}"
@@ -443,45 +485,41 @@ class UIController:
                 target_abs = joint_info_data['target_angle']
                 text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_angle:+.2f} | Err={target_abs - actual_angle:+.2f}"
             
-            if self.joint_selector.value != idx:
-                self.joint_selector.set_value(idx)
-
+            if self.joint_selector.value != idx: self.joint_selector.set_value(idx)
             target_abs_float = float(target_abs)
             if self.joint_control_slider.value is not None and abs(self.joint_control_slider.value - target_abs_float) > 1e-4:
                 self.joint_control_slider.set_value(target_abs_float)
-
             self.status_labels['joint_info'].set_text(text)
 
-        # --- 更新 ONNX 觀察向量和日誌 ---
+        # 更新 ONNX 觀察向量和日誌
         self._update_onnx_labels()
         log_content = "\n".join(log_queue)
         if self.log_area.value != log_content:
             self.log_area.set_value(log_content)
 
 
-    # 【v4.4.7 重構】徹底重寫 _update_onnx_labels 方法
     def _update_onnx_labels(self):
         """
         【v4.4.7 重構】
         從 state.std_obs 這個單一權威數據源讀取數據並更新 UI。
-        這個新實現解決了數據錯位、缺失和與模型耦合的所有問題。
+        【v4.7.0 修改】新增固定寬度數字格式化，提升可讀性。
         """
         with self.state.lock:
-            # 從 state 中安全地獲取標準化觀測數據字典的快照
             std_obs_snapshot = self.state.std_obs.copy()
 
-        # 遍歷 UI 中所有已知的 ONNX 標籤
         for comp_name, label_widget in self.onnx_input_labels.items():
-            # 從觀測數據快照中獲取對應的數據
             value_slice = std_obs_snapshot.get(comp_name)
 
-            # 根據數據是否存在來決定顯示內容
             if value_slice is not None:
-                # 如果數據存在，格式化並顯示它
-                vec_str = np.array2string(value_slice, precision=2, suppress_small=True, max_line_width=30)
+                # 【v4.7.0 修改】使用固定寬度的數字格式化，類似 pyserial_console.py
+                # 這個 formatter 確保每個數字都佔用 7 個字符寬度，小數點後保留 3 位。
+                # 這將使得所有向量的排版都非常整齊，提升可讀性。
+                vec_str = np.array2string(value_slice, 
+                                          precision=3, 
+                                          suppress_small=True, 
+                                          formatter={'float_kind': lambda x: f"{x:7.3f}"})
                 label_widget.set_text(f'{comp_name}: {vec_str}')
             else:
-                # 如果數據不存在（例如在第一幀），顯示 N/A
                 label_widget.set_text(f'{comp_name}: N/A')
 
 

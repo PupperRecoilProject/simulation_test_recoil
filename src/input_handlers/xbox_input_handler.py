@@ -37,7 +37,7 @@ class XboxInputHandler:
     # 【重構】_update_loop 函式
     def _update_loop(self) -> None:
         """
-        [v3.0.1] 持續從搖桿讀取數據，並將所有用戶意圖作為事件發布。
+        【v3.0.1】持續從搖桿讀取數據，並將所有用戶意圖作為事件發布。
         此函式不再包含任何業務邏輯，只負責翻譯輸入。
         """
         last_input_state = {}

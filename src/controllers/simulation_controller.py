@@ -364,7 +364,7 @@ class SimulationController:
 
     def on_serial_command_send_requested(self, command: str):
         """
-        [v3.0.1] 處理序列埠命令發送請求。
+        【v3.0.1】處理序列埠命令發送請求。
         將命令安全地傳遞給 SerialCommunicator。
         """
         if self.serial_comm and self.serial_comm.is_connected:
