@@ -147,8 +147,8 @@ def main() -> None:
 
     # --- 啟動 UI ---
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
-    ui.run(title="Pupper Robot Console", port=8080)
+    ui.run(title="Pupper Robot Console", port=8080, reload=False)
 
 
-if __name__ in {"__main__", "__mp_main__"}:
+if __name__ == "__main__":
     main()
