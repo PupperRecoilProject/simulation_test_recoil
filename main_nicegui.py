@@ -147,7 +147,14 @@ def main() -> None:
 
     # --- 啟動 UI ---
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
-    ui.run(title="Pupper Robot Console", port=8080)
+    # 【v4.6.1 修改】 新增 reload=False 參數
+    # 設計理由：我們的應用程式架構包含多個獨立的背景執行緒 (Simulation, Hardware, Xbox)
+    # 和一個中心化的狀態物件 (SimulationState)。NiceGUI 的自動熱重載機制在重載模組時，
+    # 可能會導致對舊的、已廢棄的物件實例的引用（特別是在定時器和事件回呼中），
+    # 從而引發難以預測的競態條件和 KeyError。
+    # 禁用熱重載可以確保每次運行時應用程式的狀態都是乾淨、一致的，
+    # 從根本上消除了這類問題，保證了開發和除錯的穩定性。
+    ui.run(title="Pupper Robot Console", port=8080, reload=False)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
