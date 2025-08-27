@@ -47,6 +47,11 @@ class UIController:
         self.serial_comm = state.serial_communicator_ref
         self.xbox_handler = state.xbox_handler_ref
 
+        # 【v4.6.1 新增】 初始化 UI 就緒旗標
+        # 這個旗標作為一個安全鎖，確保在所有 UI 元件都聲明完畢之前，
+        # update_ui_elements() 定時器即使被觸發也不會執行更新邏輯。
+        self._ui_ready = False
+
         self.status_labels = {}
         self.param_sliders = {}
         self.onnx_input_labels = {}
@@ -100,6 +105,13 @@ class UIController:
                 self._create_log_panel()
 
         ui.timer(0.1, self.update_ui_elements)
+
+        # 【v4.6.1 新增】 設置 UI 就緒旗標
+        # 在所有 UI 元件的聲明程式碼 (如 ui.label, ui.card 等) 執行完畢之後，
+        # 並且在 _setup_ui 函式返回之前，我們將此旗標設置為 True。
+        # 這標誌著 Python 端的 UI 結構已經準備就緒。
+        log.info("UI 元件已聲明，設置 UI 為就緒狀態。")
+        self._ui_ready = True
 
 
     # --- UI 佈局函式 ---
@@ -329,13 +341,19 @@ class UIController:
             log.info(f"> {command_text}")
 
 
-    # 【v4.6.0 重構】 完整重寫此函式以修復關節滑桿的 bug 並提升程式碼清晰度
     def update_ui_elements(self):
         """
-        [v3.0.1] 定期從 SimulationState 讀取最新數據，並更新所有UI元件。
+        【v3.0.1】 定期從 SimulationState 讀取最新數據，並更新所有UI元件。
         【v4.6.0 重構】重構關節控制 UI 的更新邏輯，並將數據獲取與 UI 更新分離。
-        
+        【v4.6.1 修改】在函式開頭增加對 _ui_ready 旗標的檢查。
         """
+
+        # 【v4.6.1 新增】 UI 就緒安全檢查
+        # 這是防止啟動時競態條件的關鍵防線。如果 UI 尚未完全設置好，
+        # (即 _setup_ui() 還未執行到最後一行), 我們直接返回，跳過本次更新。
+        if not self._ui_ready:
+            return
+        
         # =================================================================
         # === 階段一：原子性地從 State 中獲取所有需要的數據快照 (Atomic Data Fetching) ===
         # =================================================================
