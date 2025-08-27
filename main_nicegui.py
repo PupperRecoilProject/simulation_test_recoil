@@ -21,6 +21,8 @@ import sys
 import argparse
 import time
 from nicegui import ui, app
+# 【v4.5.3 最終權威修正】 導入 ctypes 以調用 Windows API
+import ctypes
 
 # --- 我們的模組導入 ---
 from src.core.config import load_config
@@ -75,7 +77,19 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
 
 # 【v4.3.2 修改】 main 函式
 def main() -> None:
-    """【v4.5.0 最終修正版】初始化所有組件並作為全局協調者。"""
+    """【v4.5.3 最終修正版】初始化所有組件並作為全局協調者。"""
+    
+    # 【v4.5.3 最終權威修正 - CPU 滿載問題】
+    # 根本原因：在 Windows 上，預設的 time.sleep() 精度有限 (約 15ms)，
+    # 高頻率的短時休眠會導致作業系統排程器「忙碌-等待」，造成 CPU 假性滿載。
+    # 解決方案：在程式啟動時，請求 Windows 提高本程式的計時器精度至 1ms。
+    if sys.platform == 'win32':
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+            log.info("✅ 已請求將 Windows 計時器精度設置為 1ms。")
+        except Exception as e:
+            log.warning(f"⚠️ 無法設置 Windows 計時器精度: {e}")
+
     parser = argparse.ArgumentParser(description="Pupper 機器人控制器")
     parser.add_argument("--no-sim", action="store_true", help="在沒有 MuJoCo 模擬的情況下運行")
     args = parser.parse_args()
@@ -179,6 +193,15 @@ def main() -> None:
         if xbox_handler: xbox_handler.close()
         if hw_controller: hw_controller.shutdown()
         if serial_comm: serial_comm.close()
+        
+        # 【v4.5.3 最終權威修正】 在程式退出時，恢復 Windows 系統的預設計時器精度
+        if sys.platform == 'win32':
+            try:
+                ctypes.windll.winmm.timeEndPeriod(1)
+                log.info("✅ 已恢復 Windows 預設計時器精度。")
+            except Exception as e:
+                log.warning(f"⚠️ 無法恢復 Windows 計時器精度: {e}")
+        
         log.info("✅ 所有資源已釋放。")
 
     app.on_startup(start_background_threads)

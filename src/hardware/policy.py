@@ -173,8 +173,8 @@ class PolicyManager:
             base_obs = self.observation_manager.get_observation()
             
             # 【時序檢驗探針 2】 記錄 AI 決策時的時間戳
-            decision_time = time.perf_counter()
-            log.info(f"[PolicyManager] AI 決策 @ {decision_time:.6f}")
+            #decision_time = time.perf_counter()
+            #log.info(f"[PolicyManager] AI 決策 @ {decision_time:.6f}")
             
             self.obs_histories[name].append(base_obs)
             
