@@ -2,7 +2,7 @@
 import os
 import sys
 from datetime import datetime
-import subprocess  # 【新增】匯入 subprocess 模組
+import subprocess
 
 # --- 組態設定 ---
 
@@ -96,21 +96,20 @@ def generate_tree_structure(root_dir, project_name):
 
 
 # --- 程式碼彙整主函式 ---
-def generate_code_dump(root_dir, output_filename_base, project_name): # 函式簽名改變，接收基礎文件名
+def generate_code_dump(root_dir, output_filename_base, project_name, git_branch):
     if not os.path.isdir(root_dir):
         print(f"錯誤：目錄 '{root_dir}' 不存在。")
         return
 
-    # 【修改】指定輸出目錄並確保其存在
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
-    full_output_path = os.path.join(output_dir, output_filename_base) # 構造完整輸出路徑
+    full_output_path = os.path.join(output_dir, output_filename_base)
 
     processed_files_count = 0
     
     try:
         with open(full_output_path, 'w', encoding='utf-8', errors='ignore') as outfile:
-            # 【修改】在檔案開頭寫入 Git 分支資訊
+            # 在檔案開頭寫入 Git 分支資訊
             outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
             if git_branch:
                 outfile.write(f"# Git 當前分支: {git_branch}\n")
@@ -119,7 +118,6 @@ def generate_code_dump(root_dir, output_filename_base, project_name): # 函式�
             outfile.write("#" + "-" * 78 + "#\n")
             outfile.write("#" + " " * 30 + "專案目錄結構" + " " * 30 + "#\n")
             outfile.write("#" + "-" * 78 + "#\n\n")
-            # 【修改】將 project_name 傳入
             tree_structure = generate_tree_structure(root_dir, project_name)
             outfile.write(tree_structure)
             outfile.write("\n\n\n")
@@ -129,20 +127,18 @@ def generate_code_dump(root_dir, output_filename_base, project_name): # 函式�
             outfile.write("#" + "-" * 78 + "#\n\n")
             
             for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True):
-                # 【修改】在此處過濾掉不應遍歷的目錄 (包括 output/)
                 dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
 
                 for filename in sorted(filenames):
-                    # =============================================================
-                    # ===        【核心修正：跳過舊的輸出檔】                     ===
-                    # =============================================================
-                    is_dynamic_dump = filename.startswith(f"{project_name}_dump_") and filename.endswith(".txt")
-                    is_legacy_dump = filename == "project_dump.txt"
-
-                    if is_dynamic_dump or is_legacy_dump:
+                    # 檢查是否為 dump 檔案的通用模式
+                    is_any_dump_file = ("_dump_" in filename and filename.endswith(".txt")) or \
+                                     (filename == "project_dump.txt")
+                    
+                    # 確保不會跳過正在寫入的當前檔案
+                    is_current_output_file = os.path.join(dirpath, filename) == full_output_path
+                    if is_any_dump_file and not is_current_output_file:
                         print(f"正在跳過 (舊的輸出檔): {filename}")
                         continue
-                    # =============================================================
 
                     file_path = os.path.join(dirpath, filename)
                     relative_path = os.path.relpath(file_path, root_dir).replace(os.sep, '/')
@@ -181,14 +177,13 @@ def generate_code_dump(root_dir, output_filename_base, project_name): # 函式�
 
         print("\n" + "=" * 80)
         print(f"✅ 成功！共處理了 {processed_files_count} 個檔案。")
-        print(f"輸出結果已儲存至: {os.path.abspath(full_output_path)}") # 【修改】顯示完整路徑
+        print(f"輸出結果已儲存至: {os.path.abspath(full_output_path)}")
         print("=" * 80)
 
     except IOError as e:
-        print(f"錯誤：無法寫入輸出檔案 '{full_output_path}'。 ({e})") # 【修改】顯示完整路徑
+        print(f"錯誤：無法寫入輸出檔案 '{full_output_path}'。 ({e})")
     except Exception as e:
         print(f"發生未預期的錯誤: {e}")
-
 
 if __name__ == "__main__":
     script_path = os.path.dirname(os.path.abspath(__file__))
@@ -200,17 +195,29 @@ if __name__ == "__main__":
     
     project_name = os.path.basename(os.path.abspath(project_root))
     timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    # 【修改】只生成基礎文件名，路徑拼接在 generate_code_dump 內部處理
-    output_filename_base = f"{project_name}_dump_{timestamp_str}.txt"
     
     # 【新增】呼叫函式以獲取 Git 分支名稱
     current_branch = get_git_branch()
+    
+    # =================================================================
+    # ===             【核心修改：根據分支名稱產生檔名】            ===
+    # =================================================================
+    if current_branch:
+        # 【新增說明】清理分支名稱，將 '/' 替換為 '-'，以避免路徑問題。
+        # 例如 'feature/login' -> 'feature-login'
+        safe_branch_name = current_branch.replace('/', '-')
+        output_filename_base = f"{project_name}_{safe_branch_name}_dump_{timestamp_str}.txt"
+    else:
+        # 如果不在 Git 倉庫中，則使用舊的檔名格式
+        output_filename_base = f"{project_name}_dump_{timestamp_str}.txt"
+    # =================================================================
     
     print(f"設定專案根目錄為: {os.path.abspath(project_root)}")
     # 【新增】在控制台輸出中也顯示分支名稱
     if current_branch:
         print(f"偵測到目前 Git 分支為: {current_branch}")
     print(f"將從 '{os.path.abspath(target_dir)}' 開始掃描...")
+    # 【修改】輸出提示現在會顯示包含分支的新檔名
     print(f"輸出檔案將命名為: {output_filename_base} (儲存於 output/ 目錄)")
     
     # 【修改】將獲取到的分支名稱傳入主函式
