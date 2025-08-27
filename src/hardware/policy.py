@@ -236,8 +236,9 @@ class PolicyManager:
             # 如果不在轉換中，直接使用主要模型的輸出
             final_action = all_actions[self.primary_policy_name]
 
-        self.last_action[:] = final_action # 更新 last_action 供下一幀使用
-        return primary_onnx_input, final_action # 返回主要模型的輸入和最終融合後的動作
+        # 【v4.7.1b 修改】移除內部狀態 self.last_action，數據流完全由 state 管理
+        return primary_onnx_input, final_action
+    
 
     # 【v4.4.7 刪除】 get_action_for_hardware 方法
     # 由於 get_action 現在是從 state.std_obs 讀取數據，它已經與數據源（模擬器或硬體）解耦。

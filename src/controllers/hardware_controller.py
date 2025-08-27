@@ -224,9 +224,13 @@ class HardwareController:
             try: self.ser.write(b"stop\n")
             except serial.SerialException as e: log.error(f"發送停止指令失敗: {e}")
 
-    # 【v4.3.2 修改】 _perform_ai_step 方法
+
     def _perform_ai_step(self):
-        """(內部) 執行單步 AI 計算與控制。"""
+        """
+        (內部) 執行單步 AI 計算與控制。
+        【v4.3.2 修改】 _perform_ai_step 方法
+        【v4.7.1b 修改】 _perform_ai_step 方法，修復 last_action 時序
+        """
         # 【v4.3.2 刪除】 不再自行構建觀測向量
         # observation = self.construct_observation()
         # if observation.size == 0: return
@@ -236,9 +240,10 @@ class HardwareController:
         # PolicyManager 會自動從 state.std_obs 獲取數據。
         _, action_raw = self.policy.get_action(self.state.command)
         
-        # 【v4.3.2 刪除】 last_action 的更新已轉移到 SimulationState.on_tick_update
-        # with self.lock:
-        #     self.hw_state_data.last_action[:] = action_raw
+        # 【v4.7.1b 新增】在硬體模式下，也需要遵循正確的時序來更新 last_action
+        # 在發送指令之前，將本幀的動作寫入 state，供下一幀使用。
+        with self.state.lock:
+            self.state.raw_last_action = action_raw.copy()
         
         action_scale = self.config.initial_tuning_params.action_scale
         default_pose_hardware = np.zeros(12)
@@ -253,45 +258,42 @@ class HardwareController:
                 log.error("AI 步驟中發送指令失敗，連接可能已斷開。")
                 self._set_internal_state(HWState.FAILED)
 
-    # 【v4.3.2 修改】 parse_policy_stream 方法
-    # 【v4.6.0 修改】 增加 strip() 並強化錯誤處理
+
     def parse_policy_stream(self, line: str):
         """
+        【v4.3.2 修改】 parse_policy_stream 方法
         【v4.4.2 重構】嚴格按照數據契約解析 Teensy 數據流。
         【v4.6.0 修改】增加 .strip() 來移除換行符，並強化錯誤日誌記錄。
+        【v4.7.1b 修改】修復了使用未經清理的行進行分割的 Bug。
 
         職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
         """
         try:
-            # 【v4.6.0 修改】 在分割前，使用 .strip() 移除字串頭尾的空白字符，特別是尾部的 '\r\n'
+            # 【v4.7.1b 修正】必須使用 strip() 後的乾淨行來進行後續所有操作
             clean_line = line.strip()
-            if not clean_line:  # 如果是空行則直接忽略
+            if not clean_line:
                 return
             
-            parts = line.split(',')
+            # 【v4.7.1b 修正】從 clean_line 分割，而不是原始的 line
+            parts = clean_line.split(',')
 
             if len(parts) != 34:
-                # 【v4.6.0 修改】 將警告升級為更詳細的日誌，方便除錯
                 log.warning(f"數據幀欄位數量錯誤。預期 34，收到 {len(parts)}。原始數據: '{clean_line}'")
                 return
             
             data_vec = np.array(parts, dtype=np.float32)
             
             with self.state.lock:
-                # 【v4.4.2 修改】將 Teensy 的數據寫入到新的、無 '_world' 後綴的屬性中
                 self.state.raw_torso_angular_velocity[:] = data_vec[0:3]
-                
-                # 【v4.4.2 新增】將 Teensy 數據寫入新增的屬性
                 self.state.raw_gravity_vector[:] = data_vec[3:6]
                 self.state.raw_accelerometer[:] = data_vec[6:9]
                 self.state.raw_pitch_rad = data_vec[9]
                 self.state.raw_joint_positions[:] = data_vec[10:22]
                 self.state.raw_joint_velocities[:] = data_vec[22:34]
         
-        # 【v4.6.0 修改】 捕獲異常時，打印更詳細的錯誤日誌，而不是靜默 pass
         except (ValueError, IndexError) as e:
-            log.error(f"解析數據幀失敗: {e}。原始數據: '{line.strip()}'")
-            # 不再使用 pass，錯誤應該被明確報告
+            # 【v4.7.1b 增強】在日誌中同時打印 clean_line 和原始 line，方便調試
+            log.error(f"解析數據幀失敗: {e}。Cleaned Line: '{line.strip()}', Original Line: '{repr(line)}'")
 
 
     # 【v4.3.2 刪除】 construct_observation 方法
