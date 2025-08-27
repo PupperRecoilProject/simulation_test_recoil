@@ -135,12 +135,25 @@ def main() -> None:
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
-        simulation_controller.stop()
-        hw_controller.shutdown()
-        serial_comm.close()
-        xbox_handler.close()
-        sim.close()
-        log.info("✅ All resources released.")
+        # 停止所有背景執行緒
+        if simulation_controller:
+            simulation_controller.stop()
+        #if rendering_thread:
+        #    rendering_thread.stop()
+        #    rendering_thread.join(timeout=2) # 等待渲染執行緒結束
+
+        # 關閉其他資源
+        if xbox_handler:
+            xbox_handler.close()
+        if hw_controller:
+            hw_controller.shutdown()
+        if serial_comm:
+            serial_comm.close()
+
+        # 確保 sim.close() 已經被移除！
+        # sim.close() # <--- 刪除或註解掉這一行
+
+        log.info("✅ 所有資源已釋放。")
 
     app.on_startup(start_background_threads)
     app.on_shutdown(cleanup_resources)
