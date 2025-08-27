@@ -80,23 +80,23 @@ if ($Mode -in @('summary','focus')) {
 #
 #只輸出最新一筆，重點版（±3 行）
 #
-#.\export_commit_once.ps1 -Mode focus
+#.\test\export_commit_once.ps1 -Mode focus
 #
 #
 #指定某筆 commit（貼短 hash 或完整 hash）
-#      .\export_commit_once.ps1 -Mode focus -Commit 91d1d3b -Output one_commit.txt
+#      .\test\export_commit_once.ps1 -Mode focus -Commit 91d1d3b -Output one_commit.txt
 #
 #
 #只要摘要與檔案清單（最精簡）
 #
-#.\export_commit_once.ps1 -Mode summary -Commit HEAD
+#.\test\export_commit_once.ps1 -Mode summary -Commit HEAD
 #
 #
 #完整 diff（稽核用）
 #
-#.\export_commit_once.ps1 -Mode full -Commit HEAD
+#.\test\export_commit_once.ps1 -Mode full -Commit HEAD
 #
 #
 #只看某些路徑或副檔名
 #
-#.\export_commit_once.ps1 -Mode focus -Commit HEAD -Paths "src","*.xml"
+#.\test\export_commit_once.ps1 -Mode focus -Commit HEAD -Paths "src","*.xml"

@@ -10,11 +10,11 @@
 - 自訂輸出檔名與 diff context 範圍
 
 使用範例
-  .\export_commits.ps1
-  .\export_commits.ps1 -Mode summary -Since "2025-08-01" -Until "2025-08-27"
-  .\export_commits.ps1 -Mode focus -Context 5 -Author "Weiyu"
-  .\export_commits.ps1 -Mode full -Grep "policy","param_keys"
-  .\export_commits.ps1 -Paths "src","configs\robot.yaml"
+  .\test\export_commits.ps1
+  .\test\export_commits.ps1 -Mode summary -Since "2025-08-01" -Until "2025-08-27"
+  .\test\export_commits.ps1 -Mode focus -Context 5 -Author "Weiyu"
+  .\test\export_commits.ps1 -Mode full -Grep "policy","param_keys"
+  .\test\export_commits.ps1 -Paths "src","configs\robot.yaml"
 #>
 
 [CmdletBinding()]
