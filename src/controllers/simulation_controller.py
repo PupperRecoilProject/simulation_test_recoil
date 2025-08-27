@@ -125,7 +125,15 @@ class SimulationController:
             self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
 
+        # 【v4.7.2 修正】用於跨幀傳遞上一幀動作的局部變數
+        action_from_previous_frame = np.zeros(self.config.num_motors)
+
         while self._running.is_set():
+            # 【v4.7.2 新增】在每一幀的開始，將上一幀的動作寫入 state
+            # 這是確保 ObservationManager 讀取到正確時序數據的關鍵
+            with self.state.lock:
+                self.state.raw_last_action = action_from_previous_frame.copy()
+
             # ======================== [v4.0] 請求處理階段 ========================
             # 在一個極短的鎖定範圍內，原子性地讀取並清除所有掛起的請求。
             with self.state.lock:
@@ -189,6 +197,11 @@ class SimulationController:
             # 這是解決硬體模式下 UI 數據靜止問題的關鍵。
             if self.state.observation_manager_ref:
                 self.state.observation_manager_ref.update_all_observations()
+
+            # 【v4.7.2 修正】在每一幀的末尾，暫存當前幀的動作以供下一幀使用
+            with self.state.lock:
+                # latest_action_raw 是由 _simulation_step 或 _perform_ai_step 更新的
+                action_from_previous_frame = self.state.latest_action_raw.copy()
 
             # --- 步驟 3: 渲染 (在所有可視模式下執行) ---
             if not is_headless:
@@ -537,13 +550,6 @@ class SimulationController:
             self.state.latest_onnx_input = onnx_input.flatten()
             self.state.latest_action_raw = action_final
             self.state.latest_final_ctrl = final_ctrl
-
-        # 【v4.7.1b 新增】將當前幀的 AI 動作賦值給 state.raw_last_action
-        # 這個操作必須在 ObservationManager 更新之前、在 get_action 之後完成
-        # 由於 _simulation_step 總是在 update_all_observations 之前被調用，
-        # 將其放在這裡可以確保下一幀的 ObservationManager 會讀取到這一幀的結果。
-        with self.state.lock:
-            self.state.raw_last_action = action_final.copy()
 
         # 執行物理模擬的迴圈不變
         target_time = self.sim.data.time + self.config.control_dt

@@ -147,7 +147,19 @@ def main() -> None:
 
     # --- 啟動 UI ---
     print("🚀 正在啟動 NiceGUI 控制台... 請打開您的瀏覽器。")
-    ui.run(title="Pupper Robot Console", port=8080, reload=False)
+    try:
+        ui.run(title="Pupper Robot Console", port=8080, reload=False)
+    except KeyboardInterrupt:
+        # 當用戶按下 Ctrl+C 或關閉視窗時，Uvicorn 會拋出 KeyboardInterrupt。
+        # 我們在這裡捕獲它，以防止它在終端顯示為一個 "錯誤"。
+        # app.on_shutdown 註冊的 cleanup_resources 會被自動調用，
+        # 我們只需要在這裡提供一個乾淨的退出點即可。
+        print("\n👋 收到終止信號，正在優雅退出...")
+    except Exception as e:
+        # 捕獲其他可能的異常
+        log.error(f"UI 運行時發生未知錯誤: {e}", exc_info=True)
+        # 即使 UI 出錯，我們也嘗試執行清理
+        cleanup_resources()
 
 
 if __name__ == "__main__":
