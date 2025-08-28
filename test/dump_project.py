@@ -5,27 +5,20 @@ import os
 import sys
 from datetime import datetime
 import subprocess
-import argparse # 引入 argparse 模組
+import argparse
 
-# --- 組態設定 ---
+# --- 【新增】引入 nbformat 並處理導入錯誤 ---
+try:
+    import nbformat
+except ImportError:
+    print("警告：'nbformat' 模組未安裝。'.ipynb' 檔案將以原始 JSON 格式顯示。")
+    print("若要優化 .ipynb 輸出，請執行：pip install nbformat")
+    nbformat = None
+# ---------------------------------------------
 
-# 1. 要忽略的資料夾名稱
-EXCLUDE_DIRS = {
-    '.git', 'node_modules', '__pycache__', 'venv', '.vscode',
-    'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'venv_test_no_mujoco',
-    'output' # 【既有】忽略 output 目錄
-}
-
-# 2. 定義一個「內容跳過清單」。
-SKIP_CONTENT_EXTENSIONS = {
-    '.onnx', '.stl', '.ort', '.png', '.jpg', '.jpeg',
-    '.exe', '.dll', '.so', '.o', '.zip', '.rar', '.gz',
-    '.gif', '.bmp', '.ico', '.mp3', '.mp4', '.avi',
-    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-    '.pyc', '.pyo', '.lock', '.swp', '.swo','.pyc',
-}
-
-# 3. (可選) 如果只想包含特定類型的檔案，可以設定這個清單
+# --- 組態設定 (無須修改) ---
+EXCLUDE_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.vscode', 'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'output'}
+SKIP_CONTENT_EXTENSIONS = {'.onnx', '.stl', '.ort', '.png', '.jpg', '.jpeg', '.exe', '.dll', '.so', '.o', '.zip', '.rar', '.gz', '.gif', '.bmp', '.ico', '.mp3', '.mp4', '.avi', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pyc', '.pyo', '.lock', '.swp', '.swo'}
 INCLUDE_EXTENSIONS = set()
 
 
@@ -52,6 +45,7 @@ def get_git_branch():
 
 # --- 樹狀結構產生函式 (無須修改) ---
 def generate_tree_structure(root_dir, project_name):
+    # ... (此函式內容不變，為節省空間已省略)
     tree_lines = []
     
     def _generate_tree_recursive(current_dir, prefix=""):
@@ -96,6 +90,41 @@ def generate_tree_structure(root_dir, project_name):
     return "\n".join(tree_lines)
 
 
+# --- 【新增】.ipynb 檔案解析函式 ---
+def parse_ipynb_file(file_path):
+    """
+    解析 .ipynb 檔案，提取程式碼和 Markdown 儲存格，並格式化為易讀的文字。
+    """
+    if not nbformat:
+        # 如果 nbformat 模組沒有成功導入，則退回原始讀取模式
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f"[nbformat 未安裝，顯示原始 JSON 內容]\n\n" + f.read()
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            nb = nbformat.read(f, as_version=4)
+        
+        output_parts = []
+        for i, cell in enumerate(nb.cells):
+            output_parts.append(f"#{'-'*25} In[{i+1}]: Cell type: {cell.cell_type} {'-'*25}\n")
+            
+            if cell.cell_type == 'code':
+                # 對於程式碼儲存格，直接加入原始碼
+                output_parts.append(cell.source)
+            elif cell.cell_type == 'markdown':
+                # 對於 Markdown 儲存格，將每一行轉換為註解
+                commented_markdown = '\n'.join([f"# {line}" for line in cell.source.split('\n')])
+                output_parts.append(commented_markdown)
+            
+            output_parts.append('\n\n')
+            
+        return "".join(output_parts)
+    except Exception as e:
+        # 如果解析出錯，也退回原始讀取模式，並附上錯誤訊息
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f"[解析 .ipynb 檔案時發生錯誤: {e}]\n\n" + f.read()
+
+
 # --- 程式碼彙整核心邏輯 ---
 
 def write_file_content_to_dump(outfile, file_path, root_dir):
@@ -114,7 +143,11 @@ def write_file_content_to_dump(outfile, file_path, root_dir):
         
         _, extension = os.path.splitext(file_path)
         
-        if extension.lower() in SKIP_CONTENT_EXTENSIONS:
+        # --- 【核心修改點】 ---
+        if extension.lower() == '.ipynb':
+            content = parse_ipynb_file(file_path)
+            outfile.write(content)
+        elif extension.lower() in SKIP_CONTENT_EXTENSIONS:
             file_size = os.path.getsize(file_path)
             outfile.write(f"[Content skipped for file type '{extension}': {relative_path} ({file_size / 1024:.2f} KB)]")
         else:
@@ -124,6 +157,7 @@ def write_file_content_to_dump(outfile, file_path, root_dir):
             except (UnicodeDecodeError, IOError):
                 file_size = os.path.getsize(file_path)
                 outfile.write(f"[Content skipped due to read error: {relative_path} ({file_size / 1024:.2f} KB)]")
+        # --- 【修改結束】 ---
         
         outfile.write(f"\n\n{'-' * len(end_header)}\n")
         outfile.write(f"{end_header}\n")
@@ -221,6 +255,8 @@ def print_summary(count, path):
     print(f"輸出結果已儲存至: {os.path.abspath(path)}")
     print("=" * 80)
 
+# --- 主程式進入點 (if __name__ == "__main__":) ---
+# ... (此區塊內容不變，為節省空間已省略)
 if __name__ == "__main__":
     # --- 【核心修改】設定命令列參數，支援指定檔案 ---
     parser = argparse.ArgumentParser(
@@ -240,9 +276,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # ----------------------------------------------------
 
+    #【建議修改】移除 os.chdir，讓路徑處理更可靠
     script_path = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_path)
-    # os.chdir(project_root) # <--- 【核心修改】將此行註解掉！    
+    # 假設 dump_project.py 在專案的某個子目錄 (如 'test/')
+    project_root = os.path.dirname(script_path) 
+    
+    # os.chdir(project_root) # <--- 建議註解或刪除此行
+
     project_name = os.path.basename(os.path.abspath(project_root))
     current_branch = get_git_branch()
     
@@ -283,6 +323,7 @@ if __name__ == "__main__":
         if not valid_files:
             print("\n錯誤：所有指定的路徑都無效，沒有任何檔案可以處理。")
         else:
+            # 傳入絕對路徑列表
             generate_code_dump_from_files(valid_files, project_root, output_filename_base, project_name, current_branch)
     else:
         # **目錄模式**
