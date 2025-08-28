@@ -61,6 +61,21 @@ onnx_models:
       - 'last_action'
       - 'commands'
 
+  fire_on_recoil_51: 
+    path: "models/pupper_ppo_policy_e2e_101580800.onnx"
+    # fire_on_recoil_51 模型也使用新的觀察配方
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands'
+      - 'firearm_recoil_warming'
+
+
 # 模型平滑切換設定
 policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
 # ==================================
