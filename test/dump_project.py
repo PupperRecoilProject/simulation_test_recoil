@@ -1,8 +1,11 @@
+#python test\dump_project.py -o core_logic.txt mujoco_playground\_src\locomotion\pupper\joystick.py mujoco_playground\_src\locomotion\pupper\joystickwithgun.py mujoco_playground\_src\locomotion\pupper\pupper_locomotion_test.ipynb
+
 # test/dump_project.py
 import os
 import sys
 from datetime import datetime
 import subprocess
+import argparse # 引入 argparse 模組
 
 # --- 組態設定 ---
 
@@ -37,9 +40,7 @@ def get_git_branch():
         # 'git rev-parse --abbrev-ref HEAD' 是獲取當前分支名稱的標準且安全的方式
         result = subprocess.check_output(
             ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-            stderr=subprocess.PIPE, # 抑制錯誤訊息輸出到控制台
-            text=True, # 將輸出解碼為文字
-            encoding='utf-8'
+            stderr=subprocess.PIPE, text=True, encoding='utf-8'
         )
         return result.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -95,12 +96,47 @@ def generate_tree_structure(root_dir, project_name):
     return "\n".join(tree_lines)
 
 
-# --- 程式碼彙整主函式 ---
-def generate_code_dump(root_dir, output_filename_base, project_name, git_branch):
-    if not os.path.isdir(root_dir):
-        print(f"錯誤：目錄 '{root_dir}' 不存在。")
-        return
+# --- 程式碼彙整核心邏輯 ---
 
+def write_file_content_to_dump(outfile, file_path, root_dir):
+    """將單一檔案的內容寫入到彙整檔中 (重構出的共用函式)"""
+    relative_path = os.path.relpath(file_path, root_dir).replace(os.sep, '/')
+    try:
+        print(f"正在處理: {relative_path}")
+
+        start_header = f"--- START OF FILE: {relative_path} ---"
+        end_header   = f"---  END OF FILE: {relative_path}  ---"
+        separator    = "=" * 80
+        
+        outfile.write(f"{separator}\n")
+        outfile.write(f"{start_header}\n")
+        outfile.write(f"{'-' * len(start_header)}\n\n")
+        
+        _, extension = os.path.splitext(file_path)
+        
+        if extension.lower() in SKIP_CONTENT_EXTENSIONS:
+            file_size = os.path.getsize(file_path)
+            outfile.write(f"[Content skipped for file type '{extension}': {relative_path} ({file_size / 1024:.2f} KB)]")
+        else:
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='strict') as infile:
+                    outfile.write(infile.read())
+            except (UnicodeDecodeError, IOError):
+                file_size = os.path.getsize(file_path)
+                outfile.write(f"[Content skipped due to read error: {relative_path} ({file_size / 1024:.2f} KB)]")
+        
+        outfile.write(f"\n\n{'-' * len(end_header)}\n")
+        outfile.write(f"{end_header}\n")
+        outfile.write(f"{separator}\n\n")
+        
+        return 1 # 表示成功處理 1 個檔案
+    except Exception as e:
+        print(f"警告：無法讀取 {relative_path} ({e})")
+        return 0 # 表示處理失敗
+
+# 【模式一】完整目錄掃描函式
+def generate_code_dump_from_directory(root_dir, output_filename_base, project_name, git_branch):
+    """掃描整個目錄並產生彙整檔"""
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
     full_output_path = os.path.join(output_dir, output_filename_base)
@@ -109,116 +145,146 @@ def generate_code_dump(root_dir, output_filename_base, project_name, git_branch)
     
     try:
         with open(full_output_path, 'w', encoding='utf-8', errors='ignore') as outfile:
-            # 在檔案開頭寫入 Git 分支資訊
+            # 寫入標頭資訊
             outfile.write(f"# 專案程式碼彙整: {os.path.abspath(root_dir)}\n")
             if git_branch:
                 outfile.write(f"# Git 當前分支: {git_branch}\n")
             outfile.write("=" * 80 + "\n\n")
 
-            outfile.write("#" + "-" * 78 + "#\n")
-            outfile.write("#" + " " * 30 + "專案目錄結構" + " " * 30 + "#\n")
-            outfile.write("#" + "-" * 78 + "#\n\n")
+            # 寫入目錄結構
+            outfile.write("#" * 80 + "\n# 專案目錄結構\n" + "#" * 80 + "\n\n")
             tree_structure = generate_tree_structure(root_dir, project_name)
             outfile.write(tree_structure)
             outfile.write("\n\n\n")
 
-            outfile.write("#" + "-" * 78 + "#\n")
-            outfile.write("#" + " " * 31 + "各檔案內容" + " " * 32 + "#\n")
-            outfile.write("#" + "-" * 78 + "#\n\n")
+            outfile.write("#" * 80 + "\n# 各檔案內容\n" + "#" * 80 + "\n\n")
             
+            # 遍歷目錄
             for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True):
                 dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
-
                 for filename in sorted(filenames):
-                    # 檢查是否為 dump 檔案的通用模式
-                    is_any_dump_file = ("_dump_" in filename and filename.endswith(".txt")) or \
-                                     (filename == "project_dump.txt")
-                    
-                    # 確保不會跳過正在寫入的當前檔案
-                    is_current_output_file = os.path.join(dirpath, filename) == full_output_path
-                    if is_any_dump_file and not is_current_output_file:
-                        print(f"正在跳過 (舊的輸出檔): {filename}")
+                    # 避免讀取到自己或其他 dump 檔案
+                    is_current_output_file = os.path.normpath(os.path.join(dirpath, filename)) == os.path.normpath(full_output_path)
+                    if filename == os.path.basename(__file__) or is_current_output_file:
                         continue
-
+                    
                     file_path = os.path.join(dirpath, filename)
-                    relative_path = os.path.relpath(file_path, root_dir).replace(os.sep, '/')
+                    processed_files_count += write_file_content_to_dump(outfile, file_path, root_dir)
 
-                    try:
-                        print(f"正在處理: {relative_path}")
-
-                        start_header = f"--- START OF FILE: {relative_path} ---"
-                        end_header   = f"---  END OF FILE: {relative_path}  ---"
-                        separator    = "=" * 80
-                        
-                        outfile.write(f"{separator}\n")
-                        outfile.write(f"{start_header}\n")
-                        outfile.write(f"{'-' * len(start_header)}\n\n")
-                        
-                        _, extension = os.path.splitext(file_path)
-                        
-                        if extension.lower() in SKIP_CONTENT_EXTENSIONS:
-                            file_size = os.path.getsize(file_path)
-                            outfile.write(f"[Content skipped for file type '{extension}': {filename} ({file_size / 1024:.2f} KB)]")
-                        else:
-                            try:
-                                with open(file_path, 'r', encoding='utf-8', errors='strict') as infile:
-                                    outfile.write(infile.read())
-                            except (UnicodeDecodeError, IOError):
-                                file_size = os.path.getsize(file_path)
-                                outfile.write(f"[Content skipped due to read error: {filename} ({file_size / 1024:.2f} KB)]")
-                        
-                        outfile.write(f"\n\n{'-' * len(end_header)}\n")
-                        outfile.write(f"{end_header}\n")
-                        outfile.write(f"{separator}\n\n")
-                        
-                        processed_files_count += 1
-                    except Exception as e:
-                        print(f"警告：無法讀取 {relative_path} ({e})")
-
-        print("\n" + "=" * 80)
-        print(f"✅ 成功！共處理了 {processed_files_count} 個檔案。")
-        print(f"輸出結果已儲存至: {os.path.abspath(full_output_path)}")
-        print("=" * 80)
+        print_summary(processed_files_count, full_output_path)
 
     except IOError as e:
         print(f"錯誤：無法寫入輸出檔案 '{full_output_path}'。 ({e})")
     except Exception as e:
         print(f"發生未預期的錯誤: {e}")
 
+# 【模式二】指定檔案彙整函式
+def generate_code_dump_from_files(file_list, root_dir, output_filename_base, project_name, git_branch):
+    """僅彙整提供的檔案列表"""
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    full_output_path = os.path.join(output_dir, output_filename_base)
+
+    processed_files_count = 0
+
+    try:
+        with open(full_output_path, 'w', encoding='utf-8', errors='ignore') as outfile:
+            # 寫入標頭資訊
+            outfile.write(f"# 指定檔案彙整: {os.path.abspath(root_dir)}\n")
+            if git_branch:
+                outfile.write(f"# Git 當前分支: {git_branch}\n")
+            outfile.write("=" * 80 + "\n\n")
+
+            # 寫入被包含的檔案列表，取代目錄樹
+            outfile.write("#" * 80 + "\n# 包含的檔案清單\n" + "#" * 80 + "\n\n")
+            for file_path in file_list:
+                outfile.write(f"- {os.path.relpath(file_path, root_dir).replace(os.sep, '/')}\n")
+            outfile.write("\n\n\n")
+
+            outfile.write("#" * 80 + "\n# 各檔案內容\n" + "#" * 80 + "\n\n")
+            
+            # 只處理指定的檔案
+            for file_path in file_list:
+                processed_files_count += write_file_content_to_dump(outfile, file_path, root_dir)
+
+        print_summary(processed_files_count, full_output_path)
+
+    except IOError as e:
+        print(f"錯誤：無法寫入輸出檔案 '{full_output_path}'。 ({e})")
+    except Exception as e:
+        print(f"發生未預期的錯誤: {e}")
+
+def print_summary(count, path):
+    """印出最終的成功訊息"""
+    print("\n" + "=" * 80)
+    print(f"✅ 成功！共處理了 {count} 個檔案。")
+    print(f"輸出結果已儲存至: {os.path.abspath(path)}")
+    print("=" * 80)
+
 if __name__ == "__main__":
+    # --- 【核心修改】設定命令列參數，支援指定檔案 ---
+    parser = argparse.ArgumentParser(
+        description="彙整專案程式碼成單一文字檔。可掃描整個目錄，或只彙整指定的檔案。",
+        formatter_class=argparse.RawTextHelpFormatter # 保持換行格式
+    )
+    parser.add_argument(
+        'files', # 位置參數
+        nargs='*', # 0 或多個
+        help="要彙整的一個或多個檔案路徑。\n如果留空，則會掃描整個專案目錄。"
+    )
+    parser.add_argument(
+        "-o", "--output",
+        type=str,
+        help="指定輸出的檔案名稱 (例如 'my_snapshot.txt')。\n如果未指定，將會自動產生檔名。"
+    )
+    args = parser.parse_args()
+    # ----------------------------------------------------
+
     script_path = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_path)
-    
-    os.chdir(project_root) # 確保在專案根目錄下運行
-    
-    target_dir = '.' # 從專案根目錄開始掃描
-    
+    # os.chdir(project_root) # <--- 【核心修改】將此行註解掉！    
     project_name = os.path.basename(os.path.abspath(project_root))
-    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    
-    # 【新增】呼叫函式以獲取 Git 分支名稱
     current_branch = get_git_branch()
     
-    # =================================================================
-    # ===             【核心修改：根據分支名稱產生檔名】            ===
-    # =================================================================
-    if current_branch:
-        # 【新增說明】清理分支名稱，將 '/' 替換為 '-'，以避免路徑問題。
-        # 例如 'feature/login' -> 'feature-login'
-        safe_branch_name = current_branch.replace('/', '-')
-        output_filename_base = f"{project_name}_{safe_branch_name}_dump_{timestamp_str}.txt"
+    # 決定輸出檔名
+    output_filename_base = ""
+    if args.output:
+        output_filename_base = args.output
+        print(f"✅ 使用者已指定輸出檔名...")
     else:
-        # 如果不在 Git 倉庫中，則使用舊的檔名格式
-        output_filename_base = f"{project_name}_dump_{timestamp_str}.txt"
-    # =================================================================
-    
+        print("未指定輸出檔名，將自動產生...")
+        timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if current_branch:
+            safe_branch_name = current_branch.replace('/', '-')
+            output_filename_base = f"{project_name}_{safe_branch_name}_dump_{timestamp_str}.txt"
+        else:
+            output_filename_base = f"{project_name}_dump_{timestamp_str}.txt"
+
     print(f"設定專案根目錄為: {os.path.abspath(project_root)}")
-    # 【新增】在控制台輸出中也顯示分支名稱
     if current_branch:
         print(f"偵測到目前 Git 分支為: {current_branch}")
-    print(f"將從 '{os.path.abspath(target_dir)}' 開始掃描...")
-    # 【修改】輸出提示現在會顯示包含分支的新檔名
     print(f"輸出檔案將命名為: {output_filename_base} (儲存於 output/ 目錄)")
-    
-    # 【修改】將獲取到的分支名稱傳入主函式
-    generate_code_dump(target_dir, output_filename_base, project_name, current_branch)
+
+    # --- 【核心修改】根據是否有指定檔案，決定執行哪個模式 ---
+    if args.files:
+        # **檔案模式**
+        print(f"\n✅ 偵測到指定檔案模式，將處理 {len(args.files)} 個檔案...")
+        
+        # 驗證檔案是否存在
+        valid_files = []
+        for f in args.files:
+            abs_f = os.path.abspath(f) # <--- 【新增】轉換為絕對路徑
+            if os.path.isfile(abs_f):  # <--- 【修改】用絕對路徑來檢查
+                valid_files.append(abs_f) # <--- 【修改】儲存絕對路徑
+            else:
+                # 警告訊息中也使用絕對路徑，方便除錯
+                print(f"警告：檔案 '{abs_f}' 不存在或不是一個檔案，將被跳過。")
+        
+        if not valid_files:
+            print("\n錯誤：所有指定的路徑都無效，沒有任何檔案可以處理。")
+        else:
+            generate_code_dump_from_files(valid_files, project_root, output_filename_base, project_name, current_branch)
+    else:
+        # **目錄模式**
+        print(f"\n✅ 偵測到目錄掃描模式，將從 '{os.path.abspath(project_root)}' 開始掃描...")
+        generate_code_dump_from_directory(project_root, output_filename_base, project_name, current_branch)
