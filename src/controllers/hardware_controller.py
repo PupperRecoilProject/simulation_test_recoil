@@ -106,8 +106,8 @@ class HardwareController:
             log.info("硬體讀取執行緒已啟動。")
 
     def _read_from_port(self):
-        """(執行緒) 在背景持續讀取序列埠數據。"""
-        log.info("[硬體讀取執行緒已啟動] 等待數據...")
+        # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
+        log.debug("[硬體讀取執行緒已啟動] 等待數據...")
         while self._is_running_event.is_set():
             if self.internal_state != HWState.RUNNING or not self.ser or not self.ser.is_open:
                 # log.debug(...) # 使用 debug 級別避免刷屏
@@ -117,7 +117,8 @@ class HardwareController:
             try:
                 if self.ser.in_waiting > 0:
                     line = self.ser.readline().decode('utf-8', errors='ignore') # <--- 移除 .strip()
-                    log.debug(f"原始串口接收: {repr(line)}") # <--- 打印最原始的數據
+                    # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
+                    log.debug(f"原始串口接收: {repr(line)}")
                     if line:
                         self.parse_policy_stream(line) 
 
@@ -134,6 +135,7 @@ class HardwareController:
     def _set_internal_state(self, new_state: HWState):
         """(內部) 安全地切換狀態機並同步到全局 State。"""
         if self.internal_state != new_state:
+            # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
             log.debug(f"硬體控制器狀態: {self.internal_state.name} -> {new_state.name}") # <--- 增加診斷日誌
             self.internal_state = new_state
             self.last_state_change_time = time.time()
@@ -186,8 +188,7 @@ class HardwareController:
             log.info("  -> 已發送 Teensy 模式指令。")
             self._set_internal_state(HWState.RUNNING)
 
-            # 【v4.7.3 修正】硬體模式啟動後，預設自動啟用 AI 控制。
-            # 這確保了資料流 -> AI -> 指令傳送的完整鏈路能夠立即開始工作。
+            # 【v4.7.4 修正】硬體模式啟動後，預設自動啟用 AI 控制。
             self.ai_control_active = True
             with self.state.lock: 
                 self.state.hardware_ai_is_active = True
@@ -251,7 +252,10 @@ class HardwareController:
         
         # 【v4.7.1b 新增】在硬體模式下，也需要遵循正確的時序來更新 last_action
         # 在發送指令之前，將本幀的動作寫入 state，供下一幀使用。
+        # 【v4.7.4 修正】同時更新用於 UI 顯示的 state 和用於下一幀 AI 輸入的 state
+        # 這是解決硬體模式下「原始動作 (Raw)」UI 不更新 Bug 的關鍵。
         with self.state.lock:
+            self.state.latest_action_raw = action_raw.copy()
             self.state.raw_last_action = action_raw.copy()
         
         action_scale = self.config.initial_tuning_params.action_scale
@@ -277,7 +281,8 @@ class HardwareController:
 
         職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
         """
-        log.debug(f"parse_policy_stream 正在處理: {repr(line)}") # <--- 增加進入函式的日誌
+        # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
+        log.debug(f"parse_policy_stream 正在處理: {repr(line)}")
         try:
             # 【v4.7.1b 修正】必須使用 strip() 後的乾淨行來進行後續所有操作
             clean_line = line.strip()
