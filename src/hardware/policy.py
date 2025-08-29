@@ -105,8 +105,6 @@ class PolicyManager:
         self.source_policy_name = self.model_names[0]  # 開始轉換時的來源策略
         self.target_policy_name = self.model_names[0]  # 正在轉換去的目標策略
         
-        self.last_action = np.zeros(config.num_motors, dtype=np.float32) # 初始化上一次的動作向量
-        
         # 為每個模型維護一個獨立的觀察歷史佇列
         self.obs_histories: Dict[str, deque] = {}
         
@@ -236,7 +234,7 @@ class PolicyManager:
             # 如果不在轉換中，直接使用主要模型的輸出
             final_action = all_actions[self.primary_policy_name]
 
-        # 【v4.7.1b 修改】移除內部狀態 self.last_action，數據流完全由 state 管理
+        # 【v4.7.4 清理】移除內部狀態 self.last_action，數據流完全由 state 管理
         return primary_onnx_input, final_action
     
 

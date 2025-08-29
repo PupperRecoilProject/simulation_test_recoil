@@ -14,8 +14,9 @@ class QueueHandler(logging.Handler):
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("RobotLogger")
-    # 【v4.7.4 建議修改】將預設等級設為 INFO
-    logger.setLevel(logging.INFO) 
+    # 【v4.7.4 修改】將全域日誌等級預設為 INFO。
+    # 這將自動過濾掉所有使用 log.debug() 記錄的資訊。
+    logger.setLevel(logging.INFO)
     if not logger.handlers:
         handler = QueueHandler()
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
