@@ -14,7 +14,8 @@ class QueueHandler(logging.Handler):
 
 def setup_logger() -> logging.Logger:
     logger = logging.getLogger("RobotLogger")
-    logger.setLevel(logging.INFO)
+    # 【v4.7.4 建議修改】將預設等級設為 INFO
+    logger.setLevel(logging.INFO) 
     if not logger.handlers:
         handler = QueueHandler()
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
