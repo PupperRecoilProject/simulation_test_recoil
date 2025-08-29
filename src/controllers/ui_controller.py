@@ -199,6 +199,20 @@ class UIController:
                 ui.button('軟重置 (X)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft"))
                 ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
 
+            # 【v4.7.4 新增】在 UI 上添加模擬控制（暫停/播放/步進）功能
+            ui.separator()
+            ui.label('模擬控制 (Simulation Control)').classes('text-lg')
+            with ui.row():
+                # 按鈕的文字會根據 state.single_step_mode 的值動態變化 ('▶️ 播放' 或 '⏸️ 暫停')
+                ui.button().bind_text_from(self.state, 'single_step_mode', 
+                                           lambda is_paused: '▶️ 播放 (SPACE)' if is_paused else '⏸️ 暫停 (SPACE)') \
+                           .on('click', self._toggle_pause) # 使用輔助函式確保線程安全
+                
+                # 步進按鈕只有在暫停模式下才可點擊
+                ui.button('⏭️ 步進 (N)', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
+                   .bind_enabled_from(self.state, 'single_step_mode')
+                
+
     def _create_tuning_panel(self):
         with ui.card().classes('w-full'):
             ui.label('參數調整 (Tuning)').classes('text-lg')
@@ -329,7 +343,8 @@ class UIController:
         # 【v4.7.0 重構】數據驅動的 UI 元素創建
         # 此函式現在遍歷 _label_descriptors 字典，動態地創建所有狀態標籤。
         # 這使得未來新增或修改狀態顯示變得極為簡單，只需修改字典即可。
-        with ui.card():
+        # 【v4.7.4 修改】為卡片設定最小高度以穩定佈局
+        with ui.card().style('min-height: 320px'):
             ui.label('即時狀態 (Real-time Status)').classes('text-lg')
             with ui.grid(columns=3): # 可根據標籤數量調整佈局
                 for key, desc in self._label_descriptors.items():
@@ -350,8 +365,8 @@ class UIController:
         權威維度字典 (ALL_OBS_DIMS) 中創建所有 UI 標籤，確保 UI
         能夠自動適應未來新增的觀測元件。
         """
-        # 為了容納所有可能的觀測元件，我們將最小高度稍微調高
-        with ui.card().style('min-height: 250px;'):
+        # 【v4.7.4 修改】為卡片設定最小高度以穩定佈局
+        with ui.card().style('min-height: 240px'):
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
             with ui.grid(columns=2):
                 # 【v4.6.0 修改】 核心修改：動態生成 UI 標籤
@@ -522,6 +537,10 @@ class UIController:
             else:
                 label_widget.set_text(f'{comp_name}: N/A')
 
+    def _toggle_pause(self):
+        """【v4.7.4 新增】線程安全地切換暫停狀態。"""
+        with self.state.lock:
+            self.state.single_step_mode = not self.state.single_step_mode
 
     def run(self):
         ui.run(title="Pupper Robot Console", port=8080)
