@@ -1,4 +1,25 @@
-#python test\dump_project.py -o core_logic.txt mujoco_playground\_src\locomotion\pupper\joystick.py mujoco_playground\_src\locomotion\pupper\joystickwithgun.py mujoco_playground\_src\locomotion\pupper\pupper_locomotion_test.ipynb
+#  python test\dump_project.py -o core_logic.txt mujoco_playground\_src\locomotion\pupper\joystick.py mujoco_playground\_src\locomotion\pupper\joystickwithgun.py mujoco_playground\_src\locomotion\pupper\pupper_locomotion_test.ipynb
+# 功能說明 python test\dump_project.py
+# 1. 如果沒有指定任何檔案，則掃描整個專案目錄，並產生彙整檔案。
+# 2. 如果指定了一個或多個檔案，則只彙整那些檔案。
+# 3. 可以使用 -o 參數來指定輸出的檔案名稱
+# 4. 自動偵測 Git 分支名稱，並將其包含在輸出檔案中 (如果適用)。
+# 5. 支援解析 .ipynb 檔案，將程式碼和 Markdown 儲存格轉換為易讀的文字格式。
+# 6. 忽略特定目錄 (如 .git, node_modules, output 等) 和大型二進位檔案 (如 .png, .jpg, .exe 等)。
+# 7. 輸出檔案會儲存在 output/ 目錄中，並包含專案的目錄結構和各檔案內容。
+# 使用範例:
+# 1. 掃描整個專案目錄並自動命名輸出檔案:
+#    python test\dump_project.py
+# 2. 彙整指定的檔案並指定輸出檔名:
+#    python test\dump_project.py -o my_snapshot.txt path\to\file1.py path\to\file2.ipynb
+# 注意事項:
+# - 確保在執行此腳本前已安裝 nbformat 模組 (pip install nbformat)，以獲得最佳的 .ipynb 處理效果。
+# - 此腳本假設 dump_project.py 位於專案的某個子目錄 (如 test/)，並將專案根目錄設為 dump_project.py 的上層目錄。
+# - 輸出檔案會自動忽略 dump_project.py 自身及任何先前產生的彙整檔案，以避免重複包含。
+# - 如果無法偵測到 Git 分支 (例如不在 Git 倉庫中)，則不會在輸出檔案中包含分支資訊。
+# - 如果 nbformat 模組未安裝，.ipynb 檔案將以原始 JSON 格式顯示，並附上警告訊息。
+# ---------------------------------------------
+
 
 # test/dump_project.py
 import os

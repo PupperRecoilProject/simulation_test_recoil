@@ -207,7 +207,10 @@ class KeyboardInputHandler:
             elif key == glfw.KEY_Q: cmd[2] += step
             elif key == glfw.KEY_E: cmd[2] -= step
             elif key == glfw.KEY_C: cmd.fill(0.0)
+
+            # 【修改】確保 command 的第四個元素 (目標俯仰角) 在鍵盤模式下為0
+            # 【修改】確保發布的是4維指令
+            # 由於 cmd 已經是從 state.command (4D) 複製而來，這裡無需額外操作
             
             # 發布指令更新事件
             event_bus.publish(EVENT_COMMAND_UPDATED, command=cmd)
-            

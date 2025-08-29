@@ -23,7 +23,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
   
   agile_model: 
     path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
@@ -35,8 +35,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
-
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
   new_high_level: 
     path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
     # 【新】使用新的觀察配方
@@ -47,7 +46,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
 
   new_e2e: 
     path: "models/pupper_ppo_policy_e2e_203161600.onnx"
@@ -59,7 +58,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
 
   fire_on_recoil_51: 
     path: "models/pupper_ppo_policy_e2e_101580800.onnx"
@@ -72,7 +71,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_4d' # 【修改】從 commands -> commands_4d
       - 'firearm_recoil_warming'
 
 
@@ -88,7 +87,7 @@ warmup_duration: 0.0
 
 # ONNX 模型命令輸入縮放因子
 # 順序: [vy 縮放, vx 縮放, wz 縮放]
-command_scaling_factors: [1.0, 1.0, 1.0] 
+command_scaling_factors: [1.0, 1.0, 1.0, 1.0] 
 
 # ==================================
 # === 輸入控制設定 (Input Control Settings)

@@ -74,7 +74,8 @@ class SimulationState:
     
     # --- 用戶輸入與指令狀態 ---
     # 這些狀態現在主要由 on_command_update 事件回呼來更新
-    command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    # 【修改】將 command 向量擴展為4維，以容納目標俯仰角
+    command: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
     
     # --- 系統控制與模式狀態 ---
@@ -120,6 +121,11 @@ class SimulationState:
     # 【v4.4.2 新增】新增屬性以接收來自 Teensy 的俯仰角和重力向量數據
     raw_pitch_rad: float = 0.0
     raw_gravity_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    
+    # 【新增】後座力計時器相關狀態
+    recoil_timer: float = 0.0 # 追蹤距離下次後座力事件的時間
+    recoil_interval: float = 5.0 # 下次後座力事件的隨機間隔
+    recoil_warning_active: bool = False # 後座力預警旗標，直接供 ObservationManager 使用
 
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False
