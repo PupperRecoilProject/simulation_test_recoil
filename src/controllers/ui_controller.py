@@ -495,8 +495,12 @@ class UIController:
         if self.mute_switch:
             is_verified_or_muted = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
             
-            # 根據狀態決定開關是否可操作
-            self.mute_switch.enable(is_verified_or_muted)
+            # 【v4.10.2 修正】使用正確的 enable()/disable() API
+            # 根據 is_verified_or_muted 的布林值，呼叫對應的不帶參數的方法。
+            if is_verified_or_muted:
+                self.mute_switch.enable()
+            else:
+                self.mute_switch.disable()
             
             # 根據狀態更新開關的顯示 (on/off)
             current_switch_value = self.mute_switch.value
