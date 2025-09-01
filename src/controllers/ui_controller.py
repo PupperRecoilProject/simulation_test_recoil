@@ -133,89 +133,100 @@ class UIController:
         self._setup_ui()
 
     def _setup_ui(self):
+        """
+        【v4.8.0 重構】建立一個雙欄、獨立滾動的佈局，並根據 UX 原則重新組織元件。
+        """
         ui.dark_mode().enable()
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
-        with ui.row().classes('w-full no-wrap'):
-            # 左側欄：控制相關的面板
-            with ui.column().classes('w-1/3'):
-                # 使用垂直 Tabs 組織面板
-                with ui.tabs().props('vertical').classes('w-full') as tabs:
-                    # 名稱作為第一參數，label 是顯示文字，避免重複傳 name 造成錯誤
-                    ui.tab('control', label='控制')
-                    ui.tab('tuning', label='參數')
-                    ui.tab('hardware', label='硬體')
-
-                with ui.tab_panels(tabs, value='control').props('vertical').classes('w-full'):
-                    with ui.tab_panel('control'):
-                        ui.label('主控制項').classes('text-lg font-bold mb-4')
-                        self._create_main_control_panel()
-                    with ui.tab_panel('tuning'):
-                        ui.label('AI 與物理').classes('text-lg font-bold mb-4')
-                        self._create_tuning_panel()
-                    with ui.tab_panel('hardware'):
-                        ui.label('設備連接').classes('text-lg font-bold mb-4')
-                        self._create_device_panel()
-
-                # 關節微調與搖桿控制仍在主頁面下方
-                self._create_joint_control_panel()
+        # --- 主要佈局容器 ---
+        # w-full: 佔滿整個寬度
+        # h-[calc(100vh-70px)]: 高度為視窗高度減去頂部 header 的高度
+        # no-wrap: 確保左右兩欄不換行
+        with ui.row().classes('w-full h-[calc(100vh-70px)] no-wrap'):
+            
+            # --- 左欄：互動與控制區 ---
+            # w-2/5: 佔據 40% 的寬度
+            # overflow-auto: 當內容超出時，顯示獨立的滾動條
+            with ui.column().classes('w-2/5 overflow-auto'):
+                # 【v4.8.0 新增】將所有控制相關的 UI 創建函式集中呼叫
+                self._create_pinned_controls()
+                self._create_tuning_panel()
+                self._create_joint_control_panel() # 該面板已有自己的顯示/隱藏邏輯
+                self._create_device_panel()
                 self._create_joystick_panel()
 
-            # 右側欄：狀態與日誌顯示
-            with ui.column().classes('w-2/3'):
+            # --- 右欄：監控與顯示區 ---
+            # w-3/5: 佔據 60% 的寬度
+            # overflow-auto: 當內容超出時，顯示獨立的滾動條
+            with ui.column().classes('w-3/5 overflow-auto'):
+                # 【v4.8.0 新增】將所有顯示相關的 UI 創建函式集中呼叫
                 self._create_status_display()
-                self._create_onnx_display()
+                self._create_ai_core_display() # 新的整合性顯示面板
                 self._create_log_panel()
 
         ui.timer(0.1, self.update_ui_elements)
+
+
+    def _create_pinned_controls(self):
+        """
+        【v4.8.0 新增】創建一個置頂的卡片，包含最高頻的核心控制項。
+        """
+        with ui.card().classes('w-full'):
+            ui.label('核心控制 (Core Control)').classes('text-lg font-bold mb-2')
+            
+            # 模式控制
+            ui.label('模式 (Mode)').classes('text-sm font-bold mt-2')
+            with ui.row():
+                ui.button('走路', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING")).props('dense')
+                ui.button('懸浮', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="FLOATING")).props('dense')
+                ui.button('硬體', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE")) \
+                  .props('dense').bind_enabled_from(self.state, 'serial_is_connected')
+            with ui.row():
+                ui.button('關節測試', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST")).props('dense')
+                ui.button('手動控制', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL")).props('dense')
+
+            # 模擬控制
+            ui.label('模擬 (Simulation)').classes('text-sm font-bold mt-4')
+            with ui.row():
+                ui.button().bind_text_from(self.state, 'single_step_mode', 
+                                           lambda p: '▶️ 播放' if p else '⏸️ 暫停').props('dense icon=play_arrow outline') \
+                           .on('click', self._toggle_pause)
+                ui.button('步進', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
+                   .props('dense icon=skip_next outline').bind_enabled_from(self.state, 'single_step_mode')
+                ui.button('軟重置', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft")).props('dense outline')
+                ui.button('硬重置', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard")).props('dense outline')
+
+            # AI 與策略
+            ui.label('AI 與策略 (AI & Policy)').classes('text-sm font-bold mt-4')
+            self.status_labels['policy_selector'] = ui.select(
+                options=self.state.available_policies,
+                value=self.policy_manager.primary_policy_name,
+                on_change=lambda e: event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name=e.value)
+            ).classes('w-full')
+            
+            terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
+            self.terrain_selector = ui.select(
+                options=terrain_options,
+                on_change=lambda e: event_bus.publish(EVENT_TERRAIN_CHANGE_REQUESTED, name=e.value)
+            ).bind_value(self, 'ui_terrain_selection').classes('w-full')
 
 
     # --- UI 佈局函式 ---
     # 【修改】這些 _create_..._panel 函式的主要變更是它們的 on_click 回呼。
     #         它們不再呼叫 self._request... 這樣的內部函式，而是直接發布事件。
 
-    def _create_main_control_panel(self):
-        with ui.card():
-            ui.label('模式控制 (Control Mode)').classes('text-lg')
-            with ui.row():
-                # 【修改】點擊按鈕時，直接發布一個包含目標模式的'請求'事件。
-                ui.button('走路 (Walking)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING"))
-                ui.button('懸浮 (Floating)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="FLOATING"))
-
-                # 綁定到 state.serial_is_connected，提供清晰的使用者引導
-                ui.button('硬體 (Hardware)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE")) \
-                  .bind_enabled_from(self.state, 'serial_is_connected')
-
-            with ui.row():
-                ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
-                ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
-
-            ui.separator()
-
-            ui.label('重置').classes('text-lg')
-            with ui.row():
-                # 【修改】重置按鈕發布帶有 'type' 參數的事件，以便 SimulationController 區分。
-                ui.button('軟重置 (X)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft"))
-                ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
-
-            # 【v4.7.4 新增】在 UI 上添加模擬控制（暫停/播放/步進）功能
-            ui.separator()
-            ui.label('模擬控制 (Simulation Control)').classes('text-lg')
-            with ui.row():
-                # 按鈕的文字會根據 state.single_step_mode 的值動態變化 ('▶️ 播放' 或 '⏸️ 暫停')
-                ui.button().bind_text_from(self.state, 'single_step_mode', 
-                                           lambda is_paused: '▶️ 播放 (SPACE)' if is_paused else '⏸️ 暫停 (SPACE)') \
-                           .on('click', self._toggle_pause) # 使用輔助函式確保線程安全
-                
-                # 步進按鈕只有在暫停模式下才可點擊
-                ui.button('⏭️ 步進 (N)', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
-                   .bind_enabled_from(self.state, 'single_step_mode')
+    # 【v4.8.0 重構】_create_main_control_panel 被 _create_pinned_controls 取代
+    # def _create_main_control_panel(self): ... 
                 
 
     def _create_tuning_panel(self):
+        """
+        【v4.8.0 微調】修改字體
+        """
         with ui.card().classes('w-full'):
-            ui.label('參數調整 (Tuning)').classes('text-lg')
+            ui.label('參數調整 (Tuning)').classes('text-lg font-bold mb-2')
             params = self.state.tuning_params
             p_keys = {'kp': (0, 50), 'kd': (0, 5), 'action_scale': (0, 2), 'bias': (-20, 20)}
             
@@ -340,64 +351,70 @@ class UIController:
 
 
     def _create_status_display(self):
-        # 【v4.7.0 重構】數據驅動的 UI 元素創建
-        # 此函式現在遍歷 _label_descriptors 字典，動態地創建所有狀態標籤。
-        # 這使得未來新增或修改狀態顯示變得極為簡單，只需修改字典即可。
-        # 【v4.7.4 修改】為卡片設定最小高度以穩定佈局
-        with ui.card().style('min-height: 320px'):
-            ui.label('即時狀態 (Real-time Status)').classes('text-lg')
-            with ui.grid(columns=3): # 可根據標籤數量調整佈局
-                for key, desc in self._label_descriptors.items():
-                    # 為字典中的每一個描述符，創建一個 ui.label。
-                    # 初始文本從 state 中獲取，確保 UI 在創建時就顯示真實數據。
+        """
+        【v4.8.0 重構】現在只負責創建「關鍵指標」儀表板。
+        """
+        with ui.card().classes('w-full'):
+            ui.label('關鍵指標 (Key Metrics)').classes('text-lg font-bold mb-2')
+            with ui.grid(columns=2).classes('text-sm'): # 使用 grid 佈局並縮小字體
+                # 我們只挑選最重要的幾個指標放在這裡
+                keys_to_display = ['mode', 'input_mode', 'sim_time', 'policy_status', 'command', 'robot_pos']
+                for key in keys_to_display:
+                    desc = self._label_descriptors[key]
                     with self.state.lock:
                         initial_value = desc['getter'](self.state)
                         initial_text = desc['formatter'](initial_value)
-                    
-                    # 將創建的 label 物件存儲起來，以便後續更新。
                     self.status_labels[key] = ui.label(f"{desc['title']}: {initial_text}")
 
 
-    def _create_onnx_display(self):
+    def _create_ai_core_display(self):
         """
-        【v4.6.0 重構】建立 ONNX 觀察向量區域。
-        此版本不再使用硬編碼列表，而是動態地從 ObservationManager 的
-        權威維度字典 (ALL_OBS_DIMS) 中創建所有 UI 標籤，確保 UI
-        能夠自動適應未來新增的觀測元件。
+        【v4.8.0 新增】創建一個整合的卡片，用於顯示 AI 的輸入和輸出。
         """
-        # 【v4.7.4 修改】為卡片設定最小高度以穩定佈局
-        with ui.card().style('min-height: 240px'):
-            ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
-            with ui.grid(columns=2):
-                # 【v4.6.0 修改】 核心修改：動態生成 UI 標籤
-                # 我們直接從 observation_manager 實例中獲取 ALL_OBS_DIMS 字典。
-                # 這是觀測元件的「單一事實來源」。
-                # .items() 會返回 (鍵, 值) 對，即 (元件名, 維度)。
-                # 我們對其進行排序，以確保 UI 上的顯示順序是固定的、可預測的。
-                if self.state.observation_manager_ref:
-                    all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
-                    
-                    for comp_name, dim in all_components:
-                        # 為字典中的每一個元件，都創建一個 ui.label，並將其
-                        # 存儲在 self.onnx_input_labels 字典中，以便後續更新。
-                        # 初始文字設置為 'N/A'，等待 update_ui_elements 填充真實數據。
-                        self.onnx_input_labels[comp_name] = ui.label(f'{comp_name}: N/A')
-                else:
-                    # 這是一個防禦性程式碼，如果 observation_manager 尚未初始化，
-                    # UI 會顯示一條清晰的錯誤訊息，而不是崩潰。
-                    ui.label("錯誤: ObservationManager 未初始化!")
-
-
-    def _create_log_panel(self):
         with ui.card().classes('w-full'):
-            ui.label('系統日誌與序列埠控制台').classes('text-lg')
-            self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
-            with ui.row().classes('w-full items-center'):
-                # 輸入框綁定 Enter 鍵事件，按下 Enter 即送出指令
-                self.serial_command_buffer = ui.input(label='Serial Command')\
-                    .props('outlined dense').classes('flex-grow')\
-                    .on('keydown.enter', self._send_serial_command)
-                ui.button('Send', on_click=self._send_serial_command)
+            ui.label('AI 核心 (AI Core)').classes('text-lg font-bold mb-2')
+            
+            # AI 策略輸出
+            with ui.column().classes('w-full'):
+                ui.label('AI 策略輸出 (Policy Outputs)').classes('font-bold text-sm')
+                keys_to_display = ['action_raw', 'final_ctrl']
+                for key in keys_to_display:
+                    desc = self._label_descriptors[key]
+                    with self.state.lock:
+                        initial_value = desc['getter'](self.state)
+                        initial_text = desc['formatter'](initial_value)
+                    self.status_labels[key] = ui.label(f"{desc['title']}: {initial_text}").classes('text-xs font-mono') # 使用等寬字體讓數字對齊
+
+            ui.separator().classes('my-2')
+            
+            # ONNX 觀察向量（放入摺疊面板）
+            with ui.expansion('ONNX 觀察向量 (Input)', icon='schema').classes('w-full'):
+                with ui.grid(columns=2).classes('text-xs font-mono'): # 同樣使用小號等寬字體
+                    if self.state.observation_manager_ref:
+                        all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
+                        for comp_name, dim in all_components:
+                            self.onnx_input_labels[comp_name] = ui.label(f'{comp_name}: N/A')
+                    else:
+                        ui.label("錯誤: ObservationManager 未初始化!")
+
+
+    # 【v4.8.0 重構】_create_onnx_display 被 _create_ai_core_display 取代
+    # def _create_onnx_display(self): ...
+
+
+    # 【v4.8.0 重構】_create_log_panel 放入摺疊面板
+    def _create_log_panel(self):
+        # 【v4.8.0 修改】將日誌區域放入摺疊面板，預設關閉
+        with ui.expansion('系統日誌與序列埠 (Logs & Serial)', icon='plagiarism', value=False).classes('w-full'):
+            with ui.card().classes('w-full no-shadow border'): # 使用無陰影的卡片樣式
+                ui.label('系統日誌與序列埠控制台').classes('text-lg')
+                self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
+                with ui.row().classes('w-full items-center'):
+                    # 輸入框綁定 Enter 鍵事件，按下 Enter 即送出指令
+                    self.serial_command_buffer = ui.input(label='Serial Command')\
+                        .props('outlined dense').classes('flex-grow')\
+                        .on('keydown.enter', self._send_serial_command)
+                    ui.button('Send', on_click=self._send_serial_command)
 
     def _send_serial_command(self):
         """
