@@ -3,6 +3,18 @@ import yaml
 from dataclasses import dataclass, field
 from typing import Dict, List, Any
 
+# 【v4.10.0 新增】為地形生成參數建立一個新的 dataclass
+@dataclass
+class TerrainGenerationConfig:
+    """地形生成器的參數。"""
+    sine_waves_amplitude: float
+    steps_height: float
+    random_noise_amplitude: float
+    pyramid_max_height: float
+    stepped_pyramid_max_height: float
+    stepped_pyramid_steps_min: int
+    stepped_pyramid_steps_max: int
+
 @dataclass
 class TuningParamsConfig:
     """從設定檔載入的初始調校參數資料類別。"""
@@ -42,6 +54,9 @@ class AppConfig:
 
     initial_tuning_params: TuningParamsConfig
     floating_controller: FloatingControllerConfig
+    # 【v4.10.0 新增】將地形設定加入到主設定物件中
+    terrain_generation: TerrainGenerationConfig
+
 
 def load_config(path: str = "config.yaml") -> AppConfig:
     """
@@ -57,6 +72,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 
     tuning_params = TuningParamsConfig(**config_data['initial_tuning_params'])
     floating_config = FloatingControllerConfig(**config_data['floating_controller'])
+    # 【v4.10.0 新增】載入地形生成設定
+    terrain_gen_config = TerrainGenerationConfig(**config_data['terrain_generation'])
     
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
@@ -76,7 +93,9 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         param_adjust_steps=config_data['param_adjust_steps'],
         
         initial_tuning_params=tuning_params,
-        floating_controller=floating_config
+        floating_controller=floating_config,
+        # 【v4.10.0 新增】傳入地形設定
+        terrain_generation=terrain_gen_config
     )
     
     print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")

@@ -36,6 +36,7 @@ onnx_models:
       - 'joint_velocities'
       - 'last_action'
       - 'commands_3d' # 【修改】從 commands -> commands_3d
+
   new_high_level: 
     path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
     # 【新】使用新的觀察配方
@@ -153,3 +154,16 @@ floating_controller:
   kd_vertical: 18.0       # 垂直 D (保持與Kp的關係)
   kp_attitude: 20.0       # 姿態 P (再次降低)
   kd_attitude: 4.0        # 姿態 D (相應調整)
+
+# 【v4.10.0 新增】地形生成設定
+# ==================================
+# === 地形生成設定 (Terrain Generation Settings)
+# ==================================
+terrain_generation:
+  sine_waves_amplitude: 0.04  # 正弦波地形的最大高度 (原為 0.08) (預設 0.04)
+  steps_height: 0.025         # 階梯地形的單階高度 (原為 0.05) (預設 0.025)
+  random_noise_amplitude: 0.05 # 隨機噪點地形的最大高度 (原為 0.1) (預設 0.05)
+  pyramid_max_height: 0.4      # 金字塔地形的最大高度 (原為 0.3-0.6) (預設 0.4)
+  stepped_pyramid_max_height: 0.5 # 階梯金字塔的最大高度 (原為 0.4-0.8) (預設 0.5)
+  stepped_pyramid_steps_min: 12 # 控制階梯金字塔的階梯數量範圍下限 (預設 12)
+  stepped_pyramid_steps_max: 16 # 控制階梯金字塔的階梯數量範圍上限 (預設 16)

@@ -48,7 +48,8 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
         from src.simulation.floating_controller import FloatingController
 
         sim = Simulation(config)
-        terrain = TerrainManager(sim.model, sim.data)
+        # 【v4.10.0 修改】將完整的 config 物件傳入 TerrainManager
+        terrain = TerrainManager(config, sim.model, sim.data)
         floating = FloatingController(config, sim.model, sim.data, terrain)
         # 【v4.3.2 修改】 實例化 ObservationManager
         obs_manager = ObservationManager(state)
