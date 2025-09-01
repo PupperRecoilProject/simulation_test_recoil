@@ -138,42 +138,43 @@ class UIController:
         self._setup_ui()
 
     # ===================================================================
-    #                          UI 佈局創建 (v4.8.1)
+    #                          UI 佈局創建 (v4.8.2)
     # ===================================================================
 
     def _setup_ui(self):
         """
-        【v4.8.1 重構】建立一個雙欄、獨立滾動且符合人體工學的佈局。
+        【v4.8.2 重構】引入 ui.splitter 實現健壯的雙欄獨立滾動佈局。
 
-        此函式是 UI 佈局的骨架。它創建一個佔滿螢幕可用高度的橫向容器(ui.row)，
-        並在其中劃分出左側「控制區」和右側「監控區」。透過精確的 Tailwind CSS 
-        類設定，確保兩個欄位擁有各自獨立的垂直滾動條，從而解決佈局的核心痛點。
+        此版本用 ui.splitter 取代了基於 Flexbox 的 column 佈局，從根本上解決了
+        全頁滾動條的問題，並允許使用者自由調整左右欄的寬度。同時，對元件
+        順序和樣式進行了精細打磨，以提升整體的使用者體驗。
         """
         ui.dark_mode().enable()
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
-        # --- 主要佈局容器 ---
-        # h-[calc(100vh-70px)]: 關鍵！設定一個明確的、佔滿剩餘視窗高度的容器。
-        with ui.row().classes('w-full h-[calc(100vh-70px)] no-wrap gap-x-4 p-4'):
+        # --- 【v4.8.2 核心修改】使用 ui.splitter ---
+        with ui.splitter(value=40).classes('w-full h-[calc(100vh-70px)]') as splitter:
             
-            # --- 左欄：互動與控制區 ---
-            # h-full: 讓此欄位高度填滿父容器的固定高度。
-            # overflow-y-auto: 關鍵！當內容超出時，僅在此欄位內部顯示垂直滾動條。
-            # gap-y-4: 在此欄位內的所有直接子元素（卡片）之間增加統一的垂直間距。
-            with ui.column().classes('w-2/5 h-full overflow-y-auto gap-y-4'):
-                self._create_pinned_controls()
-                self._create_tuning_panel()
-                self._create_joint_control_panel()
-                self._create_device_panel()
-                self._create_joystick_panel()
+            # --- 左側面板：互動與控制區 ---
+            with splitter.before:
+                # gap-y-4: 在卡片之間增加統一的垂直間距
+                with ui.scroll_area().classes('w-full h-full p-4'):
+                    with ui.column().classes('w-full gap-y-4'):
+                        self._create_pinned_controls()
+                        self._create_device_panel()
+                        self._create_joint_control_panel()
+                        self._create_joystick_panel()
+                        # 【v4.8.2 修改】將參數微調移至最下方
+                        self._create_tuning_panel()
 
-            # --- 右欄：監控與顯示區 ---
-            # 同樣的原理應用於右欄
-            with ui.column().classes('w-3/5 h-full overflow-y-auto gap-y-4'):
-                self._create_status_display()
-                self._create_ai_core_display()
-                self._create_log_panel()
+            # --- 右側面板：監控與顯示區 ---
+            with splitter.after:
+                with ui.scroll_area().classes('w-full h-full p-4'):
+                    with ui.column().classes('w-full gap-y-4'):
+                        self._create_status_display()
+                        self._create_ai_core_display()
+                        self._create_log_panel()
 
         ui.timer(0.1, self.update_ui_elements)
 
@@ -343,33 +344,31 @@ class UIController:
 
 
     def _create_status_display(self):
-        """
-        【v4.8.1 重構】創建「關鍵指標」儀表板，並調整字體大小。
-        """
+        """【v4.8.2 修改】精煉佈局和字體。"""
         with ui.card().classes('w-full'):
             ui.label('關鍵指標 (Key Metrics)').classes('text-lg font-bold')
             ui.separator()
-            # 【v4.8.1 修改】使用 text-sm 作為標準字體大小，提供更好的可讀性
-            with ui.grid(columns=2).classes('w-full text-sm gap-y-1'):
+            # 【v4.8.2 修改】使用更具彈性的 row-based 佈局代替 grid
+            with ui.column().classes('w-full text-sm gap-y-1 mt-2'):
                 keys_to_display = ['mode', 'input_mode', 'sim_time', 'policy_status', 'command', 'robot_pos']
                 for key in keys_to_display:
                     desc = self._label_descriptors[key]
                     with self.state.lock:
                         initial_value = desc['getter'](self.state)
                         initial_text = desc['formatter'](initial_value)
-                    self.status_labels[key] = ui.label(f"**{desc['title']}**: {initial_text}")
+                    # 使用 Markdown 的粗體來凸顯標題
+                    self.status_labels[key] = ui.markdown(f"**{desc['title']}**: {initial_text}")
 
 
     def _create_ai_core_display(self):
         """
-        【v4.8.1 新增】創建整合的「AI 核心」面板，並調整字體。
+        【v4.8.2 重構】徹底重做 ONNX 向量的顯示方式，解決對齊與換行問題。
         """
         with ui.card().classes('w-full'):
             ui.label('AI 核心 (AI Core)').classes('text-lg font-bold')
             ui.separator()
             
-            # AI 策略輸出
-            with ui.column().classes('w-full mt-2'):
+            with ui.column().classes('w-full mt-2 gap-y-2'):
                 ui.label('AI 策略輸出 (Policy Outputs)').classes('text-base font-bold')
                 keys_to_display = ['action_raw', 'final_ctrl']
                 for key in keys_to_display:
@@ -381,13 +380,18 @@ class UIController:
                     self.status_labels[key] = ui.label(f"**{desc['title']}**: {initial_text}").classes('text-xs font-mono')
             
             # ONNX 觀察向量（放入摺疊面板）
-            with ui.expansion('ONNX 觀察向量 (Input)', icon='schema').classes('w-full mt-2'):
-                # 【v4.8.1 修改】使用 text-xs 和等寬字體
-                with ui.grid(columns=2).classes('text-xs font-mono'):
+            # 【v4.8.2 修改】預設展開 ONNX 觀察向量
+            with ui.expansion('ONNX 觀察向量 (Input)', icon='schema', value=True).classes('w-full mt-2'):
+                with ui.column().classes('w-full gap-y-1'):
                     if self.state.observation_manager_ref:
                         all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
                         for comp_name, dim in all_components:
-                            self.onnx_input_labels[comp_name] = ui.label(f'{comp_name}: N/A')
+                            # 【v4.8.2 核心修改】為每一行創建一個 row
+                            with ui.row().classes('w-full no-wrap items-center'):
+                                # 固定寬度的標題標籤
+                                ui.label(f'{comp_name}:').classes('w-48 text-xs font-mono text-right mr-2')
+                                # 用於顯示數值的標籤
+                                self.onnx_input_labels[comp_name] = ui.label('N/A').classes('text-xs font-mono')
                     else:
                         ui.label("錯誤: ObservationManager 未初始化!")
 
@@ -400,12 +404,13 @@ class UIController:
     def _create_log_panel(self):
         """
         【v4.8.0 修改】將日誌區域放入一個預設收起的摺疊面板中。
-        
+        【v4.8.2 修改】預設展開日誌區域。
+
         創建系統日誌和序列埠命令輸入區域。為了優化主螢幕空間，
         整個面板被包裹在一個 ui.expansion 元件中，使用者需要時可手動展開。
         """
         # 【v4.8.0 修改】將日誌區域放入摺疊面板，預設關閉
-        with ui.expansion('系統日誌與序列埠 (Logs & Serial)', icon='plagiarism', value=False).classes('w-full'):
+        with ui.expansion('系統日誌與序列埠 (Logs & Serial)', icon='plagiarism', value=True).classes('w-full'):
             with ui.card().classes('w-full no-shadow border'): # 使用無陰影的卡片樣式
                 ui.label('系統日誌與序列埠控制台').classes('text-lg')
                 self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
@@ -535,6 +540,7 @@ class UIController:
         【v4.4.7 重構】
         從 state.std_obs 這個單一權威數據源讀取數據並更新 UI。
         【v4.7.0 修改】新增固定寬度數字格式化，提升可讀性。
+        【v4.8.2 修改】引入新的格式化函式，強制顯示正負號以確保完美對齊。
         """
         with self.state.lock:
             std_obs_snapshot = self.state.std_obs.copy()
@@ -543,16 +549,15 @@ class UIController:
             value_slice = std_obs_snapshot.get(comp_name)
 
             if value_slice is not None:
-                # 【v4.7.0 修改】使用固定寬度的數字格式化，類似 pyserial_console.py
-                # 這個 formatter 確保每個數字都佔用 7 個字符寬度，小數點後保留 3 位。
-                # 這將使得所有向量的排版都非常整齊，提升可讀性。
+                # 【v4.8.2 核心修改】使用新的 formatter，"+7.3f" 會強制為正數也顯示 '+' 號
+                # 這能確保所有數字（如 +0.123 和 -0.123）佔據完全相同的寬度。
                 vec_str = np.array2string(value_slice, 
                                           precision=3, 
                                           suppress_small=True, 
-                                          formatter={'float_kind': lambda x: f"{x:7.3f}"})
-                label_widget.set_text(f'{comp_name}: {vec_str}')
+                                          formatter={'float_kind': lambda x: f"{x:+7.3f}"})
+                label_widget.set_text(vec_str)
             else:
-                label_widget.set_text(f'{comp_name}: N/A')
+                label_widget.set_text('N/A')
 
     def _toggle_pause(self):
         """【v4.7.4 新增】線程安全地切換暫停狀態。"""
