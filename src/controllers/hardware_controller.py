@@ -11,6 +11,8 @@ from queue import Queue, Empty
 from enum import Enum, auto
 
 from src.core.event_system import event_bus, EVENT_HARDWARE_AI_TOGGLE_REQUESTED
+# 【v4.9.0 新增】導入新的 TeensyAPI
+from src.hardware.teensy_api import TeensyAPI
 
 if TYPE_CHECKING:
     from src.core.config import AppConfig
@@ -47,6 +49,8 @@ class HardwareController:
         self.ser: serial.Serial | None = None 
         self.read_thread: threading.Thread | None = None 
         self.control_thread: threading.Thread | None = None 
+        # 【v4.9.0 新增】宣告 teensy_api 屬性
+        self.teensy_api: TeensyAPI | None = None
         
         # 【v4.3.2 刪除】 刪除獨立的 hw_state_data 和 lock
         # self.hw_state_data = RobotStateHardware()
@@ -163,7 +167,11 @@ class HardwareController:
             time.sleep(1.0 / self.config.control_freq)
 
     def _execute_start(self):
-        """(內部, 可能阻塞) 執行啟動流程。"""
+        """
+        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+
+        (內部, 可能阻塞) 執行啟動流程。
+        """
         self._set_internal_state(HWState.STARTING)
         if not self.serial_comm.is_connected:
             log.error("❌ 硬體啟動失敗：序列埠未連接。")
@@ -175,6 +183,9 @@ class HardwareController:
             log.error("❌ 硬體啟動失敗：無法獲取有效連接。")
             self._set_internal_state(HWState.FAILED)
             return
+        
+        # 【v4.9.0 新增】在成功獲取序列埠連線後，實例化 TeensyAPI
+        self.teensy_api = TeensyAPI(self.ser)
 
         # --- 接管與初始化 ---
         log.info(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
@@ -182,7 +193,10 @@ class HardwareController:
 
         try:
             log.info("  -> 命令 Teensy 切換至 POLICY_STREAM 模式...")
-            self.ser.write(b"monitor p\n")
+            # 【v4.9.0 修改】使用 API 取代硬編碼字串
+            if not self.teensy_api.set_mode_policy_stream():
+                raise serial.SerialException("透過 API 發送 'monitor p' 指令失敗。")
+            
             time.sleep(0.1) 
             self.ser.reset_input_buffer()
             log.info("  -> 已發送 Teensy 模式指令。")
@@ -200,28 +214,38 @@ class HardwareController:
             self._set_internal_state(HWState.FAILED)
 
     def _execute_stop(self):
-        """(內部, 可能阻塞) 執行停止流程。"""
+        """
+        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+        
+        (內部, 可能阻塞) 執行停止流程。
+        """
         self._set_internal_state(HWState.STOPPING)
         self.ai_control_active = False
         with self.state.lock: self.state.hardware_ai_is_active = False
 
-        if self.ser and self.ser.is_open:
-            try:
-                log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
-                self.ser.write(b"stop\n"); time.sleep(0.05)
-                self.ser.write(b"monitor h\n"); time.sleep(0.05)
-            except serial.SerialException as e:
-                log.warning(f"  -> 警告: 發送停止指令失敗: {e}")
+        # 【v4.9.0 修改】使用 API 取代硬編碼字串
+        if self.teensy_api:
+            log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
+            self.teensy_api.stop_ai_and_motors()
+            time.sleep(0.05)
+            self.teensy_api.set_mode_human_readable()
         
         if self.serial_comm:
             self.serial_comm.is_managed_by_hardware_controller = False
             log.info("  -> 序列埠控制權已交還。")
         
         self.ser = None
+        # 【v4.9.0 新增】清理 API 實例
+        self.teensy_api = None
         self._set_internal_state(HWState.STOPPED)
 
+
     def _execute_toggle_ai(self):
-        """(內部) 執行切換AI的邏輯。"""
+        """
+        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+        
+        (內部) 執行切換AI的邏輯。
+        """
         self.ai_control_active = not self.ai_control_active
         with self.state.lock:
             self.state.hardware_ai_is_active = self.ai_control_active
@@ -230,16 +254,18 @@ class HardwareController:
         
         if self.ai_control_active:
             self.policy.reset()
-        elif self.ser and self.ser.is_open:
-            try: self.ser.write(b"stop\n")
-            except serial.SerialException as e: log.error(f"發送停止指令失敗: {e}")
+        # 【v4.9.0 修改】使用 API 取代硬編碼字串
+        elif self.teensy_api:
+            self.teensy_api.stop_ai_and_motors()
 
 
     def _perform_ai_step(self):
         """
-        (內部) 執行單步 AI 計算與控制。
         【v4.3.2 修改】 _perform_ai_step 方法
         【v4.7.1b 修改】 _perform_ai_step 方法，修復 last_action 時序
+        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+
+        (內部) 執行單步 AI 計算與控制。
         """
         # 【v4.3.2 刪除】 不再自行構建觀測向量
         # observation = self.construct_observation()
@@ -262,14 +288,13 @@ class HardwareController:
         default_pose_hardware = np.zeros(12)
         final_command = default_pose_hardware + action_raw * action_scale
         
-        action_str = ' '.join(f"{a:.4f}" for a in final_command)
-        command_to_send = f"move all {action_str}\n"
-
-        if self.ser and self.ser.is_open:
-            try: self.ser.write(command_to_send.encode('utf-8'))
-            except serial.SerialException:
+        # 【v4.9.0 修改】使用 API 取代字串格式化和序列埠寫入
+        if self.teensy_api:
+            if not self.teensy_api.send_motor_commands(final_command):
                 log.error("AI 步驟中發送指令失敗，連接可能已斷開。")
                 self._set_internal_state(HWState.FAILED)
+        else:
+            log.warning("TeensyAPI 未初始化，無法發送馬達指令。")
 
 
     def parse_policy_stream(self, line: str):

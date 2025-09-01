@@ -119,6 +119,16 @@ class ObservationManager:
 
         - 在硬體模式下，直接信任並返回 Teensy 預計算好的重力向量。
         - 在模擬模式下，通過旋轉世界重力向量來計算。
+
+        
+        【v4.9.0 修改】增加坐標系審核註解。
+
+        計算局部座標系下的重力向量。
+
+        - **輸入**: 世界座標系 (World Frame) 下的重力向量 (Z 軸為 [0, 0, -1])。
+        - **輸出**: 機體局部座標系 (Body Frame) 下的重力向量。
+        - **TODO**: 需與 Teensy IMU 的實際輸出坐標系 (Y-fwd, X-right) 進行校對。
+                   未來可能需要在返回前對向量進行軸交換或符號翻轉以達成統一。
         """
         # 【v4.4.7 修改】 移除模式判斷，因為觸發點統一後，數據來源也統一了。
         # 現在，我們總是假設 state.raw_... 中有正確的數據。
@@ -165,6 +175,18 @@ class ObservationManager:
 
         - 在硬體模式下，由於 Teensy 未提供線速度數據，返回零向量。
         - 在模擬模式下，通過旋轉世界線速度向量來計算。
+
+        
+        【v4.9.0 修改】增加坐標系審核註解。
+
+        獲取局部座標系下的軀幹線速度。
+
+        - **輸入**: `state.raw_torso_linear_velocity`
+            - 模擬模式: 世界座標系 (World Frame)。
+            - 硬體模式: 恆為零，因為 Teensy 不提供此數據。
+        - **輸出**: 機體局部座標系 (Body Frame) 下的線速度。
+        - **TODO**: 在 v5.0.0+ 的狀態估算器 (State Estimator) 中，
+                   需要實現從 IMU 數據估算線速度的功能。
         """
         # 【v4.4.7 修改】 移除模式判斷。
         inv_torso_rot = self._get_torso_inverse_rotation()
@@ -178,6 +200,19 @@ class ObservationManager:
 
         - 在硬體模式下，直接信任並返回 Teensy 提供的機身坐標系角速度。
         - 在模擬模式下，通過旋轉世界角速度向量來計算。
+
+
+        【v4.9.0 修改】增加坐標系審核註解。
+        
+        獲取局部座標系下的軀幹角速度。
+
+        - **輸入**: `state.raw_torso_angular_velocity`
+            - 模擬模式: 世界座標系 (World Frame)。
+            - 硬體模式: **直接是機體局部座標系 (Body Frame)**。
+        - **輸出**: 機體局部座標系 (Body Frame) 下的角速度。
+        - **注意**: 目前的實現對來自硬體的數據進行了冗餘的旋轉操作。
+                   雖然在姿態接近水平時影響不大，但在 v5.0.0+ 應在 `HardwareController` 
+                   層級就統一好 `raw` 數據的坐標系。
         """
         # 【v4.4.7 修改】 移除模式判斷。
         inv_torso_rot = self._get_torso_inverse_rotation()
@@ -189,7 +224,18 @@ class ObservationManager:
 
     # 【v4.3.1 修改】 _get_accelerometer 方法
     def _get_accelerometer(self) -> np.ndarray:
-        """獲取加速度計讀數。"""
+        """
+        【v4.9.0 修改】增加坐標系審核註解。
+        
+        獲取加速度計讀數。
+
+        - **輸入**: `state.raw_accelerometer`
+            - 模擬模式: 機體局部座標系 (Body Frame)。
+            - 硬體模式: 機體局部座標系 (Body Frame)。
+        - **輸出**: 機體局部座標系 (Body Frame) 下的加速度。
+        - **TODO**: 需與 Teensy IMU 的實際輸出坐標系 (Y-fwd, X-right) 進行校對，
+                   確認是否需要進行軸交換或符號翻轉。
+        """
         # [修改] 數據源變更
         return self.state.raw_accelerometer
 
