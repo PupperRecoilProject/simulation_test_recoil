@@ -282,20 +282,25 @@ class UIController:
                 on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
                 on_move=lambda e: event_bus.publish(
                     EVENT_COMMAND_UPDATED, 
+                    # 【v4.9.1 修正】確保送出的指令為 4 維向量，以符合系統目前的設計。
+                    # 虛擬搖桿不控制俯仰角 (pitch)，因此第四個元素硬編碼為 0.0。
                     command=np.array([
-                        e.x * self.state.config.gamepad_sensitivity['vy'], # 使用 e.x
-                        -e.y * self.state.config.gamepad_sensitivity['vx'], # 使用 e.y
-                        0.0
+                        e.x * self.state.config.gamepad_sensitivity['vy'],
+                        -e.y * self.state.config.gamepad_sensitivity['vx'],
+                        0.0,
+                        0.0  # <--- 新增的第四個元素 (pitch)
                     ])
                 ),
                 on_end=lambda e: (
-                    event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3)),
-                    event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD") # 釋放後切回鍵盤模式
+                    # 【v4.9.1 修正】確保清除指令時，同樣送出 4 維向量。
+                    event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4)),
+                    event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD")
                 )
             ).props('throttle')
             
-            ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(3))).props('outline')
-
+            # 【v4.9.1 修正】確保清除命令按鈕同樣送出 4 維向量。
+            ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4))).props('outline')
+            
 
     def _create_joint_control_panel(self):
         # 僅當控制模式為 "JOINT_TEST" 或 "MANUAL_CTRL" 時，此卡片才可見
