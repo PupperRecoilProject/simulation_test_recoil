@@ -154,7 +154,7 @@ class UIController:
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
         # --- 【v4.8.2 核心修改】使用 ui.splitter ---
-        with ui.splitter(value=40).classes('w-full h-[calc(100vh-70px)]') as splitter:
+        with ui.splitter(value=40).classes('w-full h-[calc(100vh-100px)]') as splitter:
             
             # --- 左側面板：互動與控制區 ---
             with splitter.before:
