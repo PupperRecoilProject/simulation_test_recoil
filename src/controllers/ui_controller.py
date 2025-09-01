@@ -39,7 +39,12 @@ if TYPE_CHECKING:
 
 
 class UIController:
-    """管理 NiceGUI 介面與互動邏輯。"""
+    """
+    【v4.8.0 修改】管理符合 UX 原則的雙欄獨立滾動佈局。
+    
+    管理 NiceGUI 介面與互動邏輯。
+    """
+    
     def __init__(self, state: 'SimulationState'):
         self.state = state
         self.policy_manager = state.policy_manager_ref
@@ -135,6 +140,10 @@ class UIController:
     def _setup_ui(self):
         """
         【v4.8.0 重構】建立一個雙欄、獨立滾動的佈局，並根據 UX 原則重新組織元件。
+        
+        這個函式是 UI 佈局的骨架。它移除了舊的 Tabs 分頁結構，
+        改為創建一個佔滿螢幕可用空間的 ui.row，並在其中劃分出
+        左側的「控制區」和右側的「監控區」，賦予它們獨立的滾動能力。
         """
         ui.dark_mode().enable()
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
@@ -171,7 +180,11 @@ class UIController:
 
     def _create_pinned_controls(self):
         """
-        【v4.8.0 新增】創建一個置頂的卡片，包含最高頻的核心控制項。
+        【v4.8.0 新增】創建一個置頂的「核心控制」卡片。
+
+        此函式旨在將使用者最高頻、最重要的控制項（模式切換、模擬控制、
+        策略選擇）集中放置在左側控制欄的最頂部，確保使用者無需滾動
+        即可存取，從而最大化操作效率。
         """
         with ui.card().classes('w-full'):
             ui.label('核心控制 (Core Control)').classes('text-lg font-bold mb-2')
@@ -217,13 +230,15 @@ class UIController:
     # 【修改】這些 _create_..._panel 函式的主要變更是它們的 on_click 回呼。
     #         它們不再呼叫 self._request... 這樣的內部函式，而是直接發布事件。
 
-    # 【v4.8.0 重構】_create_main_control_panel 被 _create_pinned_controls 取代
-    # def _create_main_control_panel(self): ... 
+    # 【v4.8.0 移除】此函式的功能已被 _create_pinned_controls 取代。
+    # def _create_main_control_panel(self): ...
                 
 
     def _create_tuning_panel(self):
         """
-        【v4.8.0 微調】修改字體
+        【v4.8.0 修改】調整標題樣式以符合新佈局。
+        
+        創建包含 KP、KD 等物理參數調整滑桿的卡片。
         """
         with ui.card().classes('w-full'):
             ui.label('參數調整 (Tuning)').classes('text-lg font-bold mb-2')
@@ -352,7 +367,11 @@ class UIController:
 
     def _create_status_display(self):
         """
-        【v4.8.0 重構】現在只負責創建「關鍵指標」儀表板。
+        【v4.8.0 重構】創建「關鍵指標」儀表板。
+        
+        此函式現在只負責從 _label_descriptors 中挑選最重要的狀態資訊
+        （如模式、時間、指令）進行顯示，並以更緊湊的佈局呈現，
+        作為使用者概覽系統狀態的核心視窗。
         """
         with ui.card().classes('w-full'):
             ui.label('關鍵指標 (Key Metrics)').classes('text-lg font-bold mb-2')
@@ -369,7 +388,11 @@ class UIController:
 
     def _create_ai_core_display(self):
         """
-        【v4.8.0 新增】創建一個整合的卡片，用於顯示 AI 的輸入和輸出。
+        【v4.8.0 新增】創建一個整合的「AI 核心」面板。
+        
+        此面板將 AI 的「輸出」（原始動作、最終控制）和「輸入」（ONNX 觀察向量）
+        在邏輯上和視覺上組合在一起，形成清晰的因果鏈。ONNX 觀察向量被
+        放入一個預設收起的摺疊面板中，以保持介面整潔。
         """
         with ui.card().classes('w-full'):
             ui.label('AI 核心 (AI Core)').classes('text-lg font-bold mb-2')
@@ -398,12 +421,18 @@ class UIController:
                         ui.label("錯誤: ObservationManager 未初始化!")
 
 
-    # 【v4.8.0 重構】_create_onnx_display 被 _create_ai_core_display 取代
+    # 【v4.8.0 移除】此函式的功能已被 _create_ai_core_display 取代。
     # def _create_onnx_display(self): ...
 
 
     # 【v4.8.0 重構】_create_log_panel 放入摺疊面板
     def _create_log_panel(self):
+        """
+        【v4.8.0 修改】將日誌區域放入一個預設收起的摺疊面板中。
+        
+        創建系統日誌和序列埠命令輸入區域。為了優化主螢幕空間，
+        整個面板被包裹在一個 ui.expansion 元件中，使用者需要時可手動展開。
+        """
         # 【v4.8.0 修改】將日誌區域放入摺疊面板，預設關閉
         with ui.expansion('系統日誌與序列埠 (Logs & Serial)', icon='plagiarism', value=False).classes('w-full'):
             with ui.card().classes('w-full no-shadow border'): # 使用無陰影的卡片樣式
