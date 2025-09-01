@@ -153,25 +153,24 @@ class UIController:
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
-        # --- 【v4.8.2 核心修改】使用 ui.splitter ---
-        with ui.splitter(value=40).classes('w-full h-[calc(100vh-100px)]') as splitter:
+        # Splitter 預設改為 32，並限制左側最大寬度，減少過度佔空間
+        with ui.splitter(value=32).classes('w-full h-[calc(100vh-100px)]') as splitter:
             
-            # --- 左側面板：互動與控制區 ---
+            # 左側：限制最大寬度，讓按鈕等元件不會過度拉寬
             with splitter.before:
-                # gap-y-4: 在卡片之間增加統一的垂直間距
-                with ui.scroll_area().classes('w-full h-full p-4'):
-                    with ui.column().classes('w-full gap-y-4'):
+                # 新增一層 container 並限制 max-width
+                with ui.scroll_area().classes('w-full h-full p-3'):
+                    with ui.column().classes('w-full gap-y-3 max-w-[420px]'):
                         self._create_pinned_controls()
                         self._create_device_panel()
                         self._create_joint_control_panel()
                         self._create_joystick_panel()
-                        # 【v4.8.2 修改】將參數微調移至最下方
                         self._create_tuning_panel()
 
-            # --- 右側面板：監控與顯示區 ---
+            # 右側：保留但減少左右 padding
             with splitter.after:
-                with ui.scroll_area().classes('w-full h-full p-4'):
-                    with ui.column().classes('w-full gap-y-4'):
+                with ui.scroll_area().classes('w-full h-full p-3'):
+                    with ui.column().classes('w-full gap-y-3'):
                         self._create_status_display()
                         self._create_ai_core_display()
                         self._create_log_panel()
@@ -186,45 +185,41 @@ class UIController:
         此卡片整合了使用者最高頻的操作，確保它們永遠顯示在左欄頂部，
         無需滾動即可存取，極大地優化了核心工作流程的效率。
         """
-        with ui.card().classes('w-full'):
-            ui.label('核心控制 (Core Control)').classes('text-lg font-bold')
+        with ui.card().classes('w-full p-3'):
+            ui.label('核心控制 (Core Control)').classes('text-base font-bold')
             ui.separator()
 
-            # 模式控制
-            ui.label('模式 (Mode)').classes('text-base font-bold mt-4 mb-2')
-            with ui.row():
-                ui.button('走路', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING"))
+            ui.label('模式 (Mode)').classes('text-sm font-medium mt-3 mb-2')
+            with ui.row().classes('w-full gap-x-2'):
+                ui.button('走路', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="WALKING")).classes('flex-1')
                 ui.button('硬體', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="HARDWARE_MODE")) \
-                  .bind_enabled_from(self.state, 'serial_is_connected')
-                ui.button('關節測試', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
-                
-            # 模擬控制
-            ui.label('模擬 (Simulation)').classes('text-base font-bold mt-4 mb-2')
-            with ui.row().classes('items-center'):
+                  .bind_enabled_from(self.state, 'serial_is_connected').classes('flex-1')
+                ui.button('關節測試', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST")).classes('flex-1')
+
+            ui.label('模擬 (Simulation)').classes('text-sm font-medium mt-3 mb-2')
+            with ui.row().classes('items-center gap-x-2'):
                 ui.button().bind_text_from(self.state, 'single_step_mode', 
                                            lambda p: '▶️ 播放' if p else '⏸️ 暫停') \
-                           .on('click', self._toggle_pause)
+                           .on('click', self._toggle_pause).classes('w-32')
                 ui.button('步進', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
-                   .bind_enabled_from(self.state, 'single_step_mode')
-                ui.button('硬重置', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
+                   .bind_enabled_from(self.state, 'single_step_mode').classes('w-20')
+                ui.button('硬重置', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard")).classes('flex-1')
 
-            # AI 與策略
-            ui.label('AI 與策略 (AI & Policy)').classes('text-base font-bold mt-4 mb-2')
-            # 【v4.8.1 修正】確保策略和地形選擇器只在這裡創建
+            ui.label('AI 與策略 (AI & Policy)').classes('text-sm font-medium mt-3 mb-2')
+            # 策略下拉（寬度適中）
             self.status_labels['policy_selector'] = ui.select(
                 options=self.state.available_policies,
                 label='選擇 AI 策略',
                 value=self.policy_manager.primary_policy_name,
                 on_change=lambda e: event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name=e.value)
-            ).classes('w-full')
+            ).classes('w-full text-sm')
             
             terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
             self.terrain_selector = ui.select(
                 options=terrain_options,
                 label='選擇地形',
                 on_change=lambda e: event_bus.publish(EVENT_TERRAIN_CHANGE_REQUESTED, name=e.value)
-            ).bind_value(self, 'ui_terrain_selection').classes('w-full')
-
+            ).bind_value(self, 'ui_terrain_selection').classes('w-full text-sm')
 
     def _create_tuning_panel(self):
         """
@@ -364,36 +359,45 @@ class UIController:
         """
         【v4.8.2 重構】徹底重做 ONNX 向量的顯示方式，解決對齊與換行問題。
         """
-        with ui.card().classes('w-full'):
-            ui.label('AI 核心 (AI Core)').classes('text-lg font-bold')
+        with ui.card().classes('w-full p-3'):
+            ui.label('AI 核心 (AI Core)').classes('text-base font-bold')
             ui.separator()
             
             with ui.column().classes('w-full mt-2 gap-y-2'):
-                ui.label('AI 策略輸出 (Policy Outputs)').classes('text-base font-bold')
+                ui.label('AI 策略輸出 (Policy Outputs)').classes('text-sm font-medium')
                 keys_to_display = ['action_raw', 'final_ctrl']
                 for key in keys_to_display:
                     desc = self._label_descriptors[key]
                     with self.state.lock:
                         initial_value = desc['getter'](self.state)
                         initial_text = desc['formatter'](initial_value)
-                    # 【v4.8.1 修改】使用 text-xs (最小) 和等寬字體來顯示密集的數字陣列
-                    self.status_labels[key] = ui.label(f"**{desc['title']}**: {initial_text}").classes('text-xs font-mono')
-            
-            # ONNX 觀察向量（放入摺疊面板）
-            # 【v4.8.2 修改】預設展開 ONNX 觀察向量
+                    # 使用 monospace 且更小字級
+                    self.status_labels[key] = ui.label(f"{desc['title']}:").classes('text-sm')
+                    ui.label(initial_text).classes('text-xs font-mono').style('white-space: pre;')
+
+            # ONNX 觀察向量（改為每個名稱一區塊，標題在上，內容在下）
             with ui.expansion('ONNX 觀察向量 (Input)', icon='schema', value=True).classes('w-full mt-2'):
-                with ui.column().classes('w-full gap-y-1'):
+                with ui.column().classes('w-full gap-y-2'):
                     if self.state.observation_manager_ref:
                         all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
                         for comp_name, dim in all_components:
-                            # 【v4.8.2 核心修改】為每一行創建一個 row
-                            with ui.row().classes('w-full no-wrap items-center'):
-                                # 固定寬度的標題標籤
-                                ui.label(f'{comp_name}:').classes('w-48 text-xs font-mono text-right mr-2')
-                                # 用於顯示數值的標籤
-                                self.onnx_input_labels[comp_name] = ui.label('N/A').classes('text-xs font-mono')
+                            # 如果是 12 維的馬達向量，使用 4x3 Grid 顯示
+                            lower_name = comp_name.lower()
+                            if dim == 12 and ('motor' in lower_name or 'leg' in lower_name or 'joint' in lower_name):
+                                ui.label(comp_name + ':').classes('text-sm font-medium')
+                                # 建立 4 行，每行 3 個 mono label
+                                with ui.grid().classes('grid-cols-3 gap-2'):
+                                    for i in range(12):
+                                        label = ui.label('N/A').classes('text-xs font-mono text-center')
+                                        # key: comp_name + '_' + index
+                                        self.onnx_input_labels[f'{comp_name}_{i}'] = label
+                            else:
+                                # 預設為單一大欄位（標題上、值下）
+                                ui.label(comp_name + ':').classes('text-sm font-medium')
+                                lbl = ui.label('N/A').classes('text-xs font-mono').style('white-space: pre;')
+                                self.onnx_input_labels[comp_name] = lbl
                     else:
-                        ui.label("錯誤: ObservationManager 未初始化!")
+                        ui.label("錯誤: ObservationManager 未初始化!").classes('text-sm')
 
 
     # 【v4.8.0 移除】此函式的功能已被 _create_ai_core_display 取代。
@@ -409,17 +413,15 @@ class UIController:
         創建系統日誌和序列埠命令輸入區域。為了優化主螢幕空間，
         整個面板被包裹在一個 ui.expansion 元件中，使用者需要時可手動展開。
         """
-        # 【v4.8.0 修改】將日誌區域放入摺疊面板，預設關閉
-        with ui.expansion('系統日誌與序列埠 (Logs & Serial)', icon='plagiarism', value=True).classes('w-full'):
-            with ui.card().classes('w-full no-shadow border'): # 使用無陰影的卡片樣式
-                ui.label('系統日誌與序列埠控制台').classes('text-lg')
-                self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
-                with ui.row().classes('w-full items-center'):
-                    # 輸入框綁定 Enter 鍵事件，按下 Enter 即送出指令
+        with ui.expansion('系統日誌與序列埠 (Logs & Serial)', icon='plagiarism', value=False).classes('w-full'):
+            with ui.card().classes('w-full no-shadow border p-3'):
+                ui.label('系統日誌與序列埠控制台').classes('text-sm')
+                self.log_area = ui.textarea(label='Log').props('readonly outlined rows=6').classes('font-mono text-xs').style('width: 100%; white-space: pre-wrap;')
+                with ui.row().classes('w-full items-center gap-x-2'):
                     self.serial_command_buffer = ui.input(label='Serial Command')\
-                        .props('outlined dense').classes('flex-grow')\
+                        .props('outlined dense').classes('flex-grow text-sm')\
                         .on('keydown.enter', self._send_serial_command)
-                    ui.button('Send', on_click=self._send_serial_command)
+                    ui.button('Send', on_click=self._send_serial_command).classes('w-20')
 
     def _send_serial_command(self):
         """
@@ -545,19 +547,31 @@ class UIController:
         with self.state.lock:
             std_obs_snapshot = self.state.std_obs.copy()
 
-        for comp_name, label_widget in self.onnx_input_labels.items():
-            value_slice = std_obs_snapshot.get(comp_name)
-
-            if value_slice is not None:
-                # 【v4.8.2 核心修改】使用新的 formatter，"+7.3f" 會強制為正數也顯示 '+' 號
-                # 這能確保所有數字（如 +0.123 和 -0.123）佔據完全相同的寬度。
-                vec_str = np.array2string(value_slice, 
-                                          precision=3, 
-                                          suppress_small=True, 
-                                          formatter={'float_kind': lambda x: f"{x:+7.3f}"})
-                label_widget.set_text(vec_str)
+        # 遍歷 self.onnx_input_labels（注意 keys 可能是 'comp' or 'comp_i'）
+        # 我們需要根據 key 分流處理
+        # 先做簡單的全鍵迭代
+        for key, label_widget in self.onnx_input_labels.items():
+            if '_' in key:
+                # 格式 compname_idx（12 維馬達）
+                comp_name, idx_s = key.rsplit('_', 1)
+                idx = int(idx_s)
+                value_slice = std_obs_snapshot.get(comp_name)
+                if value_slice is not None and len(value_slice) > idx:
+                    v = value_slice[idx]
+                    s = f"{v:+7.3f}"
+                    label_widget.set_text(s)
+                else:
+                    label_widget.set_text('N/A')
             else:
-                label_widget.set_text('N/A')
+                # 普通向量或標量，直接顯示整個向量
+                value_slice = std_obs_snapshot.get(key)
+                if value_slice is not None:
+                    vec_str = np.array2string(value_slice, precision=3, suppress_small=True,
+                                              formatter={'float_kind': lambda x: f"{x:+7.3f}"})
+                    label_widget.set_text(vec_str)
+                else:
+                    label_widget.set_text('N/A')
+
 
     def _toggle_pause(self):
         """【v4.7.4 新增】線程安全地切換暫停狀態。"""
