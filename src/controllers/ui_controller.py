@@ -32,6 +32,8 @@ from src.core.event_system import (
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
 )
+# 【v4.10.1 新增】導入 State 和 Enum 以進行類型提示
+from src.core.state import SimulationState, HardwareLinkStatus
 
 if TYPE_CHECKING:
     from src.core.state import SimulationState
@@ -46,7 +48,8 @@ class UIController:
         self.hardware_controller = state.hardware_controller_ref
         self.serial_comm = state.serial_communicator_ref
         self.xbox_handler = state.xbox_handler_ref
-
+        # 【v4.10.1 新增】為靜默開關宣告一個屬性
+        self.mute_switch = None
         self.param_sliders = {}
         self.onnx_input_labels = {}
         self.log_area = None
@@ -252,6 +255,13 @@ class UIController:
     def _create_device_panel(self):
         with ui.card():
             ui.label('硬體 AI 控制').classes('text-lg')
+
+            # 【v4.10.1 新增】"Dry Run" 安全模式開關
+            with ui.row().classes('items-center'):
+                ui.label('指令靜默 (Mute)').classes('text-sm')
+                self.mute_switch = ui.switch(on_change=self._handle_mute_switch_change) \
+                    .tooltip('手動靜默/解除靜默馬達指令。僅在硬體通訊驗證成功後可用。')
+                
             # 現在綁定到 self.hardware_controller.is_running
             # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
             ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
@@ -430,6 +440,9 @@ class UIController:
             # 這比手動複製每個變量更簡潔、更具擴展性。
             state_snapshot = self.state
 
+            # 【v4.10.1 新增】獲取連結狀態
+            hw_link_status = self.state.hardware_link_status
+
             # 【保留】非描述性數據仍需手動獲取
             # 參數調校狀態 (用於滑桿)
             tuning_params_copy = {
@@ -478,6 +491,19 @@ class UIController:
                     # 防禦性程式碼：如果 getter 或 formatter 出錯，只打印警告，不讓 UI 崩潰。
                     log.warning(f"UI 更新失敗 for key '{key}': {e}")
         
+        # 【v4.10.1 新增】根據連結狀態更新 Mute 開關的狀態和可用性
+        if self.mute_switch:
+            is_verified_or_muted = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
+            
+            # 根據狀態決定開關是否可操作
+            self.mute_switch.enable(is_verified_or_muted)
+            
+            # 根據狀態更新開關的顯示 (on/off)
+            current_switch_value = self.mute_switch.value
+            should_be_on = (hw_link_status == HardwareLinkStatus.MUTED)
+            if current_switch_value != should_be_on:
+                self.mute_switch.set_value(should_be_on)
+
         # --- 更新非描述性/複雜的 UI 元件 (保留現有邏輯) ---
         # 更新 AI 策略下拉選單
         primary_policy = state_snapshot.policy_manager_ref.primary_policy_name
@@ -546,6 +572,17 @@ class UIController:
         """【v4.7.4 新增】線程安全地切換暫停狀態。"""
         with self.state.lock:
             self.state.single_step_mode = not self.state.single_step_mode
+
+    def _handle_mute_switch_change(self, event):
+        """【v4.10.1 新增】處理靜默開關變更的事件，線程安全地更新狀態。"""
+        with self.state.lock:
+            # 只在連結已驗證或已靜默的狀態下進行切換
+            if self.state.hardware_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]:
+                if event.value: # 如果開關被使用者打開 (要求靜默)
+                    self.state.hardware_link_status = HardwareLinkStatus.MUTED
+                else: # 如果開關被使用者關閉 (要求解除靜默)
+                    self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+
 
     def run(self):
         ui.run(title="Pupper Robot Console", port=8080)

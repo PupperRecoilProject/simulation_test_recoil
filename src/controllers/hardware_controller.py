@@ -9,7 +9,8 @@ import numpy as np
 from typing import TYPE_CHECKING
 from queue import Queue, Empty
 from enum import Enum, auto
-
+# 【v4.10.1 新增】導入 State 和 Enum 以進行類型提示
+from src.core.state import SimulationState, HardwareLinkStatus
 from src.core.event_system import event_bus, EVENT_HARDWARE_AI_TOGGLE_REQUESTED
 # 【v4.9.0 新增】導入新的 TeensyAPI
 from src.hardware.teensy_api import TeensyAPI
@@ -169,10 +170,15 @@ class HardwareController:
     def _execute_start(self):
         """
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+        【v4.10.1 重構】實現包含回傳驗證的、基於狀態機的穩健硬體啟動流程。
 
         (內部, 可能阻塞) 執行啟動流程。
         """
         self._set_internal_state(HWState.STARTING)
+        # 【v4.10.1 新增】每次嘗試啟動時，都將連結狀態重置為未驗證
+        with self.state.lock:
+            self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+            
         if not self.serial_comm.is_connected:
             log.error("❌ 硬體啟動失敗：序列埠未連接。")
             self._set_internal_state(HWState.FAILED)
@@ -185,33 +191,58 @@ class HardwareController:
             return
         
         # 【v4.9.0 新增】在成功獲取序列埠連線後，實例化 TeensyAPI
-        self.teensy_api = TeensyAPI(self.ser)
+        # 【v4.10.1 修改】實例化 TeensyAPI 時傳入 state
+        self.teensy_api = TeensyAPI(self.serial_comm, self.state)
 
         # --- 接管與初始化 ---
         log.info(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
         self.serial_comm.is_managed_by_hardware_controller = True  # 告知 serial_comm 不再管理 serial
 
         try:
-            log.info("  -> 命令 Teensy 切換至 POLICY_STREAM 模式...")
-            # 【v4.9.0 修改】使用 API 取代硬編碼字串
-            if not self.teensy_api.set_mode_policy_stream():
-                raise serial.SerialException("透過 API 發送 'monitor p' 指令失敗。")
+            # --- 【v4.10.1 新增】穩健的啟動指令序列 ---
+            log.info("--- 開始執行硬體啟動序列 ---")
             
+            # 1. 安全停機與驗證
+            log.info("  -> 步驟 1/3: 發送 'stop' 指令並等待確認...")
+            if not self.teensy_api.send_command_and_wait_for_ok("stop", timeout=1.0):
+                raise serial.SerialException("Teensy 未能確認 'stop' 指令，啟動中止。")
+            
+            # 2. 設定通訊頻率與驗證
+            log.info(f"  -> 步驟 2/3: 設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
+            if not self.teensy_api.send_command_and_wait_for_ok(f"monitor freq {self.config.control_freq}", timeout=1.0):
+                raise serial.SerialException("Teensy 未能確認 'monitor freq' 指令，啟動中止。")
+
+            # 3. 切換到數據流模式 (此指令可能無 '[OK]' 回應，故使用非阻塞的常規發送)
+            log.info("  -> 步驟 3/3: 命令 Teensy 切換至 POLICY_STREAM 模式...")
+            # 我們需要暫時將狀態設為 VERIFIED，以便 _send_command 能成功發送
+            with self.state.lock:
+                self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+            
+            if not self.teensy_api.set_mode_policy_stream():
+                # 如果失敗，需要將狀態還原
+                with self.state.lock:
+                    self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+                raise serial.SerialException("發送 'monitor p' 指令失敗。")
+
             time.sleep(0.1) 
             self.ser.reset_input_buffer()
-            log.info("  -> 已發送 Teensy 模式指令。")
+            
+            log.info("✅ 硬體啟動序列成功完成，通訊連結已驗證。")
             self._set_internal_state(HWState.RUNNING)
-
-            # 【v4.7.4 修正】硬體模式啟動後，預設自動啟用 AI 控制。
+            
             self.ai_control_active = True
             with self.state.lock: 
                 self.state.hardware_ai_is_active = True
-            log.info("🤖 硬體模式啟動成功，AI 控制已自動啟用。")
+            log.info("🤖 AI 控制已自動啟用。")
 
         except serial.SerialException as e:
-            log.error(f"❌ 發送模式指令失敗: {e}")
+            log.error(f"❌ 硬體啟動序列失敗: {e}")
+            with self.state.lock:
+                self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
             self.serial_comm.is_managed_by_hardware_controller = False
             self._set_internal_state(HWState.FAILED)
+            self.teensy_api = None
+
 
     def _execute_stop(self):
         """

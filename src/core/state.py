@@ -16,7 +16,15 @@ from src.core.config import AppConfig
 from src.core.logger import log
 from typing import TYPE_CHECKING, Dict
 import threading
+# 【v4.10.1 新增】為硬體通訊連結狀態定義一個 Enum
+from enum import Enum
 
+class HardwareLinkStatus(Enum):
+    UNVERIFIED = "未驗證"
+    VERIFIED = "已驗證"
+    MUTED = "已靜默"
+
+    
 # 導入我們新創建的事件系統模組和核心事件
 # 這是讓 SimulationState 能夠監聽系統事件的關鍵
 from src.core.event_system import (
@@ -150,6 +158,8 @@ class SimulationState:
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     # 【v4.0 修改】這個旗標現在只反映當前的真實狀態，不再被直接寫入
     manual_mode_is_floating: bool = False
+    # 【v4.10.1 新增】引入新的三態狀態機來取代舊的布林旗標
+    hardware_link_status: HardwareLinkStatus = HardwareLinkStatus.UNVERIFIED
     
     # --- 設備連接與狀態 ---
     serial_is_connected: bool = False
