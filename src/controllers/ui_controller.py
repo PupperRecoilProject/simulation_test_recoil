@@ -43,6 +43,7 @@ class UIController:
         self.log_area = None
         self.serial_command_buffer = None
         self.joint_control_slider = None
+        # 【整合 NanoOwl】為 NanoOwl 的 prompt 輸入框創建一個屬性
         self.prompt_input = None
 
         if self.state.terrain_mode == 'SINGLE':
@@ -106,7 +107,7 @@ class UIController:
                 self._create_status_display()
                 self._create_core_dashboard()
                 self._create_onnx_display()
-                self._create_vision_panel()
+                self._create_vision_panel() # 【整合】新增視覺面板
                 self._create_log_panel()
 
         ui.timer(0.1, self.update_ui_elements)
@@ -213,7 +214,7 @@ class UIController:
                     self.status_labels[key] = ui.label(f"{desc['title']}: N/A")
 
     def _create_core_dashboard(self):
-        """【手冊實作 v1.14】儀表板現在只包含 AI 的直接輸出。"""
+        """【手冊實作 v1.16】儀表板現在只包含 AI 的直接輸出。"""
         with ui.expansion('核心數據儀表板 (Core Dashboard)', icon='insights').classes('w-full').props('value=true'):
             with ui.card().classes('w-full'):
                 with ui.row().classes('w-full no-wrap'):
@@ -221,15 +222,44 @@ class UIController:
                         self._create_vector_grid_display('原始動作 (Raw Action)', 'action_raw', show_row_labels=True)
                     with ui.element('div').classes('w-1/2'):
                         self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl', show_row_labels=False)
+                        
+    def _create_vision_panel(self):
+        """【整合 NanoOwl】創建視覺面板，並將其包裹在可折疊面板中。"""
+        with ui.expansion('即時視覺 (NanoOwl)', icon='visibility').classes('w-full').props('value=true'):
+            with ui.card().classes('w-full'):
+                video_server_url = "http://localhost:8081"
+                ui.html(f'''
+                    <iframe src="{video_server_url}" 
+                            width="100%" height="480" frameborder="0" scrolling="no"
+                            style="max-width: 640px; aspect-ratio: 640 / 480; display: block; margin: auto;">
+                    </iframe>
+                ''')
 
+                with ui.row().classes('w-full items-center'):
+                    # 將 prompt_input 賦值給 self.prompt_input
+                    self.prompt_input = ui.input(placeholder='輸入識別提示, e.g., a person').props('outlined dense').classes('flex-grow')
+                    
+                    def handle_send_prompt():
+                        prompt_value = self.prompt_input.value
+                        if not prompt_value:
+                            ui.notify('請輸入識別提示！', color='warning')
+                            return
+                        # 使用 self.prompt_input.id
+                        ui.run_javascript(f"send_prompt_{self.prompt_input.id}();")
+                        self.prompt_input.set_value(None)
+
+                    ui.button('識別', on_click=handle_send_prompt)
+                    self.prompt_input.on('keydown.enter', handle_send_prompt)
+    
     def _create_onnx_display(self):
-        """【手冊實作 v1.15】實現所有 12-D 觀測向量的並排顯示。"""
+        """【手冊實作 v1.16】此面板現在包含所有作為 AI 輸入的觀測數據。"""
         with ui.expansion('ONNX 觀察向量 (Observation Vector)', icon='schema').classes('w-full').props('value=true'):
             with ui.card().classes('w-full'):
                 all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
                 
                 # --- 創建 12 維長向量的並排儀表板 ---
                 vectors_to_display_12d = ['joint_positions', 'joint_velocities', 'last_action']
+                ui.label("12-D Vectors").classes('text-lg font-bold')
                 with ui.row().classes('w-full no-wrap'):
                     for idx, comp_name in enumerate(vectors_to_display_12d):
                         if self.state.observation_manager_ref.ALL_OBS_DIMS.get(comp_name) == 12:
@@ -243,40 +273,16 @@ class UIController:
 
                 # --- 創建短向量的顯示區域 ---
                 ui.separator().classes('my-2')
+                ui.label("Short Vectors").classes('text-lg font-bold')
                 with ui.grid(columns=3):
                     for comp_name, dim in all_components:
                         if dim != 12:
                             with ui.column().classes('gap-0'):
                                 ui.label(comp_name).classes('text-xs font-bold text-gray-400')
                                 self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
-                                
-    def _create_vision_panel(self):
-        """【整合】創建 NanoOwl 視覺面板，並將其包裹在可折疊面板中。"""
-        with ui.expansion('即時視覺 (NanoOwl)', icon='visibility').classes('w-full').props('value=true'):
-            with ui.card().classes('w-full'):
-                video_server_url = "http://localhost:8081"
-                ui.html(f'''
-                    <iframe src="{video_server_url}" 
-                            width="100%" height="480" frameborder="0" scrolling="no"
-                            style="max-width: 640px; aspect-ratio: 640 / 480; display: block; margin: auto;">
-                    </iframe>
-                ''')
-
-                with ui.row().classes('w-full items-center'):
-                    self.prompt_input = ui.input(placeholder='輸入識別提示, e.g., a person').props('outlined dense').classes('flex-grow')
-                    
-                    def handle_send_prompt():
-                        prompt_value = self.prompt_input.value
-                        if not prompt_value:
-                            ui.notify('請輸入識別提示！', color='warning')
-                            return
-                        ui.run_javascript(f"send_prompt_{self.prompt_input.id}();")
-                        self.prompt_input.set_value(None)
-
-                    ui.button('識別', on_click=handle_send_prompt)
-                    self.prompt_input.on('keydown.enter', handle_send_prompt)
-
+                            
     def _create_log_panel(self):
+        """【手冊實作 v1.12】將日誌面板包裹在一個可折疊面板中。"""
         with ui.expansion('系統日誌與序列埠控制台', icon='plagiarism').classes('w-full'):
             with ui.card().classes('w-full'):
                 self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
@@ -319,6 +325,7 @@ class UIController:
                 except Exception as e:
                     log.warning(f"UI 更新失敗 for key '{key}': {e}")
         
+        # 【手冊實作 v1.12】統一更新所有 5 個 12 維儀表板
         core_12d_keys_to_update = {
             'action_raw': state_snapshot.latest_action_raw,
             'final_ctrl': state_snapshot.latest_final_ctrl,
@@ -409,17 +416,21 @@ class UIController:
             return
 
         log.info("正在向客戶端注入 WebSocket 連接腳本...")
+        # 【整合】使用您提供的 JavaScript 程式碼，但進行了健壯性修改
         ui.run_javascript(f'''
             const ws_id = 'ws_{self.prompt_input.id}';
             
             function connect() {{
                 console.log('Attempting to connect WebSocket...');
                 window[ws_id] = new WebSocket('ws://localhost:8081/ws');
+                
                 window[ws_id].onopen = () => console.log('%c[WebSocket] Connected successfully!', 'color: green; font-weight: bold;');
+                
                 window[ws_id].onclose = () => {{
                     console.warn('[WebSocket] Connection closed. Retrying in 2 seconds...');
                     setTimeout(connect, 2000);
                 }};
+                
                 window[ws_id].onerror = (error) => {{
                     console.error('[WebSocket] Error:', error);
                 }};
@@ -429,6 +440,7 @@ class UIController:
                 const input_element = document.getElementById('{self.prompt_input.id}');
                 const prompt_text = input_element.value;
                 const ws = window[ws_id];
+
                 if (prompt_text && ws && ws.readyState === WebSocket.OPEN) {{
                     ws.send(prompt_text);
                 }} else {{
