@@ -172,6 +172,7 @@ class HardwareController:
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
         【v4.10.1 重構】實現包含回傳驗證的、基於狀態機的穩健硬體啟動流程。
         【v4.10.2 重構】在啟動前，先透過握手協議安全地獲取序列埠控制權。
+        【v4.10.4 修改】使用 TeensyAPI.execute_command 更新啟動序列。
 
         (內部, 可能阻塞) 執行啟動流程。
         """
@@ -199,7 +200,7 @@ class HardwareController:
             return
 
         self.teensy_api = TeensyAPI(self.serial_comm, self.state)
-        
+
         # 【v4.10.3 新增】增加檢查，強制執行生命週期契約。
         # 如果 TeensyAPI 因任何原因未能成功初始化其 ser 物件，
         # 流程將在此處立即失敗，並提供清晰的錯誤信息。
@@ -210,31 +211,31 @@ class HardwareController:
             return
 
         try:
-            # --- 穩健的啟動指令序列 ---
-            log.info("--- 開始執行硬體啟動序列 ---")
+            log.info("--- 開始執行硬體啟動序列 (v4.10.4 協定感知版) ---")
             
-            # 2a. 暫時「偽裝」為已驗證狀態，以便發送驗證指令
-            self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+            # 【v4.10.4 修改】啟動指令序列現在調用新的 execute_command API
+            # 1. 發送 'stop' (協定: NONE, 只需確認發送成功)
+            log.info("  -> 步驟 1/3：發送 'stop' 指令...")
+            if not self.teensy_api.execute_command("stop"):
+                raise serial.SerialException("發送 'stop' 指令失敗，啟動中止。")
             
-            # 2b. 發送 'stop' 並等待確認
-            log.info("  -> 步驟 1/3：發送 'stop' 指令並等待確認...")
-            if not self.teensy_api.send_command_and_wait_for_ok("stop", timeout=1.0):
-                raise serial.SerialException("Teensy 未能確認 'stop' 指令，啟動中止。")
-            
-            # 2c. 發送 'monitor freq' 並等待確認
+            # 2. 發送 'monitor freq' (協定: OK, 會等待 [OK] 確認)
             log.info(f"  -> 步驟 2/3：設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
-            if not self.teensy_api.send_command_and_wait_for_ok(f"monitor freq {self.config.control_freq}", timeout=1.0):
+            if not self.teensy_api.execute_command(f"monitor freq {self.config.control_freq}", timeout=1.0):
                 raise serial.SerialException("Teensy 未能確認 'monitor freq' 指令，啟動中止。")
 
-            # 2d. 發送 'monitor p'
+            # 3. 發送 'monitor p' (協定: NONE, 只需確認發送成功)
             log.info("  -> 步驟 3/3：命令 Teensy 切換至 POLICY_STREAM 模式...")
-            if not self.teensy_api.set_mode_policy_stream():
-                raise serial.SerialException("發送 'monitor p' 指令失敗。")
+            if not self.teensy_api.execute_command("monitor p"):
+                raise serial.SerialException("發送 'monitor p' 指令失敗，啟動中止。")
 
             time.sleep(0.1) 
             self.ser.reset_input_buffer()
             
             log.info("✅ 硬體啟動序列成功完成，通訊連線已驗證。")
+            # 【v4.10.4 修改】將狀態設定為 VERIFIED
+            with self.state.lock:
+                self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
             self._set_internal_state(HWState.RUNNING)
             
             self.ai_control_active = True
@@ -248,7 +249,6 @@ class HardwareController:
                 self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
             self._set_internal_state(HWState.FAILED)
             self.teensy_api = None
-            # 【v4.10.2 新增】即使啟動失敗，也要確保歸還控制權
             self.serial_comm.resume_control()
 
 
@@ -308,13 +308,10 @@ class HardwareController:
         【v4.3.2 修改】 _perform_ai_step 方法
         【v4.7.1b 修改】 _perform_ai_step 方法，修復 last_action 時序
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+        【v4.10.4 修改】簡化指令發送邏輯。
 
         (內部) 執行單步 AI 計算與控制。
         """
-        # 【v4.3.2 刪除】 不再自行構建觀測向量
-        # observation = self.construct_observation()
-        # if observation.size == 0: return
-
         # 【v4.3.2 修改】 直接呼叫 get_action_for_hardware，無需傳遞參數。
         # 【v4.4.7 修改】 調用統一的 get_action API，並傳入當前的 command 狀態。
         # PolicyManager 會自動從 state.std_obs 獲取數據。
@@ -332,12 +329,17 @@ class HardwareController:
         default_pose_hardware = np.zeros(12)
         final_command = default_pose_hardware + action_raw * action_scale
         
-        # 【v4.9.0 修改】使用 API 取代字串格式化和序列埠寫入
+        # 【v4.10.4 修改】簡化指令發送調用
+        # 這裡直接調用 send_motor_commands，它負責處理底層的發送、
+        # 協定選擇（NONE）以及安全守衛。
         if self.teensy_api:
             if not self.teensy_api.send_motor_commands(final_command):
-                log.error("AI 步驟中發送指令失敗，連接可能已斷開。")
+                # 如果 send_motor_commands 返回 False，則意味著發送失敗（可能是連接問題）
+                log.error("AI 步驟中發送馬達指令失敗，連接可能已斷開或處於靜默狀態。")
+                # 【v4.10.4 新增】在發送失敗時，將狀態設為 FAILED
                 self._set_internal_state(HWState.FAILED)
         else:
+            # 如果 teensy_api 本身就未初始化，也無法發送
             log.warning("TeensyAPI 未初始化，無法發送馬達指令。")
 
 
