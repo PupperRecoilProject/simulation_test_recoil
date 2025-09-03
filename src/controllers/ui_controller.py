@@ -142,7 +142,7 @@ class UIController:
                 self._create_status_display()
                 self._create_core_dashboard()
                 self._create_onnx_display()
-                self._create_vision_panel()
+                self._create_vision_panel() # 【整合】新增視覺面板
                 self._create_log_panel()
             
         ui.timer(0.1, self.update_ui_elements)
@@ -259,32 +259,72 @@ class UIController:
                         self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl', show_row_labels=False)
                         
     def _create_vision_panel(self):
-        """【整合 NanoOwl】創建視覺面板，並將其包裹在可折疊面板中。"""
-        with ui.expansion('即時視覺 (NanoOwl)', icon='visibility').classes('w-full').props('value=true'):
-            with ui.card().classes('w-full'):
-                video_server_url = "http://localhost:8081"
-                ui.html(f'''
-                    <iframe src="{video_server_url}" 
-                            width="100%" height="480" frameborder="0" scrolling="no"
-                            style="max-width: 640px; aspect-ratio: 640 / 480; display: block; margin: auto;">
-                    </iframe>
-                ''')
+        """【最終 Python 傳值版】放棄 getElementById，直接從 Python 將輸入值傳入 JS。"""
+        with ui.card():
+            ui.label('即時視覺 (NanoOwl)').classes('text-lg font-bold')
+            
+            video_server_url = "http://localhost:8081"
+            ui.html(f'''
+                <iframe src="{video_server_url}" 
+                        width="100%" height="480" frameborder="0" scrolling="no"
+                        style="max-width: 640px; aspect-ratio: 640 / 480;">
+                </iframe>
+            ''')
 
-                with ui.row().classes('w-full items-center'):
-                    # 將 prompt_input 賦值給 self.prompt_input
-                    self.prompt_input = ui.input(placeholder='輸入識別提示, e.g., a person').props('outlined dense').classes('flex-grow')
+            with ui.row().classes('w-full items-center'):
+                prompt_input = ui.input(placeholder='輸入識別提示, 例如: [a person]').props('outlined dense').classes('flex-grow')
+                
+                # 我們需要一個輔助函式來處理事件，因為 on_click 和 on(...enter) 都需要呼叫它
+                def handle_send_event():
+                    # 1. 在 Python 端直接讀取輸入框的值
+                    prompt_value = prompt_input.value
                     
-                    def handle_send_prompt():
-                        prompt_value = self.prompt_input.value
-                        if not prompt_value:
-                            ui.notify('請輸入識別提示！', color='warning')
-                            return
-                        # 使用 self.prompt_input.id
-                        ui.run_javascript(f"send_prompt_{self.prompt_input.id}();")
-                        self.prompt_input.set_value(None)
+                    # 2. 如果值為空，則在 UI 上顯示通知並返回
+                    if not prompt_value:
+                        ui.notify('請先輸入識別提示！', color='warning')
+                        return
 
-                    ui.button('識別', on_click=handle_send_prompt)
-                    self.prompt_input.on('keydown.enter', handle_send_prompt)
+                    # 3. 為了安全地將任意字串插入 JS，我們使用 json.dumps 進行轉義
+                    import json
+                    escaped_prompt = json.dumps(prompt_value)
+
+                    # 4. 建立一個自給自足的 JS 腳本，它接收一個參數 prompt
+                    #    注意：escaped_prompt 已經包含了引號，所以 JS 中不需要再加
+                    js_script = f'''
+                        const prompt = {escaped_prompt};
+                        console.log(`接收到來自 Python 的 Prompt: "${{prompt}}"`);
+                        
+                        const ws_name = 'nanoowl_ws_connection';
+
+                        // 檢查 WebSocket 連接
+                        if (!window[ws_name] || window[ws_name].readyState > 1) {{
+                            console.log("WebSocket 未連接，正在創建...");
+                            window[ws_name] = new WebSocket('ws://localhost:8081/ws');
+                            
+                            window[ws_name].onopen = () => {{
+                                console.log('%c[WebSocket] 連接成功！現在發送消息...', 'color: green;');
+                                window[ws_name].send(prompt);
+                            }};
+                            // ... (其他事件處理器保持不變)
+                            window[ws_name].onerror = (err) => console.error("[WebSocket] 連接錯誤:", err);
+                            window[ws_name].onclose = () => console.warn("[WebSocket] 連接已關閉。");
+
+                        }} else {{
+                            // 如果已連接，直接發送
+                            console.log("WebSocket 已連接，直接發送消息...");
+                            window[ws_name].send(prompt);
+                        }}
+                    '''
+                    
+                    # 5. 執行這個動態建立的腳本
+                    ui.run_javascript(js_script)
+                    
+                    # 6. 清空 Python 端的輸入框
+                    prompt_input.set_value(None)
+
+                # 綁定事件
+                ui.button('辨識', on_click=handle_send_event)
+                prompt_input.on('keydown.enter', handle_send_event)
     
     def _create_onnx_display(self):
         """【手冊實作 v1.16】此面板現在包含所有作為 AI 輸入的觀測數據。"""
@@ -317,6 +357,7 @@ class UIController:
                                 self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
                             
     def _create_log_panel(self):
+        """【手冊實作 v1.12】將日誌面板包裹在一個可折疊面板中。"""
         with ui.expansion('系統日誌與序列埠控制台', icon='plagiarism').classes('w-full'):
             with ui.card().classes('w-full'):
                 # 【手冊實作 v1.18】為日誌文本框添加 'custom-scrollbar' class
@@ -444,6 +485,7 @@ class UIController:
     def run(self):
         ui.run(title="Pupper Robot Console", port=8080)
         
+'''    
     def inject_websocket_script(self):
         """【整合】在 UI 啟動後注入 WebSocket 通信的 JavaScript。"""
         if not self.prompt_input:
@@ -452,7 +494,7 @@ class UIController:
 
         log.info("正在向客戶端注入 WebSocket 連接腳本...")
         # 【整合】使用您提供的 JavaScript 程式碼，但進行了健壯性修改
-        ui.run_javascript(f'''
+        ui.run_javascript(f''''''
             const ws_id = 'ws_{self.prompt_input.id}';
             
             function connect() {{
@@ -484,5 +526,7 @@ class UIController:
             }};
             
             connect();
-        ''')
+        '''''')
         log.info("✅ WebSocket 腳本注入完成。")
+        '''
+        

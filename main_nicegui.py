@@ -170,7 +170,7 @@ def main() -> None:
         
         # 【整合 NanoOwl】在客戶端連接時才注入 JavaScript
         # 我們將 ui_controller 的新方法註冊到 on_connect 事件上
-        app.on_connect(ui_controller.inject_websocket_script)
+        #app.on_connect(ui_controller.inject_websocket_script)
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
