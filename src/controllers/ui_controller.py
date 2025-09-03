@@ -52,7 +52,8 @@ class UIController:
         self.xbox_handler = state.xbox_handler_ref
 
         # 【v4.10.1 新增】為靜默開關宣告一個屬性
-        self.mute_switch = None
+        # 【v4.10.5 修改】將 mute_switch 重命名為 enable_motors_switch
+        self.enable_motors_switch = None
         self.param_sliders = {}
         self.onnx_input_labels = {}
         self.log_area = None
@@ -277,11 +278,14 @@ class UIController:
         with ui.card().classes('w-full'):
             ui.label('硬體 AI 控制').classes('text-lg')
 
-            # 【v4.10.1 新增】"Dry Run" 安全模式開關
+            # 【v4.10.5 修改】全面更新 UI 標籤和邏輯
             with ui.row().classes('items-center'):
-                ui.label('指令靜默 (Mute)').classes('text-sm')
-                self.mute_switch = ui.switch(on_change=self._handle_mute_switch_change) \
-                    .tooltip('手動靜默/解除靜默馬達指令。僅在硬體通訊驗證成功後可用。')
+                ui.label('啟用馬達 (Enable Motors)').classes('text-sm')
+                # 1. 重新命名 self.mute_switch -> self.enable_motors_switch
+                # 2. 更新 on_change 的處理函式
+                # 3. 更新 tooltip 的說明文字
+                self.enable_motors_switch = ui.switch(on_change=self._handle_enable_motors_switch_change) \
+                    .tooltip('手動啟用/禁用 AI 對馬達的控制。僅在硬體通訊驗證成功後可用。')
                 
             # 現在綁定到 self.hardware_controller.is_running
             # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
@@ -488,16 +492,23 @@ class UIController:
                             value = vector_data[i * 3 + j]
                             self.status_labels[label_key].set_text(f"{value: 7.3f}")
 
-        if self.mute_switch:
-            is_verified_or_muted = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
-            if is_verified_or_muted:
-                self.mute_switch.enable()
+        # 【v4.10.5 修改】更新開關的狀態和可用性邏輯
+        if self.enable_motors_switch:
+            # 開關的可操作性：只有在 VERIFIED 或 MUTED 狀態下才可操作
+            is_operable = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
+            
+            if is_operable:
+                self.enable_motors_switch.enable()
             else:
-                self.mute_switch.disable()
-            current_switch_value = self.mute_switch.value
-            should_be_on = (hw_link_status == HardwareLinkStatus.MUTED)
+                self.enable_motors_switch.disable()
+            
+            # 開關的視覺狀態 (ON/OFF) - 邏輯反轉
+            # 只有在 VERIFIED 狀態下，開關才應顯示為 ON。
+            should_be_on = (hw_link_status == HardwareLinkStatus.VERIFIED)
+            
+            current_switch_value = self.enable_motors_switch.value
             if current_switch_value != should_be_on:
-                self.mute_switch.set_value(should_be_on)
+                self.enable_motors_switch.set_value(should_be_on)
 
         primary_policy = state_snapshot.policy_manager_ref.primary_policy_name
         if self.status_labels['policy_selector'].value != primary_policy:
@@ -549,14 +560,22 @@ class UIController:
         with self.state.lock:
             self.state.single_step_mode = not self.state.single_step_mode
 
-    def _handle_mute_switch_change(self, event):
-        """【v4.10.1 新增】處理靜默開關變更的事件，線程安全地更新狀態。"""
+    def _handle_enable_motors_switch_change(self, event):
+        """
+        【v4.10.5 新增】處理「啟用馬達」開關變更的事件。
+        """
         with self.state.lock:
+            # 只在連結已驗證或已靜默的狀態下進行切換
             if self.state.hardware_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]:
-                if event.value:
-                    self.state.hardware_link_status = HardwareLinkStatus.MUTED
-                else:
+                if event.value: # 如果開關被使用者打開 (要求啟用)
                     self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+                    log.info("🟢 馬達已由使用者啟用。")
+                else: # 如果開關被使用者關閉 (要求靜默)
+                    self.state.hardware_link_status = HardwareLinkStatus.MUTED
+                    log.info("🟡 馬達已由使用者靜默。")
+
+    # 【v4.10.5 刪除】移除舊的 _handle_mute_switch_change 方法
+    # def _handle_mute_switch_change(self, event): ...
 
 
     def run(self):

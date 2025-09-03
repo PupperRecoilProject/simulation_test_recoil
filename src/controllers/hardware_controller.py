@@ -173,6 +173,7 @@ class HardwareController:
         【v4.10.1 重構】實現包含回傳驗證的、基於狀態機的穩健硬體啟動流程。
         【v4.10.2 重構】在啟動前，先透過握手協議安全地獲取序列埠控制權。
         【v4.10.4 修改】使用 TeensyAPI.execute_command 更新啟動序列。
+        【v4.10.5 修改】啟動成功後，進入 MUTED 狀態以實現「預設安全」。
 
         (內部, 可能阻塞) 執行啟動流程。
         """
@@ -233,15 +234,18 @@ class HardwareController:
             self.ser.reset_input_buffer()
             
             log.info("✅ 硬體啟動序列成功完成，通訊連線已驗證。")
-            # 【v4.10.4 修改】將狀態設定為 VERIFIED
+            # 【v4.10.5 FEAT-SAFETY-INTUITIVE】實現預設安全
+            # 啟動成功後，預設進入 MUTED 狀態，等待使用者明確啟用。
             with self.state.lock:
-                self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+                self.state.hardware_link_status = HardwareLinkStatus.MUTED
+                
             self._set_internal_state(HWState.RUNNING)
             
             self.ai_control_active = True
             with self.state.lock: 
                 self.state.hardware_ai_is_active = True
-            log.info("🤖 AI 控制已自動啟用。")
+            # 【v4.10.5 修改】更新日誌，反映新的預設安全狀態
+            log.info("🤖 AI 控制已準備就緒，但馬達預設為靜默狀態，等待 UI 啟用。")
 
         except serial.SerialException as e:
             log.error(f"❌ 硬體啟動序列失敗: {e}")
