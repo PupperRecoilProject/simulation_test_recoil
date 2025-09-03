@@ -309,7 +309,7 @@ class HardwareController:
         
         if self.ai_control_active:
             self.policy.reset()
-            
+
         # 【v4.9.0 修改】使用 API 取代硬編碼字串
         # 【v4.10.5 修正】當暫停 AI 時，應發送 'stop' 指令。
         # 舊的 stop_ai_and_motors() 已被移除，導致 AttributeError。
@@ -364,21 +364,31 @@ class HardwareController:
         【v4.4.2 重構】嚴格按照數據契約解析 Teensy 數據流。
         【v4.6.0 修改】增加 .strip() 來移除換行符，並強化錯誤日誌記錄。
         【v4.7.1b 修改】修復了使用未經清理的行進行分割的 Bug。
+        【v4.10.5 重構】實現智慧日誌解析器，分類處理系統訊息和數據幀。
 
-        職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
+        此函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
+        它能區分系統訊息（如 [CMD], [ERROR]）和純數據幀，並分別處理。
         """
-        # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
-        log.debug(f"parse_policy_stream 正在處理: {repr(line)}")
-        try:
-            # 【v4.7.1b 修正】必須使用 strip() 後的乾淨行來進行後續所有操作
-            clean_line = line.strip()
-            if not clean_line:
-                return
+        # 移除換行符並檢查是否為空行的邏輯
+        clean_line = line.strip()
+        if not clean_line:
+            return
             
-            # 【v4.7.1b 修正】從 clean_line 分割，而不是原始的 line
+        # 【v4.10.5 新增】智慧訊息分類器
+        # 如果該行以 '[' 開頭，我們就假定它是一個系統訊息（如 [CMD], [OK], [錯誤]），
+        # 而不是一個資料幀。
+        if clean_line.startswith('['):
+            # 我們將其作為一般資訊記錄下來，而不是當作錯誤處理。
+            # 這保留了所有來自 Teensy 的回饋，同時避免了日誌污染。
+            log.info(f"[Teensy Msg]: {clean_line}")
+            return # 處理完畢，直接返回
+
+        try:
+            # 只有在確認不是系統訊息後，才嘗試按資料幀格式進行解析
             parts = clean_line.split(',')
 
             if len(parts) != 34:
+                # 這裡的警告現在只會在非系統訊息且欄位數不對時觸發，更有價值。
                 log.warning(f"數據幀欄位數量錯誤。預期 34，收到 {len(parts)}。原始數據: '{clean_line}'")
                 return
             
@@ -393,8 +403,7 @@ class HardwareController:
                 self.state.raw_joint_velocities[:] = data_vec[22:34]
         
         except (ValueError, IndexError) as e:
-            # 【v4.7.1b 增強】在日誌中同時打印 clean_line 和原始 line，方便調試
-            log.error(f"解析數據幀失敗: {e}。Cleaned Line: '{line.strip()}', Original Line: '{repr(line)}'")
+            log.error(f"解析數據幀失敗: {e}。Cleaned Line: '{clean_line}', Original Line: '{repr(line)}'")
 
 
     # 【v4.3.2 刪除】 construct_observation 方法
