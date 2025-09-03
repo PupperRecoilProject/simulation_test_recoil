@@ -125,7 +125,7 @@ class UIController:
                 'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"
             },
         }
-
+        self.onnx_12d_components = [] # 新增此行
         self._setup_ui()
 
     def _setup_ui(self):
@@ -402,6 +402,7 @@ class UIController:
                     self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl')
 
 
+        # 替換掉整個 _create_onnx_display 函式
     def _create_onnx_display(self):
         """
         【v4.6.0 重構】建立 ONNX 觀察向量區域。
@@ -412,20 +413,34 @@ class UIController:
         # 在 _create_onnx_display 函式中
 
         with ui.card().classes('w-full'):
-            ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
-            # 【手冊實作-反饋修正】保持雙欄網格佈局
+            ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-xl font-bold')
+
+            if not self.state.observation_manager_ref:
+                ui.label("錯誤: ObservationManager 未初始化!")
+                return
+
+            all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
+
+            # --- 1. 創建短向量的顯示區域 ---
+            ui.label("Short Vectors").classes('text-lg font-bold mt-2')
             with ui.grid(columns=2):
-                if self.state.observation_manager_ref:
-                    all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
-                    for comp_name, dim in all_components:
-                        # 【核心修改】為每個元件創建一個垂直欄來堆疊標題和數值
-                        with ui.column().classes('gap-0'): # gap-0 移除垂直間距
-                            # 1. 靜態標題標籤
+                for comp_name, dim in all_components:
+                    if dim != 12: # 只處理非 12 維的元件
+                        with ui.column().classes('gap-0'):
                             ui.label(comp_name).classes('text-xs font-bold text-gray-400')
-                            # 2. 動態數值標籤 (將其存儲起來以便更新)
-                            self.onnx_input_labels[comp_name] = ui.label('N/A').classes('font-mono text-sm')
-                else:
-                    ui.label("錯誤: ObservationManager 未初始化!")
+                            self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
+                    else:
+                        # 如果是 12 維，先記錄下來
+                        self.onnx_12d_components.append(comp_name)
+
+            # --- 2. 創建 12 維長向量的顯示區域 ---
+            if self.onnx_12d_components:
+                ui.separator().classes('my-2')
+                ui.label("12-D Vectors").classes('text-lg font-bold mt-2')
+                # 為每一個 12 維元件創建一個獨立的儀表板
+                for comp_name in self.onnx_12d_components:
+                    # 使用唯一的 key_prefix 來確保 label 不會衝突
+                    self._create_vector_grid_display(comp_name.replace('_', ' ').title(), f"onnx_{comp_name}")
 
 
     def _create_log_panel(self):
@@ -451,16 +466,10 @@ class UIController:
 
 
     def update_ui_elements(self):
-        """【重構】採用數據驅動模型，並更新新的儀表板元件。"""
         with self.state.lock:
             state_snapshot = self.state
             hw_link_status = self.state.hardware_link_status
-            tuning_params_copy = {
-                'kp': self.state.tuning_params.kp,
-                'kd': self.state.tuning_params.kd,
-                'action_scale': self.state.tuning_params.action_scale,
-                'bias': self.state.tuning_params.bias
-            }
+            tuning_params_copy = {'kp': self.state.tuning_params.kp, 'kd': self.state.tuning_params.kd, 'action_scale': self.state.tuning_params.action_scale, 'bias': self.state.tuning_params.bias}
             joint_info_data = None
             mode = self.state.control_mode
             if mode in ["JOINT_TEST", "MANUAL_CTRL"]:
@@ -482,6 +491,7 @@ class UIController:
                         "actual_angle": self.state.latest_joint_positions[idx]
                     }
             terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
+            std_obs_snapshot = self.state.std_obs.copy()
 
         for key, desc in self._label_descriptors.items():
             if label_widget := self.status_labels.get(key):
@@ -550,34 +560,32 @@ class UIController:
                 self.joint_control_slider.set_value(target_abs_float)
             self.status_labels['joint_info'].set_text(text)
 
-        self._update_onnx_labels()
+        self._update_onnx_short_vector_labels(std_obs_snapshot)
+        for comp_name in self.onnx_12d_components:
+            vector_data = std_obs_snapshot.get(comp_name)
+            if vector_data is not None:
+                for i in range(4):
+                    for j in range(3):
+                        key = f"onnx_{comp_name}_{i}_{j}"
+                        if key in self.status_labels:
+                            value = vector_data[i * 3 + j]
+                            self.status_labels[key].set_text(f"{value: 7.3f}")
+
         log_content = "\n".join(log_queue)
         if self.log_area.value != log_content:
             self.log_area.set_value(log_content)
 
-
-    def _update_onnx_labels(self):
-        """
-        【v4.4.7 重構】
-        從 state.std_obs 這個單一權威數據源讀取數據並更新 UI。
-        【v4.7.0 修改】新增固定寬度數字格式化，提升可讀性。
-        """
-        with self.state.lock:
-            std_obs_snapshot = self.state.std_obs.copy()
-
-        for comp_name, label_widget in self.onnx_input_labels.items():
+    def _update_onnx_short_vector_labels(self, std_obs_snapshot: Dict):
+        """【手冊實作 v1.7】只更新 ONNX 觀察向量中的非 12 維短向量標籤。"""
+        for comp_name, md_widget in self.onnx_input_labels.items():
             value_slice = std_obs_snapshot.get(comp_name)
 
             if value_slice is not None:
-                # 【v4.7.0 修改】使用固定寬度的數字格式化
-                vec_str = np.array2string(value_slice, 
-                                          precision=3, 
-                                          suppress_small=True, 
-                                          formatter={'float_kind': lambda x: f"{x:7.3f}"})
-                # 【核心修改】只更新數值標籤的內容，不再包含標題
-                label_widget.set_text(f'{vec_str}')
+                vec_str = np.array2string(value_slice, precision=3, suppress_small=True, formatter={'float_kind': lambda x: f"{x:7.3f}"})
+                md_content = f"`{vec_str}`"
+                md_widget.set_content(md_content)
             else:
-                label_widget.set_text(f'{comp_name}: N/A')
+                md_widget.set_content('`N/A`')
 
     def _toggle_pause(self):
         """【新增】線程安全地切換暫停狀態。"""
