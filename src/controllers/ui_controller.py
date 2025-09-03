@@ -29,7 +29,7 @@ from src.core.event_system import (
     EVENT_MANUAL_FLOAT_TOGGLED,
     EVENT_JOINT_SELECT_REQUESTED,
     EVENT_JOINT_VALUE_ADJUSTED,
-    EVENT_COMMAND_UPDATED, # 用於虛擬搖桿
+    EVENT_COMMAND_UPDATED,
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
 )
@@ -125,8 +125,20 @@ class UIController:
                 'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"
             },
         }
-        self.onnx_12d_components = [] # 新增此行
+
         self._setup_ui()
+
+    def _format_12d_vector_for_ui(self, vector: np.ndarray) -> str:
+        if not isinstance(vector, np.ndarray) or vector.shape != (12,):
+            return "`無效數據`"
+        lines = []
+        legs = ['FR', 'FL', 'RR', 'RL']
+        for i in range(4):
+            leg_data = vector[i*3 : i*3+3]
+            formatted_numbers = [f"{x: 7.3f}" for x in leg_data]
+            lines.append(f"  {legs[i]}: [ {' '.join(formatted_numbers)} ]")
+        content = "\n".join(lines)
+        return f"```\n{content}\n```"
 
     def _setup_ui(self):
         """【重構】根據UI/UX設計指南重構此函式，實現雙欄獨立滾動和新的佈局。"""
@@ -135,17 +147,11 @@ class UIController:
         # 這比在每個元件上單獨設定樣式更高效、更易於維護。
         ui.add_head_html('''
             <style>
-                /* 全局卡片樣式：減少外邊距和內邊距以實現緊湊佈局 */
-                .nicegui-card {
-                    margin: 4px !important;
-                    padding: 8px !important;
-                    box-shadow: none !important; /* 移除陰影，風格更簡潔 */
-                    border: 1px solid #333;   /* 用邊框代替陰影 */
-                }
-                /* 按鈕組樣式：讓按鈕之間沒有間隙 */
-                .q-btn-group .q-btn {
-                    margin: 0 !important;
-                }
+                .nicegui-card { margin: 4px !important; padding: 8px !important; box-shadow: none !important; border: 1px solid #333; }
+                .q-btn-group .q-btn { margin: 0 !important; }
+                .nicegui-markdown pre { margin: 0 !important; padding: 4px !important; background-color: #222 !important; border-radius: 4px; }
+                .nicegui-markdown code { font-size: 0.8rem !important; }
+                .q-expansion-item__container .q-item { padding: 0 8px !important; min-height: 40px !important; }
             </style>
         ''')
         ui.dark_mode().enable()
@@ -184,6 +190,7 @@ class UIController:
             # 'grow' 會讓此欄位佔滿剩餘的寬度，'overflow-y: auto' 實現獨立滾動。
             with ui.column().classes('grow px-4').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
                 self._create_status_display()
+                self._create_core_dashboard()
                 self._create_onnx_display()
                 self._create_log_panel()
 
@@ -301,29 +308,7 @@ class UIController:
             # [修改] on_move 和 on_end 的 lambda 函式現在包含了輸入模式切換的邏輯
             # 並且使用了正確的事件參數 e.x 和 e.y
             with ui.row().classes('w-full items-center justify-center'):
-                ui.joystick(
-                    color='blue', 
-                    size=100, 
-                    on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
-                    on_move=lambda e: event_bus.publish(
-                        EVENT_COMMAND_UPDATED, 
-                        # 【v4.9.1 修正】確保送出的指令為 4 維向量，以符合系統目前的設計。
-                        # 虛擬搖桿不控制俯仰角 (pitch)，因此第四個元素硬編碼為 0.0。
-                        command=np.array([
-                            e.x * self.state.config.gamepad_sensitivity['vy'],
-                            -e.y * self.state.config.gamepad_sensitivity['vx'],
-                            0.0,
-                            0.0  # <--- 新增的第四個元素 (pitch)
-                        ])
-                    ),
-                    on_end=lambda e: (
-                        # 【v4.9.1 修正】確保清除指令時，同樣送出 4 維向量。
-                        event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4)),
-                        event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD")
-                    )
-                ).props('throttle')
-            
-            # 【v4.9.1 修正】確保清除命令按鈕同樣送出 4 維向量。
+                ui.joystick(color='blue', size=100, on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"), on_move=lambda e: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.array([e.x * self.state.config.gamepad_sensitivity['vy'], -e.y * self.state.config.gamepad_sensitivity['vx'], 0.0, 0.0])), on_end=lambda e: (event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4)), event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD"))).props('throttle')
             ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4))).props('outline').classes('w-full mt-2')
             
 
@@ -334,33 +319,11 @@ class UIController:
             
             with ui.row().classes('items-center'):
                 ui.label('啟用懸浮')
-                
-                # 【v4.0 核心修改】將雙向綁定拆為 "on_change" 和 "bind_value_from"
-                ui.switch(
-                    # 1. 控制流: 當用戶操作開關時，發布一個請求事件
-                    on_change=lambda e: event_bus.publish(EVENT_MANUAL_FLOAT_TOGGLED, is_floating=e.value)
-                ).bind_value_from(
-                    # 2. 數據流: 開關的 "開/關" 狀態，單向地從 state.manual_mode_is_floating 讀取
-                    self.state, 'manual_mode_is_floating'
-                )
-
-            joint_names = {i: name for i, name in enumerate([
-                "FR_Abduction", "FR_Hip", "FR_Knee", "FL_Abduction", "FL_Hip", "FL_Knee",
-                "RR_Abduction", "RR_Hip", "RR_Knee", "RL_Abduction", "RL_Hip", "RL_Knee"
-            ])}
-            
-            # [修改] on_change 發布關節選擇事件
-            self.joint_selector = ui.select(
-                joint_names,
-                label='選擇關節',
-                on_change=lambda e: event_bus.publish(EVENT_JOINT_SELECT_REQUESTED, index=int(e.value))
-            )
-
+                ui.switch(on_change=lambda e: event_bus.publish(EVENT_MANUAL_FLOAT_TOGGLED, is_floating=e.value)).bind_value_from(self.state, 'manual_mode_is_floating')
+            joint_names = {i: name for i, name in enumerate(["FR_Abduction", "FR_Hip", "FR_Knee", "FL_Abduction", "FL_Hip", "FL_Knee", "RR_Abduction", "RR_Hip", "RR_Knee", "RL_Abduction", "RL_Hip", "RL_Knee"])}
+            self.joint_selector = ui.select(joint_names, label='選擇關節', on_change=lambda e: event_bus.publish(EVENT_JOINT_SELECT_REQUESTED, index=int(e.value)))
             self.status_labels['joint_info'] = ui.label('')
-            # [修改] 滑桿 on_change 發布關節值調整事件
-            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01, value=0.0,
-                                                 on_change=lambda e: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, value=e.value)
-                                                 ).props('label-always')
+            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01, value=0.0, on_change=lambda e: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, value=e.value)).props('label-always')
             with ui.row():
                 # [修改] 按鈕發布關節值調整事件
                 ui.button('-0.1', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, direction=-0.1)).props('dense')
@@ -408,57 +371,32 @@ class UIController:
             with ui.grid(columns=3):
                 for key, desc in self._label_descriptors.items():
                     self.status_labels[key] = ui.label(f"{desc['title']}: N/A")
-            
-            ui.separator().classes('my-2') # 添加一條分隔線
-    
-            # 【核心修改】創建一個橫向 row 來並排放置兩個儀表板
-            with ui.row().classes('w-full no-wrap'):
-                # 每個儀表板佔用 50% 的寬度
-                with ui.element('div').classes('w-1/2'):
-                    self._create_vector_grid_display('原始動作 (Raw Action)', 'action_raw')
-                with ui.element('div').classes('w-1/2'):
-                    self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl')
 
+    def _create_core_dashboard(self):
+        """【手冊實作 v1.14】儀表板現在只包含 AI 的直接輸出。"""
+        with ui.expansion('核心數據儀表板 (Core Dashboard)', icon='insights').classes('w-full').props('value=true'):
+            with ui.card().classes('w-full'):
+                with ui.row().classes('w-full no-wrap'):
+                    with ui.element('div').classes('w-1/2'):
+                        self._create_vector_grid_display('原始動作 (Raw Action)', 'action_raw', show_row_labels=True)
+                    with ui.element('div').classes('w-1/2'):
+                        self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl', show_row_labels=False)
 
     # 替換掉整個 _create_onnx_display 函式
     def _create_onnx_display(self):
-        """【手冊實作 v1.8 - 重構】實現短向量 3 欄佈局和 12 維向量 3xN 並排佈局。"""
-        with ui.card().classes('w-full'):
-            ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-xl font-bold')
-            
-            if not self.state.observation_manager_ref:
-                ui.label("錯誤: ObservationManager 未初始化!")
-                return
-    
-            all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
-            
-            # --- 1. 創建短向量的顯示區域 (3欄) ---
-            ui.label("Short Vectors").classes('text-lg font-bold mt-2')
-            # 【核心修改】將 columns 改為 3
-            with ui.grid(columns=3):
-                for comp_name, dim in all_components:
-                    if dim != 12:
-                        with ui.column().classes('gap-0'):
-                            ui.label(comp_name).classes('text-xs font-bold text-gray-400')
-                            self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
-                    elif comp_name not in self.onnx_12d_components:
-                        self.onnx_12d_components.append(comp_name)
-            
-            # --- 2. 創建 12 維長向量的顯示區域 (3個一排) ---
-            if self.onnx_12d_components:
-                ui.separator().classes('my-2')
-                ui.label("12-D Vectors").classes('text-lg font-bold mt-2')
-    
-                # 【核心修改】將 12 維元件列表以 3 個為一組進行遍歷
-                for i in range(0, len(self.onnx_12d_components), 3):
-                    chunk = self.onnx_12d_components[i:i+3]
-                    # 為每一組創建一個橫向的 row
-                    with ui.row().classes('w-full no-wrap'):
-                        # 遍歷組內的每個元件
-                        for idx, comp_name in enumerate(chunk):
-                            # 每個儀表板佔用 1/3 的寬度
-                            with ui.element('div').classes('w-1/3'):
-                                # 判斷是否為行內的第一個儀表板
+        """【手冊實作 v1.15】實現所有 12-D 觀測向量的並排顯示。"""
+        with ui.expansion('ONNX 觀察向量 (Observation Vector)', icon='schema').classes('w-full').props('value=true'):
+            with ui.card().classes('w-full'):
+                all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
+                
+                # --- 創建 12 維長向量的並排儀表板 ---
+                vectors_to_display_12d = ['joint_positions', 'joint_velocities', 'last_action']
+                # 【核心修改】使用 ui.row 進行水平佈局
+                with ui.row().classes('w-full no-wrap'):
+                    # 遍歷需要並排的三個儀表板
+                    for idx, comp_name in enumerate(vectors_to_display_12d):
+                        if self.state.observation_manager_ref.ALL_OBS_DIMS.get(comp_name) == 12:
+                            with ui.element('div').classes('w-1/3'): # 每個佔 1/3 寬度
                                 is_first_in_row = (idx == 0)
                                 self._create_vector_grid_display(
                                     comp_name.replace('_', ' ').title(), 
@@ -466,15 +404,23 @@ class UIController:
                                     show_row_labels=is_first_in_row # 只有第一個顯示行標籤
                                 )
 
+                # --- 創建短向量的顯示區域 ---
+                ui.separator().classes('my-2')
+                # 這裡的短向量佈局保持不變
+                with ui.grid(columns=3):
+                    for comp_name, dim in all_components:
+                        if dim != 12:
+                            with ui.column().classes('gap-0'):
+                                ui.label(comp_name).classes('text-xs font-bold text-gray-400')
+                                self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
+                                
     def _create_log_panel(self):
-        with ui.card().classes('w-full'):
-            ui.label('系統日誌與序列埠控制台').classes('text-lg')
-            self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
-            with ui.row().classes('w-full items-center'):
-                self.serial_command_buffer = ui.input(label='Serial Command')\
-                    .props('outlined dense').classes('flex-grow')\
-                    .on('keydown.enter', self._send_serial_command)
-                ui.button('Send', on_click=self._send_serial_command)
+        with ui.expansion('系統日誌與序列埠控制台', icon='plagiarism').classes('w-full'):
+            with ui.card().classes('w-full'):
+                self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
+                with ui.row().classes('w-full items-center'):
+                    self.serial_command_buffer = ui.input(label='Serial Command').props('outlined dense').classes('flex-grow').on('keydown.enter', self._send_serial_command)
+                    ui.button('Send', on_click=self._send_serial_command)
 
     def _send_serial_command(self):
         """
@@ -525,24 +471,22 @@ class UIController:
                 except Exception as e:
                     log.warning(f"UI 更新失敗 for key '{key}': {e}")
         
-        # 【手冊實作 - 步驟三：更新儀表板】
-        # 更新 Raw Action 網格
-        action_raw_vector = state_snapshot.latest_action_raw
-        for i in range(4):
-            for j in range(3):
-                key = f"action_raw_{i}_{j}"
-                if key in self.status_labels:
-                    value = action_raw_vector[i * 3 + j]
-                    self.status_labels[key].set_text(f"{value: 7.3f}")
-
-        # 更新 Final Ctrl 網格
-        final_ctrl_vector = state_snapshot.latest_final_ctrl
-        for i in range(4):
-            for j in range(3):
-                key = f"final_ctrl_{i}_{j}"
-                if key in self.status_labels:
-                    value = final_ctrl_vector[i * 3 + j]
-                    self.status_labels[key].set_text(f"{value: 7.3f}")
+        # 【手冊實作 v1.12 & v1.14】統一更新所有 5 個 12 維儀表板
+        core_12d_keys_to_update = {
+            'action_raw': state_snapshot.latest_action_raw,
+            'final_ctrl': state_snapshot.latest_final_ctrl,
+            'onnx_joint_positions': std_obs_snapshot.get('joint_positions'),
+            'onnx_joint_velocities': std_obs_snapshot.get('joint_velocities'),
+            'onnx_last_action': std_obs_snapshot.get('last_action')
+        }
+        for key_prefix, vector_data in core_12d_keys_to_update.items():
+            if vector_data is not None:
+                for i in range(4):
+                    for j in range(3):
+                        label_key = f"{key_prefix}_{i}_{j}"
+                        if label_key in self.status_labels:
+                            value = vector_data[i * 3 + j]
+                            self.status_labels[label_key].set_text(f"{value: 7.3f}")
 
         if self.mute_switch:
             is_verified_or_muted = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
@@ -584,16 +528,6 @@ class UIController:
             self.status_labels['joint_info'].set_text(text)
 
         self._update_onnx_short_vector_labels(std_obs_snapshot)
-        for comp_name in self.onnx_12d_components:
-            vector_data = std_obs_snapshot.get(comp_name)
-            if vector_data is not None:
-                for i in range(4):
-                    for j in range(3):
-                        key = f"onnx_{comp_name}_{i}_{j}"
-                        if key in self.status_labels:
-                            value = vector_data[i * 3 + j]
-                            self.status_labels[key].set_text(f"{value: 7.3f}")
-
         log_content = "\n".join(log_queue)
         if self.log_area.value != log_content:
             self.log_area.set_value(log_content)
