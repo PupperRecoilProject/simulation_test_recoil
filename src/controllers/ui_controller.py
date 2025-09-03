@@ -367,17 +367,35 @@ class UIController:
                 ui.button('+0.1', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, direction=0.1)).props('dense')
                 ui.button('歸零 (Clear)', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, clear=True)).props('dense')
 
-    def _create_vector_grid_display(self, title: str, key_prefix: str):
-    # 【核心修改】將整個儀表板包裹在一個 column 中
-        with ui.column().classes('gap-0'): # gap-0 移除元件間的垂直間距
+    def _create_vector_grid_display(self, title: str, key_prefix: str, show_row_labels: bool = True):
+        """
+        【手冊實作 v1.8 - 修改】
+        增加 show_row_labels 參數，以便在並排顯示時可以隱藏重複的行標籤。
+        """
+        with ui.column().classes('gap-0'):
             ui.label(title).classes('text-lg font-bold')
+            # 為了完美對齊，無論是否顯示行標籤，網格都保持 4 欄結構
             with ui.grid(columns=4).classes('w-full'):
-                ui.label('')
+                # 創建標頭
+                # 如果不顯示行標籤，我們需要一個空的佔位符來佔據第一欄的位置
+                if not show_row_labels:
+                    ui.element('div')
+                else:
+                    ui.label('') # 左上角留空
+
                 ui.label('X/Abd').classes('text-sm text-gray-400 font-mono text-center')
                 ui.label('Y/Hip').classes('text-sm text-gray-400 font-mono text-center')
                 ui.label('Z/Knee').classes('text-sm text-gray-400 font-mono text-center')
+
+                # 創建數據行
                 for i, leg in enumerate(['FR', 'FL', 'RR', 'RL']):
-                    ui.label(leg).classes('text-base font-bold')
+                    # 根據參數決定是否顯示行標籤
+                    if show_row_labels:
+                        ui.label(leg).classes('text-base font-bold')
+                    else:
+                        # 如果不顯示，則放置一個空的佔位符以保持對齊
+                        ui.element('div')
+
                     for j in range(3):
                         label_key = f"{key_prefix}_{i}_{j}"
                         self.status_labels[label_key] = ui.label('0.000').classes('font-mono text-right w-full')
@@ -402,46 +420,51 @@ class UIController:
                     self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl')
 
 
-        # 替換掉整個 _create_onnx_display 函式
+    # 替換掉整個 _create_onnx_display 函式
     def _create_onnx_display(self):
-        """
-        【v4.6.0 重構】建立 ONNX 觀察向量區域。
-        此版本不再使用硬編碼列表，而是動態地從 ObservationManager 的
-        權威維度字典 (ALL_OBS_DIMS) 中創建所有 UI 標籤，確保 UI
-        能夠自動適應未來新增的觀測元件。
-        """
-        # 在 _create_onnx_display 函式中
-
+        """【手冊實作 v1.8 - 重構】實現短向量 3 欄佈局和 12 維向量 3xN 並排佈局。"""
         with ui.card().classes('w-full'):
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-xl font-bold')
-
+            
             if not self.state.observation_manager_ref:
                 ui.label("錯誤: ObservationManager 未初始化!")
                 return
-
+    
             all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
-
-            # --- 1. 創建短向量的顯示區域 ---
+            
+            # --- 1. 創建短向量的顯示區域 (3欄) ---
             ui.label("Short Vectors").classes('text-lg font-bold mt-2')
-            with ui.grid(columns=2):
+            # 【核心修改】將 columns 改為 3
+            with ui.grid(columns=3):
                 for comp_name, dim in all_components:
-                    if dim != 12: # 只處理非 12 維的元件
+                    if dim != 12:
                         with ui.column().classes('gap-0'):
                             ui.label(comp_name).classes('text-xs font-bold text-gray-400')
                             self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
-                    else:
-                        # 如果是 12 維，先記錄下來
+                    elif comp_name not in self.onnx_12d_components:
                         self.onnx_12d_components.append(comp_name)
-
-            # --- 2. 創建 12 維長向量的顯示區域 ---
+            
+            # --- 2. 創建 12 維長向量的顯示區域 (3個一排) ---
             if self.onnx_12d_components:
                 ui.separator().classes('my-2')
                 ui.label("12-D Vectors").classes('text-lg font-bold mt-2')
-                # 為每一個 12 維元件創建一個獨立的儀表板
-                for comp_name in self.onnx_12d_components:
-                    # 使用唯一的 key_prefix 來確保 label 不會衝突
-                    self._create_vector_grid_display(comp_name.replace('_', ' ').title(), f"onnx_{comp_name}")
-
+    
+                # 【核心修改】將 12 維元件列表以 3 個為一組進行遍歷
+                for i in range(0, len(self.onnx_12d_components), 3):
+                    chunk = self.onnx_12d_components[i:i+3]
+                    # 為每一組創建一個橫向的 row
+                    with ui.row().classes('w-full no-wrap'):
+                        # 遍歷組內的每個元件
+                        for idx, comp_name in enumerate(chunk):
+                            # 每個儀表板佔用 1/3 的寬度
+                            with ui.element('div').classes('w-1/3'):
+                                # 判斷是否為行內的第一個儀表板
+                                is_first_in_row = (idx == 0)
+                                self._create_vector_grid_display(
+                                    comp_name.replace('_', ' ').title(), 
+                                    f"onnx_{comp_name}",
+                                    show_row_labels=is_first_in_row # 只有第一個顯示行標籤
+                                )
 
     def _create_log_panel(self):
         with ui.card().classes('w-full'):
