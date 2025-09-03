@@ -127,7 +127,7 @@ class UIController:
 
         with ui.row().classes('w-full no-wrap').style('height: calc(100vh - 100px);'):
             # 【手冊實作 v1.18】為左欄添加 'custom-scrollbar' class
-            with ui.column().classes('w-1/3 custom-scrollbar').style('height: 100%; overflow-y: auto; min-height: 0; min-width: 0;'):
+            with ui.column().classes('w-1/3 custom-scrollbar').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
                 ui.label('主控制項').classes('text-xl font-bold mt-2 mb-1')
                 self._create_main_control_panel()
                 ui.label('策略與地形').classes('text-xl font-bold mt-2 mb-1')
@@ -138,7 +138,7 @@ class UIController:
                 ui.label('參數微調 (Tuning)').classes('text-xl font-bold mt-2 mb-1')
                 self._create_tuning_sliders()
             # 【手冊實作 v1.18】為右欄添加 'custom-scrollbar' class
-            with ui.column().classes('grow custom-scrollbar').style('height: 100%; overflow-y: auto; min-height: 0; min-width: 0;'):
+            with ui.column().classes('grow custom-scrollbar').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
                 self._create_status_display()
                 self._create_core_dashboard()
                 self._create_onnx_display()
