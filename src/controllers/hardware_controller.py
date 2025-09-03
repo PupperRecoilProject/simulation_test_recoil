@@ -199,8 +199,15 @@ class HardwareController:
             return
 
         self.teensy_api = TeensyAPI(self.serial_comm, self.state)
-        # 【v4.10.2 移除】不再需要手動管理舊旗標
-        # self.serial_comm.is_managed_by_hardware_controller = True
+        
+        # 【v4.10.3 新增】增加檢查，強制執行生命週期契約。
+        # 如果 TeensyAPI 因任何原因未能成功初始化其 ser 物件，
+        # 流程將在此處立即失敗，並提供清晰的錯誤信息。
+        if not self.teensy_api.ser:
+            log.error("❌ 硬體啟動失敗: TeensyAPI 未能獲取序列埠參考。這通常意味著在交接控制權時發生了問題。")
+            self._set_internal_state(HWState.FAILED)
+            self.serial_comm.resume_control()
+            return
 
         try:
             # --- 穩健的啟動指令序列 ---

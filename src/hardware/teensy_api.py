@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 class TeensyAPI:
     """
     【v4.9.0 新增】Teensy 通訊協定封裝層。
-    【v4.10.1 修改】...加入了阻塞式回傳驗證和基於狀態機的安全模式。
+    【v4.10.1 修改】加入了阻塞式回傳驗證和基於狀態機的安全模式。
+    【v4.10.3 修改】職責更新。
     
     這個類別是與 Teensy 硬體進行指令通訊的唯一介面，
     將所有 "魔法字串" 指令封裝成有意義的函式，以提升程式碼的
@@ -23,6 +24,7 @@ class TeensyAPI:
     def __init__(self, serial_comm: 'SerialCommunicator', state: 'SimulationState'):
         """
         【v4.10.1 修改】新增 state 參數以讀取安全模式旗標。
+        【v4.10.3 修改】遵循「建構即初始化」原則。
 
         初始化 TeensyAPI。
 
@@ -31,7 +33,13 @@ class TeensyAPI:
         """
         self.serial_comm = serial_comm
         self.state = state
-        self.ser: serial.Serial | None = None
+        # 【v4.10.3 修改】在建構時立即獲取連線，而不是等待外部呼叫。
+        # 這一行是解決 BUG-HW-INIT-RACE 的核心。
+        self.ser: serial.Serial | None = self.serial_comm.get_serial_connection()
+
+        # 【v4.10.3 新增】增加日誌，用於在初始化失敗時提供清晰的除錯線索。
+        if self.ser is None:
+            log.warning("TeensyAPI 在初始化時未能獲取有效的序列埠連線。")
 
     def _send_command(self, command: str) -> bool:
         """
