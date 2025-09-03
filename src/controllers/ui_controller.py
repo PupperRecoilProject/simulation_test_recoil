@@ -93,7 +93,7 @@ class UIController:
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
         with ui.row().classes('w-full no-wrap').style('height: calc(100vh - 50px);'):
-            with ui.column().classes('w-1/3').style('height: 100%; overflow-y: auto; min-height: 0; min-width: 0;'):
+            with ui.column().classes('w-1/3').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
                 ui.label('主控制項').classes('text-xl font-bold mt-2 mb-1')
                 self._create_main_control_panel()
                 ui.label('策略與地形').classes('text-xl font-bold mt-2 mb-1')
@@ -103,7 +103,7 @@ class UIController:
                 self._create_device_panel()
                 ui.label('參數微調 (Tuning)').classes('text-xl font-bold mt-2 mb-1')
                 self._create_tuning_sliders()
-            with ui.column().classes('grow').style('height: 100%; overflow-y: auto; min-height: 0; min-width: 0;'):
+            with ui.column().classes('grow').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
                 self._create_status_display()
                 self._create_core_dashboard()
                 self._create_onnx_display()
