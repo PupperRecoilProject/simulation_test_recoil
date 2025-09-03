@@ -20,7 +20,9 @@ class SerialCommunicator:
         self.exit_signal = threading.Event()
         self.is_connected = False
         self.port_name = None
-        self.is_managed_by_hardware_controller = False
+        # 【v4.10.2 新增】用於執行緒間安全握手的新旗標
+        self._pause_requested = threading.Event() # 主執行緒用來請求暫停
+        self._is_paused_flag = threading.Event()  # 背景執行緒用來宣告自己已暫停
         log.info("序列埠通訊器已初始化 (等待連接指令)。")
 
     def get_serial_connection(self) -> serial.Serial | None:
@@ -40,6 +42,43 @@ class SerialCommunicator:
             self.port_name = selected_port # 儲存埠名
             return self.connect() # 執行連接
         return False
+
+    def relinquish_control(self, timeout: float = 2.0) -> bool:
+        """
+        【v4.10.2 新增】請求背景讀取執行緒暫停，並阻塞式地等待其確認。
+
+        這是實現安全資源交接的核心「握手」函式。
+
+        Args:
+            timeout (float): 等待背景執行緒確認暫停的超時時間（秒）。
+
+        Returns:
+            bool: 如果背景執行緒在超時內確認暫停，則返回 True，否則返回 False。
+        """
+        if not self.read_thread or not self.read_thread.is_alive():
+            log.warning("SerialCommunicator 的讀取執行緒未運行，無需交接控制權。")
+            return True # 如果執行緒本來就沒在跑，視為交接成功
+
+        log.info("正在請求 SerialCommunicator 暫停其讀取執行緒...")
+        self._is_paused_flag.clear() # 先放下「已暫停」的旗子
+        self._pause_requested.set() # 升起「請求暫停」的旗子
+
+        # 等待背景執行緒升起它自己的「我已暫停」的旗子
+        is_paused = self._is_paused_flag.wait(timeout=timeout)
+
+        if is_paused:
+            log.info("✅ SerialCommunicator 已確認暫停，控制權已安全交接。")
+            return True
+        else:
+            log.error(f"❌ 等待 SerialCommunicator 暫停超時 ({timeout}s)！控制權交接失敗。")
+            self._pause_requested.clear() # 取消暫停請求
+            return False
+
+    def resume_control(self):
+        """【v4.10.2 新增】通知背景讀取執行緒恢復正常運作。"""
+        log.info("正在將序列埠控制權歸還給 SerialCommunicator...")
+        self._pause_requested.clear()
+        self._is_paused_flag.clear()
 
     def _select_serial_port(self):
         """掃描並在終端機列出所有可用的序列埠供使用者選擇。"""
@@ -67,11 +106,23 @@ class SerialCommunicator:
             return False
 
     def _read_from_port(self):
-        """[背景執行緒函式] 持續地從序列埠讀取數據並存入日誌。"""
-        while not self.exit_signal.is_set(): # 當未收到退出信號時
-            if self.is_managed_by_hardware_controller: # 如果控制權已交給硬體控制器
-                time.sleep(0.1) # 短暫休眠，避免資源競爭
-                continue # 繼續下一輪迴圈
+        """
+        【v4.10.2 修改】增加了響應暫停請求的邏輯。
+        
+        [背景執行緒函式] 持續地從序列埠讀取數據並存入日誌。
+        """
+        while not self.exit_signal.is_set():
+            # --- 【v4.10.2 新增】紅綠燈檢查邏輯 ---
+            if self._pause_requested.is_set():
+                if not self._is_paused_flag.is_set():
+                    self._is_paused_flag.set() # 升起「我已暫停」的旗子，通知主執行緒
+                time.sleep(0.1) # 保持暫停狀態，等待請求被取消
+                continue
+
+            # 如果暫停請求被取消，確保「我已暫停」的旗子也被放下
+            if self._is_paused_flag.is_set():
+                self._is_paused_flag.clear()
+            # ------------------------------------
                 
             try:
                 if self.ser and self.ser.is_open and self.ser.in_waiting > 0:
@@ -85,8 +136,13 @@ class SerialCommunicator:
             time.sleep(0.01) # 短暫休眠
 
     def send_command(self, command: str):
-        """向序列埠發送一個字串指令。"""
-        if self.is_connected and command and not self.is_managed_by_hardware_controller:
+        """
+        【v4.10.2 修改】在發送前增加暫停狀態檢查。
+
+        向序列埠發送一個字串指令。
+        """
+        # 【v4.10.2 修改】使用 _pause_requested 旗標取代舊旗標
+        if self.is_connected and command and not self._pause_requested.is_set():
             try:
                 command_to_send = command + '\n'
                 self.ser.write(command_to_send.encode('utf-8'))
@@ -96,8 +152,15 @@ class SerialCommunicator:
 
 
     def close(self):
-        """安全地關閉序列埠和讀取執行緒。"""
-        if self.is_managed_by_hardware_controller: return # 如果硬體控制器正在管理連接，則本類別不應關閉它
+        """
+        【v4.10.2 修改】在關閉前確保執行緒已恢復，避免死鎖。
+        
+        安全地關閉序列埠和讀取執行緒。
+        """
+        # 【v4.10.2 修改】使用 _pause_requested 旗標取代舊旗標
+        if self._pause_requested.is_set():
+            log.warning("SerialCommunicator 處於暫停狀態，可能由 HardwareController 管理。跳過關閉操作。")
+            return
 
         if self.read_thread and self.read_thread.is_alive(): # 如果讀取執行緒在運行
             self.exit_signal.set() # 發送退出信號

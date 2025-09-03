@@ -171,63 +171,63 @@ class HardwareController:
         """
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
         【v4.10.1 重構】實現包含回傳驗證的、基於狀態機的穩健硬體啟動流程。
+        【v4.10.2 重構】在啟動前，先透過握手協議安全地獲取序列埠控制權。
 
         (內部, 可能阻塞) 執行啟動流程。
         """
         self._set_internal_state(HWState.STARTING)
-        # 【v4.10.1 新增】每次嘗試啟動時，都將連結狀態重置為未驗證
         with self.state.lock:
             self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
-            
+
         if not self.serial_comm.is_connected:
-            log.error("❌ 硬體啟動失敗：序列埠未連接。")
+            log.error("❌ 硬體啟動失敗：序列埠未連線。")
             self._set_internal_state(HWState.FAILED)
             return
 
-        self.ser = self.serial_comm.get_serial_connection()  # 取得序列連線實體
+        # --- 【v4.10.2 新增】步驟 1：等待綠燈 (安全獲取控制權) ---
+        if not self.serial_comm.relinquish_control():
+            log.error("❌ 硬體啟動失敗：無法從 SerialCommunicator 安全地獲取序列埠的控制權 (等待逾時)。")
+            self._set_internal_state(HWState.FAILED)
+            return
+
+        # --- 步驟 2：安全通行 (執行原有啟動流程) ---
+        self.ser = self.serial_comm.get_serial_connection()
         if not self.ser:
-            log.error("❌ 硬體啟動失敗：無法獲取有效連接。")
+            log.error("❌ 硬體啟動失敗：無法獲取有效連線。")
             self._set_internal_state(HWState.FAILED)
+            self.serial_comm.resume_control() # 發生錯誤，立即歸還控制權
             return
-        
-        # 【v4.9.0 新增】在成功獲取序列埠連線後，實例化 TeensyAPI
-        # 【v4.10.1 修改】實例化 TeensyAPI 時傳入 state
-        self.teensy_api = TeensyAPI(self.serial_comm, self.state)
 
-        # --- 接管與初始化 ---
-        log.info(f"✅ 硬體控制器已接管序列埠 {self.ser.port} 的控制權。")
-        self.serial_comm.is_managed_by_hardware_controller = True  # 告知 serial_comm 不再管理 serial
+        self.teensy_api = TeensyAPI(self.serial_comm, self.state)
+        # 【v4.10.2 移除】不再需要手動管理舊旗標
+        # self.serial_comm.is_managed_by_hardware_controller = True
 
         try:
-            # --- 【v4.10.1 新增】穩健的啟動指令序列 ---
+            # --- 穩健的啟動指令序列 ---
             log.info("--- 開始執行硬體啟動序列 ---")
             
-            # 1. 安全停機與驗證
-            log.info("  -> 步驟 1/3: 發送 'stop' 指令並等待確認...")
+            # 2a. 暫時「偽裝」為已驗證狀態，以便發送驗證指令
+            self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+            
+            # 2b. 發送 'stop' 並等待確認
+            log.info("  -> 步驟 1/3：發送 'stop' 指令並等待確認...")
             if not self.teensy_api.send_command_and_wait_for_ok("stop", timeout=1.0):
                 raise serial.SerialException("Teensy 未能確認 'stop' 指令，啟動中止。")
             
-            # 2. 設定通訊頻率與驗證
-            log.info(f"  -> 步驟 2/3: 設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
+            # 2c. 發送 'monitor freq' 並等待確認
+            log.info(f"  -> 步驟 2/3：設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
             if not self.teensy_api.send_command_and_wait_for_ok(f"monitor freq {self.config.control_freq}", timeout=1.0):
                 raise serial.SerialException("Teensy 未能確認 'monitor freq' 指令，啟動中止。")
 
-            # 3. 切換到數據流模式 (此指令可能無 '[OK]' 回應，故使用非阻塞的常規發送)
-            log.info("  -> 步驟 3/3: 命令 Teensy 切換至 POLICY_STREAM 模式...")
-            # 我們需要暫時將狀態設為 VERIFIED，以便 _send_command 能成功發送
-            with self.state.lock:
-                self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
-            
+            # 2d. 發送 'monitor p'
+            log.info("  -> 步驟 3/3：命令 Teensy 切換至 POLICY_STREAM 模式...")
             if not self.teensy_api.set_mode_policy_stream():
-                # 如果失敗，需要將狀態還原
-                with self.state.lock:
-                    self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
                 raise serial.SerialException("發送 'monitor p' 指令失敗。")
 
             time.sleep(0.1) 
             self.ser.reset_input_buffer()
             
-            log.info("✅ 硬體啟動序列成功完成，通訊連結已驗證。")
+            log.info("✅ 硬體啟動序列成功完成，通訊連線已驗證。")
             self._set_internal_state(HWState.RUNNING)
             
             self.ai_control_active = True
@@ -239,35 +239,41 @@ class HardwareController:
             log.error(f"❌ 硬體啟動序列失敗: {e}")
             with self.state.lock:
                 self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
-            self.serial_comm.is_managed_by_hardware_controller = False
             self._set_internal_state(HWState.FAILED)
             self.teensy_api = None
+            # 【v4.10.2 新增】即使啟動失敗，也要確保歸還控制權
+            self.serial_comm.resume_control()
 
 
     def _execute_stop(self):
         """
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
+        【v4.10.2 重構】在停止後，將序列埠的控制權安全地歸還。
         
         (內部, 可能阻塞) 執行停止流程。
         """
         self._set_internal_state(HWState.STOPPING)
         self.ai_control_active = False
-        with self.state.lock: self.state.hardware_ai_is_active = False
+        with self.state.lock: 
+            self.state.hardware_ai_is_active = False
+            # 【v4.10.2 新增】停止時，將連線狀態重設為未驗證
+            self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
 
-        # 【v4.9.0 修改】使用 API 取代硬編碼字串
         if self.teensy_api:
             log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
-            self.teensy_api.stop_ai_and_motors()
-            time.sleep(0.05)
-            self.teensy_api.set_mode_human_readable()
+            # 【v4.10.2 修改】這裡需要繞過 Mute 檢查，直接發送指令
+            self.teensy_api.send_command_and_wait_for_ok("stop", timeout=0.5)
+            self.teensy_api.send_command_and_wait_for_ok("monitor h", timeout=0.5)
         
-        if self.serial_comm:
-            self.serial_comm.is_managed_by_hardware_controller = False
-            log.info("  -> 序列埠控制權已交還。")
-        
+        # 清理自身資源
         self.ser = None
-        # 【v4.9.0 新增】清理 API 實例
         self.teensy_api = None
+        
+        # 【v4.10.2 修改】將歸還控制權的邏輯放在所有操作的最後
+        if self.serial_comm:
+            self.serial_comm.resume_control()
+            log.info("  -> 序列埠的控制權已歸還。")
+        
         self._set_internal_state(HWState.STOPPED)
 
 
