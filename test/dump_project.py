@@ -38,8 +38,8 @@ except ImportError:
 # ---------------------------------------------
 
 # --- 組態設定 (無須修改) ---
-EXCLUDE_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.vscode', 'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'output'}
-SKIP_CONTENT_EXTENSIONS = {'.onnx', '.stl', '.ort', '.png', '.jpg', '.jpeg', '.exe', '.dll', '.so', '.o', '.zip', '.rar', '.gz', '.gif', '.bmp', '.ico', '.mp3', '.mp4', '.avi', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pyc', '.pyo', '.lock', '.swp', '.swo'}
+EXCLUDE_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.vscode', 'dist', 'build', 'env', '.idea', 'target', '.DS_Store', 'output','venv_test_no_mujoco'} #\\ 忽略的目錄
+SKIP_CONTENT_EXTENSIONS = {'.onnx', '.stl', '.ort', '.png', '.jpg', '.jpeg', '.exe', '.dll', '.so', '.o', '.zip', '.rar', '.gz', '.gif', '.bmp', '.ico', '.mp3', '.mp4', '.avi', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pyc', '.pyo', '.lock', '.swp', '.swo'} #// 忽略內容的檔案類型
 INCLUDE_EXTENSIONS = set()
 
 
