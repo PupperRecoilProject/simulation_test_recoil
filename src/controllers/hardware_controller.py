@@ -256,8 +256,13 @@ class HardwareController:
         """
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
         【v4.10.2 重構】在停止後，將序列埠的控制權安全地歸還。
+        【v4.10.5 修改】更新 API 呼叫以匹配 v4.10.4 的 TeensyAPI 重構。
+
         
-        (內部, 可能阻塞) 執行停止流程。
+        執行硬體停止流程。
+        
+        此方法負責將 AI 控制暫停，命令 Teensy 停止馬達並切換回人類可讀模式，
+        最後安全地釋放對序列埠的獨佔控制權。
         """
         self._set_internal_state(HWState.STOPPING)
         self.ai_control_active = False
@@ -268,9 +273,11 @@ class HardwareController:
 
         if self.teensy_api:
             log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
-            # 【v4.10.2 修改】這裡需要繞過 Mute 檢查，直接發送指令
-            self.teensy_api.send_command_and_wait_for_ok("stop", timeout=0.5)
-            self.teensy_api.send_command_and_wait_for_ok("monitor h", timeout=0.5)
+            # 【v4.10.5 修正】使用正確的 execute_command API。
+            # 根據協定字典，這兩個指令都是 "fire and forget"，無需等待回應。
+            # 舊的 send_command_and_wait_for_ok 已被移除，導致 AttributeError。
+            self.teensy_api.execute_command("stop")
+            self.teensy_api.execute_command("monitor h")
         
         # 清理自身資源
         self.ser = None
@@ -298,9 +305,13 @@ class HardwareController:
         
         if self.ai_control_active:
             self.policy.reset()
+            
         # 【v4.9.0 修改】使用 API 取代硬編碼字串
+        # 【v4.10.5 修正】當暫停 AI 時，應發送 'stop' 指令。
+        # 舊的 stop_ai_and_motors() 已被移除，導致 AttributeError。
+        # 此處使用正確的 execute_command API。
         elif self.teensy_api:
-            self.teensy_api.stop_ai_and_motors()
+            self.teensy_api.execute_command("stop")
 
 
     def _perform_ai_step(self):
