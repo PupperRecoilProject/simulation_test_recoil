@@ -159,7 +159,8 @@ class UIController:
 
             # --- 1. 左側控制欄 ---
             # 'overflow-y: auto' 是實現獨立滾動的關鍵，當內容超出時會出現自己的捲軸。
-            with ui.column().classes('w-1/3').style('height: 100%; overflow-y: auto; min-height: 0;'):
+            # 推薦的寫法
+            with ui.column().classes('w-1/3 px-4').style('height: 100%; overflow:hidden auto ; min-height: 0; min-width: 0;'):
                 # 【手冊實作 - 步驟二：控制區內容重組】
                 # 廢除舊的 Tabs 結構，改為符合工作流程的垂直佈局。
                 
@@ -181,7 +182,7 @@ class UIController:
 
             # --- 2. 右側監控欄 ---
             # 'grow' 會讓此欄位佔滿剩餘的寬度，'overflow-y: auto' 實現獨立滾動。
-            with ui.column().classes('grow').style('height: 100%; overflow-y: auto; min-height: 0;'):
+            with ui.column().classes('grow px-4').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
                 self._create_status_display()
                 self._create_onnx_display()
                 self._create_log_panel()
@@ -195,7 +196,7 @@ class UIController:
     # 【手冊實作】這些函式現在被 _setup_ui 中的新佈局結構調用。
 
     def _create_main_control_panel(self):
-        with ui.card():
+        with ui.card().classes('w-full'):
             ui.label('模式控制 (Control Mode)').classes('text-lg')
             with ui.row():
                 # 【修改】點擊按鈕時，直接發布一個包含目標模式的'請求'事件。
@@ -230,7 +231,7 @@ class UIController:
 
     def _create_policy_and_terrain_selectors(self):
         """【手冊實作-新增】將策略與地形選擇器從原 tuning panel 分離出來。"""
-        with ui.card():
+        with ui.card().classes('w-full'):
             ui.label('策略選擇 (Policy)').classes('text-lg')
             # [修改] on_change 回呼發布策略變更請求事件
             self.status_labels['policy_selector'] = ui.select(
@@ -266,7 +267,7 @@ class UIController:
 
     # 設備與系統相關控制
     def _create_device_panel(self):
-        with ui.card():
+        with ui.card().classes('w-full'):
             ui.label('硬體 AI 控制').classes('text-lg')
 
             # 【v4.10.1 新增】"Dry Run" 安全模式開關
@@ -367,38 +368,38 @@ class UIController:
                 ui.button('歸零 (Clear)', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, clear=True)).props('dense')
 
     def _create_vector_grid_display(self, title: str, key_prefix: str):
-        """【手冊實作-新增】為一個 12 維向量創建一個 4x3 的語義化顯示網格。"""
-        ui.label(title).classes('text-lg font-bold mt-2')
-        # 使用 grid 佈局，4列
-        with ui.grid(columns=4).classes('w-full'):
-            # 創建標頭
-            ui.label('') # 左上角留空
-            ui.label('X/Abd').classes('text-sm text-gray-400 font-mono text-center')
-            ui.label('Y/Hip').classes('text-sm text-gray-400 font-mono text-center')
-            ui.label('Z/Knee').classes('text-sm text-gray-400 font-mono text-center')
+    # 【核心修改】將整個儀表板包裹在一個 column 中
+        with ui.column().classes('gap-0'): # gap-0 移除元件間的垂直間距
+            ui.label(title).classes('text-lg font-bold')
+            with ui.grid(columns=4).classes('w-full'):
+                ui.label('')
+                ui.label('X/Abd').classes('text-sm text-gray-400 font-mono text-center')
+                ui.label('Y/Hip').classes('text-sm text-gray-400 font-mono text-center')
+                ui.label('Z/Knee').classes('text-sm text-gray-400 font-mono text-center')
+                for i, leg in enumerate(['FR', 'FL', 'RR', 'RL']):
+                    ui.label(leg).classes('text-base font-bold')
+                    for j in range(3):
+                        label_key = f"{key_prefix}_{i}_{j}"
+                        self.status_labels[label_key] = ui.label('0.000').classes('font-mono text-right w-full')
 
-            # 為 FR, FL, RR, RL 四條腿創建數據行
-            for i, leg in enumerate(['FR', 'FL', 'RR', 'RL']):
-                ui.label(leg).classes('text-base font-bold') # 腿的標籤
-                # 為每條腿的 3 個關節創建標籤，並存入 self.status_labels 字典
-                for j in range(3):
-                    label_key = f"{key_prefix}_{i}_{j}"
-                    # 使用 text-right 和 font-mono 來確保數字對齊
-                    self.status_labels[label_key] = ui.label('0.000').classes('font-mono text-right w-full')
 
     def _create_status_display(self):
-        """【重構】數據驅動的 UI 元素創建，並整合新的儀表板元件。"""
-        with ui.card():
+        with ui.card().classes('w-full'):
             ui.label('即時狀態 (Real-time Status)').classes('text-xl font-bold')
-            # 創建由描述字典管理的標籤
+            # 頂部的狀態標籤保持不變
             with ui.grid(columns=3):
                 for key, desc in self._label_descriptors.items():
-                    # 為簡潔起見，這裡只創建空的 label，由 update 函式填充完整文字
                     self.status_labels[key] = ui.label(f"{desc['title']}: N/A")
             
-            # 【手冊實作 - 步驟三】創建語義化向量儀表板
-            self._create_vector_grid_display('原始動作 (Raw Action)', 'action_raw')
-            self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl')
+            ui.separator().classes('my-2') # 添加一條分隔線
+    
+            # 【核心修改】創建一個橫向 row 來並排放置兩個儀表板
+            with ui.row().classes('w-full no-wrap'):
+                # 每個儀表板佔用 50% 的寬度
+                with ui.element('div').classes('w-1/2'):
+                    self._create_vector_grid_display('原始動作 (Raw Action)', 'action_raw')
+                with ui.element('div').classes('w-1/2'):
+                    self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl')
 
 
     def _create_onnx_display(self):
@@ -410,7 +411,7 @@ class UIController:
         """
         # 在 _create_onnx_display 函式中
 
-        with ui.card():
+        with ui.card().classes('w-full'):
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
             # 【手冊實作-反饋修正】保持雙欄網格佈局
             with ui.grid(columns=2):
