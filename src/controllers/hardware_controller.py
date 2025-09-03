@@ -73,12 +73,14 @@ class HardwareController:
 
     def request_start(self) -> None:
         """(外部API, 非阻塞) 請求啟動硬體控制器。"""
-        if self.internal_state in [HWState.STOPPED, HWState.FAILED]:
+        # 【v4.10.5 修改】在允許啟動的狀態中，排除 CONNECTION_LOST。
+        # 一旦連接中斷，必須通過重新連接序列埠（重啟應用或重新掃描）來重置。
+        if self.internal_state in [HWState.STOPPED, HWState.FAILED] and self.state.hardware_link_status != HardwareLinkStatus.CONNECTION_LOST:
             log.info("收到啟動請求，向控制執行緒發送 START 命令。")
             self._start_threads_if_not_alive()
             self.command_queue.put(HWCommand.START)
         else:
-            log.warning(f"當前狀態為 {self.internal_state.name}，忽略啟動請求。")
+            log.warning(f"當前狀態為 {self.internal_state.name} (Link: {self.state.hardware_link_status.value})，忽略啟動請求。")
 
     def request_stop(self) -> None:
         """(外部API, 非阻塞) 請求停止硬體控制器。"""
@@ -127,10 +129,18 @@ class HardwareController:
                     if line:
                         self.parse_policy_stream(line) 
 
-            except (serial.SerialException, OSError):
-                log.error("❌ 讀取時序列埠斷開或出錯。將狀態設置為 FAILED。")
+            # 【v4.10.5 修改】實現 FEAT-SAFETY-FUSE 熔斷器
+            except (serial.SerialException, OSError) as e:
+                # 【v4.10.5 核心修改】實現安全熔斷器
+                log.error(f"❌ 讀取時序列埠斷開或出錯: {e}。觸發安全熔斷！")
+                # 將全局狀態設置為 CONNECTION_LOST
+                with self.state.lock:
+                    self.state.hardware_link_status = HardwareLinkStatus.CONNECTION_LOST
+                # 將控制器內部狀態也設置為 FAILED，以阻止後續操作
                 self._set_internal_state(HWState.FAILED)
+                # 終止讀取執行緒
                 break
+            
             except Exception as e:
                 log.error(f"❌ _read_from_port 發生未知錯誤: {e}", exc_info=True)
                 self._set_internal_state(HWState.FAILED)

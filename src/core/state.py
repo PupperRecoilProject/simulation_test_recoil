@@ -19,10 +19,22 @@ import threading
 # 【v4.10.1 新增】為硬體通訊連結狀態定義一個 Enum
 from enum import Enum
 
+
 class HardwareLinkStatus(Enum):
+    """
+    【v4.10.5 修改】擴展為四態狀態機。
+    
+    定義了硬體通訊鏈路的完整生命週期狀態。
+    - UNVERIFIED: 初始狀態，鏈路尚未經過驗證。
+    - VERIFIED:   鏈路已驗證，AI 被授權控制馬達。
+    - MUTED:      鏈路已驗證，但使用者手動靜默了馬達控制。
+    - CONNECTION_LOST: 運行時檢測到通訊中斷，進入安全熔斷狀態。
+    """
     UNVERIFIED = "未驗證"
     VERIFIED = "已驗證"
     MUTED = "已靜默"
+    CONNECTION_LOST = "連接中斷"
+
 
     
 # 導入我們新創建的事件系統模組和核心事件
