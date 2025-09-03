@@ -258,74 +258,68 @@ class UIController:
                     with ui.element('div').classes('w-1/2'):
                         self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl', show_row_labels=False)
                         
+# 在 UIController 類別中，找到這個函式並用下面的版本替換它
+
     def _create_vision_panel(self):
-        """【最終 Python 傳值版】放棄 getElementById，直接從 Python 將輸入值傳入 JS。"""
-        with ui.card():
-            ui.label('即時視覺 (NanoOwl)').classes('text-lg font-bold')
-            
-            video_server_url = "http://localhost:8081"
-            ui.html(f'''
-                <iframe src="{video_server_url}" 
-                        width="100%" height="480" frameborder="0" scrolling="no"
-                        style="max-width: 640px; aspect-ratio: 640 / 480;">
-                </iframe>
-            ''')
-
-            with ui.row().classes('w-full items-center'):
-                prompt_input = ui.input(placeholder='輸入識別提示, 例如: [a person]').props('outlined dense').classes('flex-grow')
+        """【手冊實作 v1.20】將功能正常的視覺面板整合進可折疊佈局中。"""
+        # 1. 最外層使用 ui.expansion 來實現折疊功能
+        with ui.expansion('即時視覺 (NanoOwl)', icon='visibility').classes('w-full').props('value=true'):
+            # 2. 在 expansion 內部使用 ui.card 來保持統一的邊框和背景風格
+            with ui.card().classes('w-full'):
                 
-                # 我們需要一個輔助函式來處理事件，因為 on_click 和 on(...enter) 都需要呼叫它
-                def handle_send_event():
-                    # 1. 在 Python 端直接讀取輸入框的值
-                    prompt_value = prompt_input.value
+                # 3. 這裡的內容完全複製自您提供的「沒問題的版本」
+                video_server_url = "http://localhost:8081"
+                ui.html(f'''
+                    <iframe src="{video_server_url}" 
+                            width="100%" height="480" frameborder="0" scrolling="no"
+                            style="max-width: 640px; aspect-ratio: 640 / 480; display: block; margin: auto;">
+                    </iframe>
+                ''')
+
+                with ui.row().classes('w-full items-center'):
+                    # 【注意】這裡我們不再需要 self.prompt_input，因為 prompt_input 的作用域
+                    #         只在這個函式內部，這是版本 2 成功的關鍵。
+                    prompt_input = ui.input(placeholder='輸入識別提示, 例如: [a person]').props('outlined dense').classes('flex-grow')
                     
-                    # 2. 如果值為空，則在 UI 上顯示通知並返回
-                    if not prompt_value:
-                        ui.notify('請先輸入識別提示！', color='warning')
-                        return
-
-                    # 3. 為了安全地將任意字串插入 JS，我們使用 json.dumps 進行轉義
-                    import json
-                    escaped_prompt = json.dumps(prompt_value)
-
-                    # 4. 建立一個自給自足的 JS 腳本，它接收一個參數 prompt
-                    #    注意：escaped_prompt 已經包含了引號，所以 JS 中不需要再加
-                    js_script = f'''
-                        const prompt = {escaped_prompt};
-                        console.log(`接收到來自 Python 的 Prompt: "${{prompt}}"`);
+                    def handle_send_event():
+                        prompt_value = prompt_input.value
                         
-                        const ws_name = 'nanoowl_ws_connection';
+                        if not prompt_value:
+                            ui.notify('請先輸入識別提示！', color='warning')
+                            return
 
-                        // 檢查 WebSocket 連接
-                        if (!window[ws_name] || window[ws_name].readyState > 1) {{
-                            console.log("WebSocket 未連接，正在創建...");
-                            window[ws_name] = new WebSocket('ws://localhost:8081/ws');
+                        import json
+                        escaped_prompt = json.dumps(prompt_value)
+
+                        js_script = f'''
+                            const prompt = {escaped_prompt};
+                            console.log(`接收到來自 Python 的 Prompt: "${{prompt}}"`);
                             
-                            window[ws_name].onopen = () => {{
-                                console.log('%c[WebSocket] 連接成功！現在發送消息...', 'color: green;');
+                            const ws_name = 'nanoowl_ws_connection';
+
+                            if (!window[ws_name] || window[ws_name].readyState > 1) {{
+                                console.log("WebSocket 未連接，正在創建...");
+                                window[ws_name] = new WebSocket('ws://localhost:8081/ws');
+                                
+                                window[ws_name].onopen = () => {{
+                                    console.log('%c[WebSocket] 連接成功！現在發送消息...', 'color: green;');
+                                    window[ws_name].send(prompt);
+                                }};
+                                window[ws_name].onerror = (err) => console.error("[WebSocket] 連接錯誤:", err);
+                                window[ws_name].onclose = () => console.warn("[WebSocket] 連接已關閉。");
+
+                            }} else {{
+                                console.log("WebSocket 已連接，直接發送消息...");
                                 window[ws_name].send(prompt);
-                            }};
-                            // ... (其他事件處理器保持不變)
-                            window[ws_name].onerror = (err) => console.error("[WebSocket] 連接錯誤:", err);
-                            window[ws_name].onclose = () => console.warn("[WebSocket] 連接已關閉。");
+                            }}
+                        '''
+                        
+                        ui.run_javascript(js_script)
+                        prompt_input.set_value(None)
 
-                        }} else {{
-                            // 如果已連接，直接發送
-                            console.log("WebSocket 已連接，直接發送消息...");
-                            window[ws_name].send(prompt);
-                        }}
-                    '''
-                    
-                    # 5. 執行這個動態建立的腳本
-                    ui.run_javascript(js_script)
-                    
-                    # 6. 清空 Python 端的輸入框
-                    prompt_input.set_value(None)
-
-                # 綁定事件
-                ui.button('辨識', on_click=handle_send_event)
-                prompt_input.on('keydown.enter', handle_send_event)
-    
+                    ui.button('辨識', on_click=handle_send_event)
+                    prompt_input.on('keydown.enter', handle_send_event)
+                        
     def _create_onnx_display(self):
         """【手冊實作 v1.16】此面板現在包含所有作為 AI 輸入的觀測數據。"""
         with ui.expansion('ONNX 觀察向量 (Observation Vector)', icon='schema').classes('w-full').props('value=true'):
