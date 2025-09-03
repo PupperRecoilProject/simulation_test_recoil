@@ -113,7 +113,11 @@ class HardwareController:
             log.info("硬體讀取執行緒已啟動。")
 
     def _read_from_port(self):
-        # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
+        """
+        【v4.7.4 修改】將診斷日誌降級為 DEBUG
+        【v4.10.5 修改】增加對 SerialException 的處理，觸發 CONNECTION_LOST 熔斷狀態。
+        """
+
         log.debug("[硬體讀取執行緒已啟動] 等待數據...")
         while self._is_running_event.is_set():
             if self.internal_state != HWState.RUNNING or not self.ser or not self.ser.is_open:
