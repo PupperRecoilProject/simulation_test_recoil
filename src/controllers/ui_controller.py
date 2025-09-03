@@ -3,7 +3,7 @@
 from nicegui import ui, app
 import numpy as np
 import threading
-from typing import TYPE_CHECKING, List, Dict
+from typing import TYPE_CHECKING, List, Dict # 【修改】從 typing 導入 Dict
 
 from src.core.event_system import (
     event_bus,
@@ -23,6 +23,7 @@ from src.core.event_system import (
     EVENT_SERIAL_COMMAND_SEND,
 )
 from src.core.logger import log, log_queue
+# 【v4.10.1 新增】導入 State 和 Enum 以進行類型提示
 from src.core.state import SimulationState, HardwareLinkStatus
 
 if TYPE_CHECKING:
@@ -37,31 +38,82 @@ class UIController:
         self.serial_comm = state.serial_communicator_ref
         self.xbox_handler = state.xbox_handler_ref
 
-        self.mute_switch = None
+        # 【v4.10.1 新增】為靜默開關宣告一個屬性
+        # 【v4.10.5 修改】將 mute_switch 重命名為 enable_motors_switch
+        self.enable_motors_switch = None
         self.param_sliders = {}
         self.onnx_input_labels = {}
         self.log_area = None
         self.serial_command_buffer = None
+        # 關節控制滑桿 (僅在關節測試與手動控制模式下啟用)
         self.joint_control_slider = None
         # 【整合 NanoOwl】為 NanoOwl 的 prompt 輸入框創建一個屬性
         self.prompt_input = None
 
+        # 儲存 UI 下拉選單的地形選擇值，避免與後端狀態互相觸發
         if self.state.terrain_mode == 'SINGLE':
             self.ui_terrain_selection = self.state.terrain_manager_ref.single_terrain_names[self.state.single_terrain_index]
         else:
             self.ui_terrain_selection = 'INFINITE'
-            
+
+        # ===================================================================
+        # === 【v4.7.0 新增】UI 元素定義區 (Single Source of Truth) ===
+        # ===================================================================
+        # 存放最終創建的 ui.label 物件
         self.status_labels = {}
+
+        # 【v4.7.0 新增】狀態標籤描述字典
+        # 這是 UI 狀態顯示的唯一真相來源。它定義了每個標籤的:
+        # - title: 在 UI 上顯示的靜態標題。
+        # - getter: 一個從 state 快照中提取對應數據的函式。
+        # - formatter: 一個將提取出的數據轉換為顯示字串的函式。
+        # 【手冊實作】移除 action_raw 和 final_ctrl，它們將由新的儀表板處理
         self._label_descriptors = {
-            'mode': {'title': '模式', 'getter': lambda s: s.control_mode, 'formatter': str},
-            'input_mode': {'title': '輸入', 'getter': lambda s: s.input_mode, 'formatter': str},
-            'sim_time': {'title': '時間', 'getter': lambda s: s.sim.data.time if s.sim and hasattr(s.sim, 'data') else 0.0, 'formatter': lambda v: f"{v:.2f}s"},
-            'serial_status': {'title': '序列埠', 'getter': lambda s: s.serial_is_connected, 'formatter': lambda v: 'Connected' if v else 'Disconnected'},
-            'gamepad_status': {'title': '搖桿', 'getter': lambda s: s.gamepad_is_connected, 'formatter': lambda v: 'Connected' if v else 'Disconnected'},
-            'hardware_ai': {'title': '硬體AI', 'getter': lambda s: (s.control_mode, s.hardware_is_running, s.hardware_ai_is_active), 'formatter': lambda v: 'Active' if v[2] else 'Standby' if v[1] else 'Starting...' if v[0] == 'HARDWARE_MODE' else 'N/A'},
-            'policy_status': {'title': '策略', 'getter': lambda s: (s.policy_manager_ref.is_transitioning, s.policy_manager_ref.source_policy_name, s.policy_manager_ref.target_policy_name, s.policy_manager_ref.transition_alpha, s.policy_manager_ref.primary_policy_name), 'formatter': lambda v: f"Blending {v[1]}->{v[2]} ({v[3]*100:.0f}%)" if v[0] else v[4]},
-            'command': {'title': '運動指令', 'getter': lambda s: s.command, 'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}, pitch: {v[3]:.2f}"},
-            'robot_pos': {'title': '位置', 'getter': lambda s: s.latest_pos, 'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"},
+            'mode': {
+                'title': '模式',
+                'getter': lambda s: s.control_mode,
+                'formatter': str
+            },
+            'input_mode': {
+                'title': '輸入',
+                'getter': lambda s: s.input_mode,
+                'formatter': str
+            },
+            'sim_time': {
+                'title': '時間',
+                'getter': lambda s: s.sim.data.time if s.sim and hasattr(s.sim, 'data') else 0.0,
+                'formatter': lambda v: f"{v:.2f}s"
+            },
+            'serial_status': {
+                'title': '序列埠',
+                'getter': lambda s: s.serial_is_connected,
+                'formatter': lambda v: 'Connected' if v else 'Disconnected'
+            },
+            'gamepad_status': {
+                'title': '搖桿',
+                'getter': lambda s: s.gamepad_is_connected,
+                'formatter': lambda v: 'Connected' if v else 'Disconnected'
+            },
+            'hardware_ai': {
+                'title': '硬體AI',
+                'getter': lambda s: (s.control_mode, s.hardware_is_running, s.hardware_ai_is_active),
+                'formatter': lambda v: 'Active' if v[2] else 'Standby' if v[1] else 'Starting...' if v[0] == 'HARDWARE_MODE' else 'N/A'
+            },
+            'policy_status': {
+                'title': '策略',
+                'getter': lambda s: (s.policy_manager_ref.is_transitioning, s.policy_manager_ref.source_policy_name, s.policy_manager_ref.target_policy_name, s.policy_manager_ref.transition_alpha, s.policy_manager_ref.primary_policy_name),
+                'formatter': lambda v: f"Blending {v[1]}->{v[2]} ({v[3]*100:.0f}%)" if v[0] else v[4]
+            },
+            'command': {
+                'title': '運動指令',
+                'getter': lambda s: s.command,
+                'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}, pitch: {v[3]:.2f}" # 【修改】顯示4D指令
+            },
+            'robot_pos': {
+                'title': '位置',
+                'getter': lambda s: s.latest_pos,
+                'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"
+            },
         }
 
         self._setup_ui()
@@ -190,10 +242,21 @@ class UIController:
     def _create_device_panel(self):
         with ui.card().classes('w-full'):
             ui.label('硬體 AI 控制').classes('text-lg')
+
+            # 【v4.10.5 修改】全面更新 UI 標籤和邏輯
             with ui.row().classes('items-center'):
-                ui.label('指令靜默 (Mute)').classes('text-sm')
-                self.mute_switch = ui.switch(on_change=self._handle_mute_switch_change).tooltip('手動靜默/解除靜默馬達指令。僅在硬體通訊驗證成功後可用。')
-            ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)).bind_enabled_from(self.state, 'hardware_is_running')
+                ui.label('啟用馬達 (Enable Motors)').classes('text-sm')
+                # 1. 重新命名 self.mute_switch -> self.enable_motors_switch
+                # 2. 更新 on_change 的處理函式
+                # 3. 更新 tooltip 的說明文字
+                self.enable_motors_switch = ui.switch(on_change=self._handle_enable_motors_switch_change) \
+                    .tooltip('手動啟用/禁用 AI 對馬達的控制。僅在硬體通訊驗證成功後可用。')
+                
+            # 現在綁定到 self.hardware_controller.is_running
+            # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
+            ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
+              .bind_enabled_from(self.state, 'hardware_is_running')
+
             ui.separator().classes('my-2')
             ui.label('設備連接').classes('text-lg')
             with ui.row():
@@ -361,10 +424,14 @@ class UIController:
                     ui.button('Send', on_click=self._send_serial_command)
 
     def _send_serial_command(self):
+        """
+        [v3.0.1] 從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
+        不再直接調用 serial_comm。
+        """
         command_text = self.serial_command_buffer.value
         if command_text:
             event_bus.publish(EVENT_SERIAL_COMMAND_SEND, command=command_text)
-            self.serial_command_buffer.set_value('')
+            self.serial_command_buffer.set_value('') # 清空輸入框
             log.info(f"> {command_text}")
 
     def update_ui_elements(self):
@@ -379,10 +446,19 @@ class UIController:
                 default_pose = self.state.sim.default_pose.copy() if self.state.sim else np.zeros(num_motors)
                 if mode == "JOINT_TEST":
                     idx = self.state.joint_test_index
-                    joint_info_data = {"mode": "offset", "index": idx, "offset": self.state.joint_test_offsets[idx], "default_angle": default_pose[idx], "actual_angle": self.state.latest_joint_positions[idx]}
+                    joint_info_data = {
+                        "mode": "offset", "index": idx,
+                        "offset": self.state.joint_test_offsets[idx],
+                        "default_angle": default_pose[idx],
+                        "actual_angle": self.state.latest_joint_positions[idx]
+                    }
                 else:
                     idx = self.state.manual_ctrl_index
-                    joint_info_data = {"mode": "absolute", "index": idx, "target_angle": self.state.manual_final_ctrl[idx], "actual_angle": self.state.latest_joint_positions[idx]}
+                    joint_info_data = {
+                        "mode": "absolute", "index": idx,
+                        "target_angle": self.state.manual_final_ctrl[idx],
+                        "actual_angle": self.state.latest_joint_positions[idx]
+                    }
             terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
             std_obs_snapshot = self.state.std_obs.copy()
 
@@ -412,13 +488,23 @@ class UIController:
                             value = vector_data[i * 3 + j]
                             self.status_labels[label_key].set_text(f"{value: 7.3f}")
 
-        if self.mute_switch:
-            is_verified_or_muted = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
-            if is_verified_or_muted: self.mute_switch.enable()
-            else: self.mute_switch.disable()
-            current_switch_value = self.mute_switch.value
-            should_be_on = (hw_link_status == HardwareLinkStatus.MUTED)
-            if current_switch_value != should_be_on: self.mute_switch.set_value(should_be_on)
+        # 【v4.10.5 修改】更新開關的狀態和可用性邏輯
+        if self.enable_motors_switch:
+            # 開關的可操作性：只有在 VERIFIED 或 MUTED 狀態下才可操作
+            is_operable = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
+            
+            if is_operable:
+                self.enable_motors_switch.enable()
+            else:
+                self.enable_motors_switch.disable()
+            
+            # 開關的視覺狀態 (ON/OFF) - 邏輯反轉
+            # 只有在 VERIFIED 狀態下，開關才應顯示為 ON。
+            should_be_on = (hw_link_status == HardwareLinkStatus.VERIFIED)
+            
+            current_switch_value = self.enable_motors_switch.value
+            if current_switch_value != should_be_on:
+                self.enable_motors_switch.set_value(should_be_on)
 
         primary_policy = state_snapshot.policy_manager_ref.primary_policy_name
         if self.status_labels['policy_selector'].value != primary_policy:
@@ -468,59 +554,24 @@ class UIController:
         with self.state.lock:
             self.state.single_step_mode = not self.state.single_step_mode
 
-    def _handle_mute_switch_change(self, event):
+    def _handle_enable_motors_switch_change(self, event):
+        """
+        【v4.10.5 新增】處理「啟用馬達」開關變更的事件。
+        """
         with self.state.lock:
+            # 只在連結已驗證或已靜默的狀態下進行切換
             if self.state.hardware_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]:
-                if event.value:
-                    self.state.hardware_link_status = HardwareLinkStatus.MUTED
-                else:
+                if event.value: # 如果開關被使用者打開 (要求啟用)
                     self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+                    log.info("🟢 馬達已由使用者啟用。")
+                else: # 如果開關被使用者關閉 (要求靜默)
+                    self.state.hardware_link_status = HardwareLinkStatus.MUTED
+                    log.info("🟡 馬達已由使用者靜默。")
+
+    # 【v4.10.5 刪除】移除舊的 _handle_mute_switch_change 方法
+    # def _handle_mute_switch_change(self, event): ...
 
     def run(self):
         ui.run(title="Pupper Robot Console", port=8080)
-        
-'''    
-    def inject_websocket_script(self):
-        """【整合】在 UI 啟動後注入 WebSocket 通信的 JavaScript。"""
-        if not self.prompt_input:
-            log.error("無法注入 JS：prompt_input 尚未被初始化。")
-            return
 
-        log.info("正在向客戶端注入 WebSocket 連接腳本...")
-        # 【整合】使用您提供的 JavaScript 程式碼，但進行了健壯性修改
-        ui.run_javascript(f''''''
-            const ws_id = 'ws_{self.prompt_input.id}';
-            
-            function connect() {{
-                console.log('Attempting to connect WebSocket...');
-                window[ws_id] = new WebSocket('ws://localhost:8081/ws');
-                
-                window[ws_id].onopen = () => console.log('%c[WebSocket] Connected successfully!', 'color: green; font-weight: bold;');
-                
-                window[ws_id].onclose = () => {{
-                    console.warn('[WebSocket] Connection closed. Retrying in 2 seconds...');
-                    setTimeout(connect, 2000);
-                }};
-                
-                window[ws_id].onerror = (error) => {{
-                    console.error('[WebSocket] Error:', error);
-                }};
-            }}
-
-            window['send_prompt_{self.prompt_input.id}'] = function() {{
-                const input_element = document.getElementById('{self.prompt_input.id}');
-                const prompt_text = input_element.value;
-                const ws = window[ws_id];
-
-                if (prompt_text && ws && ws.readyState === WebSocket.OPEN) {{
-                    ws.send(prompt_text);
-                }} else {{
-                    console.error('Cannot send prompt: WebSocket not connected or prompt is empty.');
-                }}
-            }};
-            
-            connect();
-        '''''')
-        log.info("✅ WebSocket 腳本注入完成。")
-        '''
         

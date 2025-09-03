@@ -73,12 +73,14 @@ class HardwareController:
 
     def request_start(self) -> None:
         """(外部API, 非阻塞) 請求啟動硬體控制器。"""
-        if self.internal_state in [HWState.STOPPED, HWState.FAILED]:
+        # 【v4.10.5 修改】在允許啟動的狀態中，排除 CONNECTION_LOST。
+        # 一旦連接中斷，必須通過重新連接序列埠（重啟應用或重新掃描）來重置。
+        if self.internal_state in [HWState.STOPPED, HWState.FAILED] and self.state.hardware_link_status != HardwareLinkStatus.CONNECTION_LOST:
             log.info("收到啟動請求，向控制執行緒發送 START 命令。")
             self._start_threads_if_not_alive()
             self.command_queue.put(HWCommand.START)
         else:
-            log.warning(f"當前狀態為 {self.internal_state.name}，忽略啟動請求。")
+            log.warning(f"當前狀態為 {self.internal_state.name} (Link: {self.state.hardware_link_status.value})，忽略啟動請求。")
 
     def request_stop(self) -> None:
         """(外部API, 非阻塞) 請求停止硬體控制器。"""
@@ -111,7 +113,11 @@ class HardwareController:
             log.info("硬體讀取執行緒已啟動。")
 
     def _read_from_port(self):
-        # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
+        """
+        【v4.7.4 修改】將診斷日誌降級為 DEBUG
+        【v4.10.5 修改】增加對 SerialException 的處理，觸發 CONNECTION_LOST 熔斷狀態。
+        """
+
         log.debug("[硬體讀取執行緒已啟動] 等待數據...")
         while self._is_running_event.is_set():
             if self.internal_state != HWState.RUNNING or not self.ser or not self.ser.is_open:
@@ -127,10 +133,18 @@ class HardwareController:
                     if line:
                         self.parse_policy_stream(line) 
 
-            except (serial.SerialException, OSError):
-                log.error("❌ 讀取時序列埠斷開或出錯。將狀態設置為 FAILED。")
+            # 【v4.10.5 修改】實現 FEAT-SAFETY-FUSE 熔斷器
+            except (serial.SerialException, OSError) as e:
+                # 【v4.10.5 核心修改】實現安全熔斷器
+                log.error(f"❌ 讀取時序列埠斷開或出錯: {e}。觸發安全熔斷！")
+                # 將全局狀態設置為 CONNECTION_LOST
+                with self.state.lock:
+                    self.state.hardware_link_status = HardwareLinkStatus.CONNECTION_LOST
+                # 將控制器內部狀態也設置為 FAILED，以阻止後續操作
                 self._set_internal_state(HWState.FAILED)
+                # 終止讀取執行緒
                 break
+            
             except Exception as e:
                 log.error(f"❌ _read_from_port 發生未知錯誤: {e}", exc_info=True)
                 self._set_internal_state(HWState.FAILED)
@@ -173,6 +187,7 @@ class HardwareController:
         【v4.10.1 重構】實現包含回傳驗證的、基於狀態機的穩健硬體啟動流程。
         【v4.10.2 重構】在啟動前，先透過握手協議安全地獲取序列埠控制權。
         【v4.10.4 修改】使用 TeensyAPI.execute_command 更新啟動序列。
+        【v4.10.5 修改】啟動成功後，進入 MUTED 狀態以實現「預設安全」。
 
         (內部, 可能阻塞) 執行啟動流程。
         """
@@ -233,15 +248,18 @@ class HardwareController:
             self.ser.reset_input_buffer()
             
             log.info("✅ 硬體啟動序列成功完成，通訊連線已驗證。")
-            # 【v4.10.4 修改】將狀態設定為 VERIFIED
+            # 【v4.10.5 FEAT-SAFETY-INTUITIVE】實現預設安全
+            # 啟動成功後，預設進入 MUTED 狀態，等待使用者明確啟用。
             with self.state.lock:
-                self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
+                self.state.hardware_link_status = HardwareLinkStatus.MUTED
+                
             self._set_internal_state(HWState.RUNNING)
             
             self.ai_control_active = True
             with self.state.lock: 
                 self.state.hardware_ai_is_active = True
-            log.info("🤖 AI 控制已自動啟用。")
+            # 【v4.10.5 修改】更新日誌，反映新的預設安全狀態
+            log.info("🤖 AI 控制已準備就緒，但馬達預設為靜默狀態，等待 UI 啟用。")
 
         except serial.SerialException as e:
             log.error(f"❌ 硬體啟動序列失敗: {e}")
@@ -305,7 +323,7 @@ class HardwareController:
         
         if self.ai_control_active:
             self.policy.reset()
-            
+
         # 【v4.9.0 修改】使用 API 取代硬編碼字串
         # 【v4.10.5 修正】當暫停 AI 時，應發送 'stop' 指令。
         # 舊的 stop_ai_and_motors() 已被移除，導致 AttributeError。
@@ -360,21 +378,31 @@ class HardwareController:
         【v4.4.2 重構】嚴格按照數據契約解析 Teensy 數據流。
         【v4.6.0 修改】增加 .strip() 來移除換行符，並強化錯誤日誌記錄。
         【v4.7.1b 修改】修復了使用未經清理的行進行分割的 Bug。
+        【v4.10.5 重構】實現智慧日誌解析器，分類處理系統訊息和數據幀。
 
-        職責說明：本函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
+        此函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
+        它能區分系統訊息（如 [CMD], [ERROR]）和純數據幀，並分別處理。
         """
-        # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
-        log.debug(f"parse_policy_stream 正在處理: {repr(line)}")
-        try:
-            # 【v4.7.1b 修正】必須使用 strip() 後的乾淨行來進行後續所有操作
-            clean_line = line.strip()
-            if not clean_line:
-                return
+        # 移除換行符並檢查是否為空行的邏輯
+        clean_line = line.strip()
+        if not clean_line:
+            return
             
-            # 【v4.7.1b 修正】從 clean_line 分割，而不是原始的 line
+        # 【v4.10.5 新增】智慧訊息分類器
+        # 如果該行以 '[' 開頭，我們就假定它是一個系統訊息（如 [CMD], [OK], [錯誤]），
+        # 而不是一個資料幀。
+        if clean_line.startswith('['):
+            # 我們將其作為一般資訊記錄下來，而不是當作錯誤處理。
+            # 這保留了所有來自 Teensy 的回饋，同時避免了日誌污染。
+            log.info(f"[Teensy Msg]: {clean_line}")
+            return # 處理完畢，直接返回
+
+        try:
+            # 只有在確認不是系統訊息後，才嘗試按資料幀格式進行解析
             parts = clean_line.split(',')
 
             if len(parts) != 34:
+                # 這裡的警告現在只會在非系統訊息且欄位數不對時觸發，更有價值。
                 log.warning(f"數據幀欄位數量錯誤。預期 34，收到 {len(parts)}。原始數據: '{clean_line}'")
                 return
             
@@ -389,8 +417,7 @@ class HardwareController:
                 self.state.raw_joint_velocities[:] = data_vec[22:34]
         
         except (ValueError, IndexError) as e:
-            # 【v4.7.1b 增強】在日誌中同時打印 clean_line 和原始 line，方便調試
-            log.error(f"解析數據幀失敗: {e}。Cleaned Line: '{line.strip()}', Original Line: '{repr(line)}'")
+            log.error(f"解析數據幀失敗: {e}。Cleaned Line: '{clean_line}', Original Line: '{repr(line)}'")
 
 
     # 【v4.3.2 刪除】 construct_observation 方法
