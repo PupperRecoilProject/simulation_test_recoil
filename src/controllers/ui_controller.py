@@ -86,14 +86,48 @@ class UIController:
                 .nicegui-markdown pre { margin: 0 !important; padding: 4px !important; background-color: #222 !important; border-radius: 4px; }
                 .nicegui-markdown code { font-size: 0.8rem !important; }
                 .q-expansion-item__container .q-item { padding: 0 8px !important; min-height: 40px !important; }
+
+                /* 通用滾動條樣式 - 適用於 column 等直接滾動的容器 */
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 8px;
+                    height: 8px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                /* 【手冊實作 v1.19 - 修正】簡化滑塊樣式，確保可見性 */
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background-color: #888;
+                    border-radius: 4px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                    background-color: #AAA;
+                }
+
+                /* 【手冊實作 v1.19 - 修正】為 textarea 內部滾動條設定相同的簡化樣式 */
+                .custom-scrollbar .q-field__native::-webkit-scrollbar {
+                    width: 8px;
+                    height: 8px;
+                }
+                .custom-scrollbar .q-field__native::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                .custom-scrollbar .q-field__native::-webkit-scrollbar-thumb {
+                    background-color: #888;
+                    border-radius: 4px;
+                }
+                .custom-scrollbar .q-field__native::-webkit-scrollbar-thumb:hover {
+                    background-color: #AAA;
+                }
             </style>
         ''')
         ui.dark_mode().enable()
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
-        with ui.row().classes('w-full no-wrap').style('height: calc(100vh - 50px);'):
-            with ui.column().classes('w-1/3').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
+        with ui.row().classes('w-full no-wrap').style('height: calc(100vh - 100px);'):
+            # 【手冊實作 v1.18】為左欄添加 'custom-scrollbar' class
+            with ui.column().classes('w-1/3 custom-scrollbar').style('height: 100%; overflow-y: auto; min-height: 0; min-width: 0;'):
                 ui.label('主控制項').classes('text-xl font-bold mt-2 mb-1')
                 self._create_main_control_panel()
                 ui.label('策略與地形').classes('text-xl font-bold mt-2 mb-1')
@@ -103,13 +137,14 @@ class UIController:
                 self._create_device_panel()
                 ui.label('參數微調 (Tuning)').classes('text-xl font-bold mt-2 mb-1')
                 self._create_tuning_sliders()
-            with ui.column().classes('grow').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
+            # 【手冊實作 v1.18】為右欄添加 'custom-scrollbar' class
+            with ui.column().classes('grow custom-scrollbar').style('height: 100%; overflow-y: auto; min-height: 0; min-width: 0;'):
                 self._create_status_display()
                 self._create_core_dashboard()
                 self._create_onnx_display()
-                self._create_vision_panel() # 【整合】新增視覺面板
+                self._create_vision_panel()
                 self._create_log_panel()
-
+            
         ui.timer(0.1, self.update_ui_elements)
 
     def _create_main_control_panel(self):
@@ -282,10 +317,10 @@ class UIController:
                                 self.onnx_input_labels[comp_name] = ui.markdown('`N/A`').classes('text-sm')
                             
     def _create_log_panel(self):
-        """【手冊實作 v1.12】將日誌面板包裹在一個可折疊面板中。"""
         with ui.expansion('系統日誌與序列埠控制台', icon='plagiarism').classes('w-full'):
             with ui.card().classes('w-full'):
-                self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
+                # 【手冊實作 v1.18】為日誌文本框添加 'custom-scrollbar' class
+                self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;').classes('custom-scrollbar')
                 with ui.row().classes('w-full items-center'):
                     self.serial_command_buffer = ui.input(label='Serial Command').props('outlined dense').classes('flex-grow').on('keydown.enter', self._send_serial_command)
                     ui.button('Send', on_click=self._send_serial_command)
