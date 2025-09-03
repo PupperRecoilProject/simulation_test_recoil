@@ -1,8 +1,9 @@
+# src/controllers/ui_controller.py
+
 from nicegui import ui, app
 import numpy as np
 import threading
-from typing import TYPE_CHECKING, List
-from src.core.logger import log, log_queue
+from typing import TYPE_CHECKING, List, Dict # 【修改】從 typing 導入 Dict
 
 # [新增] 導入我們新創建的事件系統模組和所有UI會用到的事件名稱
 # 解釋:
@@ -32,6 +33,7 @@ from src.core.event_system import (
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
 )
+from src.core.logger import log, log_queue
 # 【v4.10.1 新增】導入 State 和 Enum 以進行類型提示
 from src.core.state import SimulationState, HardwareLinkStatus
 
@@ -48,6 +50,7 @@ class UIController:
         self.hardware_controller = state.hardware_controller_ref
         self.serial_comm = state.serial_communicator_ref
         self.xbox_handler = state.xbox_handler_ref
+
         # 【v4.10.1 新增】為靜默開關宣告一個屬性
         self.mute_switch = None
         self.param_sliders = {}
@@ -74,6 +77,7 @@ class UIController:
         # - title: 在 UI 上顯示的靜態標題。
         # - getter: 一個從 state 快照中提取對應數據的函式。
         # - formatter: 一個將提取出的數據轉換為顯示字串的函式。
+        # 【手冊實作】移除 action_raw 和 final_ctrl，它們將由新的儀表板處理
         self._label_descriptors = {
             'mode': {
                 'title': '模式',
@@ -113,60 +117,71 @@ class UIController:
             'command': {
                 'title': '運動指令',
                 'getter': lambda s: s.command,
-                'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}"
+                'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}, pitch: {v[3]:.2f}" # 【修改】顯示4D指令
             },
             'robot_pos': {
                 'title': '位置',
                 'getter': lambda s: s.latest_pos,
                 'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"
             },
-            # --- 【v4.7.0 目標】新增 AI 輸出顯示 ---
-            'action_raw': {
-                'title': '原始動作 (Raw)',
-                'getter': lambda s: s.latest_action_raw,
-                'formatter': lambda v: np.array2string(v, precision=3, suppress_small=True, formatter={'float_kind': lambda x: f"{x:7.3f}"})
-            },
-            'final_ctrl': {
-                'title': '最終控制 (Ctrl)',
-                'getter': lambda s: s.latest_final_ctrl,
-                'formatter': lambda v: np.array2string(v, precision=3, suppress_small=True, formatter={'float_kind': lambda x: f"{x:7.3f}"})
-            }
         }
 
         self._setup_ui()
 
     def _setup_ui(self):
+        """【重構】根據UI/UX設計指南重構此函式，實現雙欄獨立滾動和新的佈局。"""
+        # 【手冊實作 - 步驟四：應用全域設計系統】
+        # 使用 ui.add_head_html 添加全域 CSS，以實現緊湊、一致的視覺風格。
+        # 這比在每個元件上單獨設定樣式更高效、更易於維護。
+        ui.add_head_html('''
+            <style>
+                /* 全局卡片樣式：減少外邊距和內邊距以實現緊湊佈局 */
+                .nicegui-card {
+                    margin: 4px !important;
+                    padding: 8px !important;
+                    box-shadow: none !important; /* 移除陰影，風格更簡潔 */
+                    border: 1px solid #333;   /* 用邊框代替陰影 */
+                }
+                /* 按鈕組樣式：讓按鈕之間沒有間隙 */
+                .q-btn-group .q-btn {
+                    margin: 0 !important;
+                }
+            </style>
+        ''')
         ui.dark_mode().enable()
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
-        with ui.row().classes('w-full no-wrap'):
-            # 左側欄：控制相關的面板
-            with ui.column().classes('w-1/3'):
-                # 使用垂直 Tabs 組織面板
-                with ui.tabs().props('vertical').classes('w-full') as tabs:
-                    # 名稱作為第一參數，label 是顯示文字，避免重複傳 name 造成錯誤
-                    ui.tab('control', label='控制')
-                    ui.tab('tuning', label='參數')
-                    ui.tab('hardware', label='硬體')
+        # 【手冊實作 - 步驟一：核心佈局重構】
+        # 建立一個佔滿整個螢幕可視高度 (100vh) 減去標頭高度 (50px) 的主容器。
+        # 這確保了介面填滿螢幕且不會出現最外層的全局捲軸。
+        with ui.row().classes('w-full no-wrap').style('height: calc(100vh - 100px);'):
 
-                with ui.tab_panels(tabs, value='control').props('vertical').classes('w-full'):
-                    with ui.tab_panel('control'):
-                        ui.label('主控制項').classes('text-lg font-bold mb-4')
-                        self._create_main_control_panel()
-                    with ui.tab_panel('tuning'):
-                        ui.label('AI 與物理').classes('text-lg font-bold mb-4')
-                        self._create_tuning_panel()
-                    with ui.tab_panel('hardware'):
-                        ui.label('設備連接').classes('text-lg font-bold mb-4')
-                        self._create_device_panel()
+            # --- 1. 左側控制欄 ---
+            # 'overflow-y: auto' 是實現獨立滾動的關鍵，當內容超出時會出現自己的捲軸。
+            with ui.column().classes('w-1/3').style('height: 100%; overflow-y: auto; min-height: 0;'):
+                # 【手冊實作 - 步驟二：控制區內容重組】
+                # 廢除舊的 Tabs 結構，改為符合工作流程的垂直佈局。
+                
+                # --- 2.1 置頂核心控制區 ---
+                ui.label('主控制項').classes('text-xl font-bold mt-2 mb-1')
+                self._create_main_control_panel()
 
-                # 關節微調與搖桿控制仍在主頁面下方
-                self._create_joint_control_panel()
+                ui.label('策略與地形').classes('text-xl font-bold mt-2 mb-1')
+                self._create_policy_and_terrain_selectors() # 新的輔助函式
+
+                # --- 2.2 可滾動的次要控制區 ---
                 self._create_joystick_panel()
+                self._create_joint_control_panel()
+                self._create_device_panel()
+                
+                # 參數微調面板置於最底部
+                ui.label('參數微調 (Tuning)').classes('text-xl font-bold mt-2 mb-1')
+                self._create_tuning_sliders() # 新的輔助函式
 
-            # 右側欄：狀態與日誌顯示
-            with ui.column().classes('w-2/3'):
+            # --- 2. 右側監控欄 ---
+            # 'grow' 會讓此欄位佔滿剩餘的寬度，'overflow-y: auto' 實現獨立滾動。
+            with ui.column().classes('grow').style('height: 100%; overflow-y: auto; min-height: 0;'):
                 self._create_status_display()
                 self._create_onnx_display()
                 self._create_log_panel()
@@ -177,6 +192,7 @@ class UIController:
     # --- UI 佈局函式 ---
     # 【修改】這些 _create_..._panel 函式的主要變更是它們的 on_click 回呼。
     #         它們不再呼叫 self._request... 這樣的內部函式，而是直接發布事件。
+    # 【手冊實作】這些函式現在被 _setup_ui 中的新佈局結構調用。
 
     def _create_main_control_panel(self):
         with ui.card():
@@ -194,7 +210,17 @@ class UIController:
                 ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
                 ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
 
-            ui.separator()
+            ui.separator().classes('my-2')
+            
+            ui.label('模擬控制').classes('text-lg')
+            with ui.row():
+                ui.button().bind_text_from(self.state, 'single_step_mode', 
+                                           lambda is_paused: '▶️ 播放 (SPACE)' if is_paused else '⏸️ 暫停 (SPACE)') \
+                           .on('click', self._toggle_pause)
+                ui.button('⏭️ 步進 (N)', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
+                   .bind_enabled_from(self.state, 'single_step_mode')
+
+            ui.separator().classes('my-2')
 
             ui.label('重置').classes('text-lg')
             with ui.row():
@@ -202,23 +228,30 @@ class UIController:
                 ui.button('軟重置 (X)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft"))
                 ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
 
-            # 【v4.7.4 新增】在 UI 上添加模擬控制（暫停/播放/步進）功能
-            ui.separator()
-            ui.label('模擬控制 (Simulation Control)').classes('text-lg')
-            with ui.row():
-                # 按鈕的文字會根據 state.single_step_mode 的值動態變化 ('▶️ 播放' 或 '⏸️ 暫停')
-                ui.button().bind_text_from(self.state, 'single_step_mode', 
-                                           lambda is_paused: '▶️ 播放 (SPACE)' if is_paused else '⏸️ 暫停 (SPACE)') \
-                           .on('click', self._toggle_pause) # 使用輔助函式確保線程安全
-                
-                # 步進按鈕只有在暫停模式下才可點擊
-                ui.button('⏭️ 步進 (N)', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
-                   .bind_enabled_from(self.state, 'single_step_mode')
-                
+    def _create_policy_and_terrain_selectors(self):
+        """【手冊實作-新增】將策略與地形選擇器從原 tuning panel 分離出來。"""
+        with ui.card():
+            ui.label('策略選擇 (Policy)').classes('text-lg')
+            # [修改] on_change 回呼發布策略變更請求事件
+            self.status_labels['policy_selector'] = ui.select(
+                options=self.state.available_policies,
+                label='Active Policy',
+                value=self.policy_manager.primary_policy_name,
+                on_change=lambda e: event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name=e.value)
+            ).classes('w-full')
 
-    def _create_tuning_panel(self):
+            ui.label('地形選擇 (Terrain)').classes('text-lg mt-2')
+            terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
+            # [修改] on_change 回呼發布地形變更請求事件
+            self.terrain_selector = ui.select(
+                options=terrain_options,
+                label='Terrain Mode',
+                on_change=lambda e: event_bus.publish(EVENT_TERRAIN_CHANGE_REQUESTED, name=e.value)
+            ).bind_value(self, 'ui_terrain_selection').classes('w-full')
+
+    def _create_tuning_sliders(self):
+        """【手冊實作-新增】將參數滑桿從原 tuning panel 分離出來。"""
         with ui.card().classes('w-full'):
-            ui.label('參數調整 (Tuning)').classes('text-lg')
             params = self.state.tuning_params
             p_keys = {'kp': (0, 50), 'kd': (0, 5), 'action_scale': (0, 2), 'bias': (-20, 20)}
             
@@ -230,26 +263,6 @@ class UIController:
                                        on_change=lambda e, k=key: event_bus.publish(EVENT_TUNING_PARAM_ADJUSTED, param_name=k, value=e.value))
                     self.param_sliders[key] = slider # 保存滑桿參考以便更新
                     ui.label().bind_text_from(params, key, lambda v: f'{v:.2f}')
-
-            ui.separator()
-
-        ui.label('策略選擇 (Policy)').classes('text-lg')
-        # [修改] on_change 回呼發布策略變更請求事件
-        self.status_labels['policy_selector'] = ui.select(
-            options=self.state.available_policies,
-            label='Active Policy',
-            value=self.policy_manager.primary_policy_name,
-            on_change=lambda e: event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name=e.value)
-        ).classes('w-full')
-
-        terrain_options = ['INFINITE'] + self.state.terrain_manager_ref.single_terrain_names
-        # [修改] on_change 回呼發布地形變更請求事件
-        self.terrain_selector = ui.select(
-            options=terrain_options,
-            label='Terrain Mode',
-            on_change=lambda e: event_bus.publish(EVENT_TERRAIN_CHANGE_REQUESTED, name=e.value)
-        ).bind_value(self, 'ui_terrain_selection').classes('w-full')
-
 
     # 設備與系統相關控制
     def _create_device_panel(self):
@@ -267,14 +280,14 @@ class UIController:
             ui.button('啟用/停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
               .bind_enabled_from(self.state, 'hardware_is_running')
 
-            ui.separator()
+            ui.separator().classes('my-2')
             ui.label('設備連接').classes('text-lg')
             with ui.row():
                 # [修改] 連接按鈕發布設備連接請求事件
                 ui.button('連接序列埠 (U)', on_click=lambda: event_bus.publish(EVENT_DEVICE_CONNECT_REQUESTED, device="serial"))
                 ui.button('連接搖桿 (J)', on_click=lambda: event_bus.publish(EVENT_DEVICE_CONNECT_REQUESTED, device="gamepad"))
 
-            ui.separator()
+            ui.separator().classes('my-2')
             ui.label('系統').classes('text-lg')
             # [保留] 退出按鈕已經是發布事件，無需修改
             ui.button('退出程式', on_click=lambda: event_bus.publish(EVENT_SHUTDOWN_REQUESTED), color='red')
@@ -286,30 +299,31 @@ class UIController:
             
             # [修改] on_move 和 on_end 的 lambda 函式現在包含了輸入模式切換的邏輯
             # 並且使用了正確的事件參數 e.x 和 e.y
-            ui.joystick(
-                color='blue', 
-                size=100, 
-                on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
-                on_move=lambda e: event_bus.publish(
-                    EVENT_COMMAND_UPDATED, 
-                    # 【v4.9.1 修正】確保送出的指令為 4 維向量，以符合系統目前的設計。
-                    # 虛擬搖桿不控制俯仰角 (pitch)，因此第四個元素硬編碼為 0.0。
-                    command=np.array([
-                        e.x * self.state.config.gamepad_sensitivity['vy'],
-                        -e.y * self.state.config.gamepad_sensitivity['vx'],
-                        0.0,
-                        0.0  # <--- 新增的第四個元素 (pitch)
-                    ])
-                ),
-                on_end=lambda e: (
-                    # 【v4.9.1 修正】確保清除指令時，同樣送出 4 維向量。
-                    event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4)),
-                    event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD")
-                )
-            ).props('throttle')
+            with ui.row().classes('w-full items-center justify-center'):
+                ui.joystick(
+                    color='blue', 
+                    size=100, 
+                    on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
+                    on_move=lambda e: event_bus.publish(
+                        EVENT_COMMAND_UPDATED, 
+                        # 【v4.9.1 修正】確保送出的指令為 4 維向量，以符合系統目前的設計。
+                        # 虛擬搖桿不控制俯仰角 (pitch)，因此第四個元素硬編碼為 0.0。
+                        command=np.array([
+                            e.x * self.state.config.gamepad_sensitivity['vy'],
+                            -e.y * self.state.config.gamepad_sensitivity['vx'],
+                            0.0,
+                            0.0  # <--- 新增的第四個元素 (pitch)
+                        ])
+                    ),
+                    on_end=lambda e: (
+                        # 【v4.9.1 修正】確保清除指令時，同樣送出 4 維向量。
+                        event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4)),
+                        event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD")
+                    )
+                ).props('throttle')
             
             # 【v4.9.1 修正】確保清除命令按鈕同樣送出 4 維向量。
-            ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4))).props('outline')
+            ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4))).props('outline').classes('w-full mt-2')
             
 
     def _create_joint_control_panel(self):
@@ -342,9 +356,8 @@ class UIController:
             )
 
             self.status_labels['joint_info'] = ui.label('')
-            # 【v4.3.4 修改】 為滑桿增加初始值，避免 value 屬性為 None
-            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01,
-                                                 value=0.0, # 【新增】設定初始值為 0.0
+            # [修改] 滑桿 on_change 發布關節值調整事件
+            self.joint_control_slider = ui.slider(min=-np.pi, max=np.pi, step=0.01, value=0.0,
                                                  on_change=lambda e: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, value=e.value)
                                                  ).props('label-always')
             with ui.row():
@@ -353,24 +366,39 @@ class UIController:
                 ui.button('+0.1', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, direction=0.1)).props('dense')
                 ui.button('歸零 (Clear)', on_click=lambda: event_bus.publish(EVENT_JOINT_VALUE_ADJUSTED, clear=True)).props('dense')
 
+    def _create_vector_grid_display(self, title: str, key_prefix: str):
+        """【手冊實作-新增】為一個 12 維向量創建一個 4x3 的語義化顯示網格。"""
+        ui.label(title).classes('text-lg font-bold mt-2')
+        # 使用 grid 佈局，4列
+        with ui.grid(columns=4).classes('w-full'):
+            # 創建標頭
+            ui.label('') # 左上角留空
+            ui.label('X/Abd').classes('text-sm text-gray-400 font-mono text-center')
+            ui.label('Y/Hip').classes('text-sm text-gray-400 font-mono text-center')
+            ui.label('Z/Knee').classes('text-sm text-gray-400 font-mono text-center')
+
+            # 為 FR, FL, RR, RL 四條腿創建數據行
+            for i, leg in enumerate(['FR', 'FL', 'RR', 'RL']):
+                ui.label(leg).classes('text-base font-bold') # 腿的標籤
+                # 為每條腿的 3 個關節創建標籤，並存入 self.status_labels 字典
+                for j in range(3):
+                    label_key = f"{key_prefix}_{i}_{j}"
+                    # 使用 text-right 和 font-mono 來確保數字對齊
+                    self.status_labels[label_key] = ui.label('0.000').classes('font-mono text-right w-full')
 
     def _create_status_display(self):
-        # 【v4.7.0 重構】數據驅動的 UI 元素創建
-        # 此函式現在遍歷 _label_descriptors 字典，動態地創建所有狀態標籤。
-        # 這使得未來新增或修改狀態顯示變得極為簡單，只需修改字典即可。
-        # 【v4.7.4 修改】為卡片設定最小高度以穩定佈局
-        with ui.card().style('min-height: 320px'):
-            ui.label('即時狀態 (Real-time Status)').classes('text-lg')
-            with ui.grid(columns=3): # 可根據標籤數量調整佈局
+        """【重構】數據驅動的 UI 元素創建，並整合新的儀表板元件。"""
+        with ui.card():
+            ui.label('即時狀態 (Real-time Status)').classes('text-xl font-bold')
+            # 創建由描述字典管理的標籤
+            with ui.grid(columns=3):
                 for key, desc in self._label_descriptors.items():
-                    # 為字典中的每一個描述符，創建一個 ui.label。
-                    # 初始文本從 state 中獲取，確保 UI 在創建時就顯示真實數據。
-                    with self.state.lock:
-                        initial_value = desc['getter'](self.state)
-                        initial_text = desc['formatter'](initial_value)
-                    
-                    # 將創建的 label 物件存儲起來，以便後續更新。
-                    self.status_labels[key] = ui.label(f"{desc['title']}: {initial_text}")
+                    # 為簡潔起見，這裡只創建空的 label，由 update 函式填充完整文字
+                    self.status_labels[key] = ui.label(f"{desc['title']}: N/A")
+            
+            # 【手冊實作 - 步驟三】創建語義化向量儀表板
+            self._create_vector_grid_display('原始動作 (Raw Action)', 'action_raw')
+            self._create_vector_grid_display('最終控制 (Final Ctrl)', 'final_ctrl')
 
 
     def _create_onnx_display(self):
@@ -380,26 +408,22 @@ class UIController:
         權威維度字典 (ALL_OBS_DIMS) 中創建所有 UI 標籤，確保 UI
         能夠自動適應未來新增的觀測元件。
         """
-        # 【v4.7.4 修改】為卡片設定最小高度以穩定佈局
-        with ui.card().style('min-height: 240px'):
+        # 在 _create_onnx_display 函式中
+
+        with ui.card():
             ui.label('ONNX 觀察向量 (Observation Vector)').classes('text-lg')
+            # 【手冊實作-反饋修正】保持雙欄網格佈局
             with ui.grid(columns=2):
-                # 【v4.6.0 修改】 核心修改：動態生成 UI 標籤
-                # 我們直接從 observation_manager 實例中獲取 ALL_OBS_DIMS 字典。
-                # 這是觀測元件的「單一事實來源」。
-                # .items() 會返回 (鍵, 值) 對，即 (元件名, 維度)。
-                # 我們對其進行排序，以確保 UI 上的顯示順序是固定的、可預測的。
                 if self.state.observation_manager_ref:
                     all_components = sorted(self.state.observation_manager_ref.ALL_OBS_DIMS.items())
-                    
                     for comp_name, dim in all_components:
-                        # 為字典中的每一個元件，都創建一個 ui.label，並將其
-                        # 存儲在 self.onnx_input_labels 字典中，以便後續更新。
-                        # 初始文字設置為 'N/A'，等待 update_ui_elements 填充真實數據。
-                        self.onnx_input_labels[comp_name] = ui.label(f'{comp_name}: N/A')
+                        # 【核心修改】為每個元件創建一個垂直欄來堆疊標題和數值
+                        with ui.column().classes('gap-0'): # gap-0 移除垂直間距
+                            # 1. 靜態標題標籤
+                            ui.label(comp_name).classes('text-xs font-bold text-gray-400')
+                            # 2. 動態數值標籤 (將其存儲起來以便更新)
+                            self.onnx_input_labels[comp_name] = ui.label('N/A').classes('font-mono text-sm')
                 else:
-                    # 這是一個防禦性程式碼，如果 observation_manager 尚未初始化，
-                    # UI 會顯示一條清晰的錯誤訊息，而不是崩潰。
                     ui.label("錯誤: ObservationManager 未初始化!")
 
 
@@ -408,7 +432,6 @@ class UIController:
             ui.label('系統日誌與序列埠控制台').classes('text-lg')
             self.log_area = ui.textarea(label='Log').props('readonly outlined rows=10').style('width: 100%;')
             with ui.row().classes('w-full items-center'):
-                # 輸入框綁定 Enter 鍵事件，按下 Enter 即送出指令
                 self.serial_command_buffer = ui.input(label='Serial Command')\
                     .props('outlined dense').classes('flex-grow')\
                     .on('keydown.enter', self._send_serial_command)
@@ -416,7 +439,7 @@ class UIController:
 
     def _send_serial_command(self):
         """
-        【v3.0.1】從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
+        [v3.0.1] 從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
         不再直接調用 serial_comm。
         """
         command_text = self.serial_command_buffer.value
@@ -427,33 +450,18 @@ class UIController:
 
 
     def update_ui_elements(self):
-        """
-        【v3.0.1】定期從 SimulationState 讀取最新數據，並更新所有UI元件。
-        【v4.6.0 重構】重構關節控制 UI 的更新邏輯，並將數據獲取與 UI 更新分離。
-        【v4.7.0 重構】採用數據驅動模型，自動化更新所有由描述字典管理的標籤。
-        """
-        # =================================================================
-        # === 階段一：原子性地從 State 中獲取數據快照 (Atomic Data Snapshot) ===
-        # =================================================================
+        """【重構】採用數據驅動模型，並更新新的儀表板元件。"""
         with self.state.lock:
-            # 我們傳遞整個 state 物件的參考，讓 getter 函式自己去解析。
-            # 這比手動複製每個變量更簡潔、更具擴展性。
             state_snapshot = self.state
-
-            # 【v4.10.1 新增】獲取連結狀態
             hw_link_status = self.state.hardware_link_status
-
-            # 【保留】非描述性數據仍需手動獲取
-            # 參數調校狀態 (用於滑桿)
             tuning_params_copy = {
                 'kp': self.state.tuning_params.kp,
                 'kd': self.state.tuning_params.kd,
                 'action_scale': self.state.tuning_params.action_scale,
                 'bias': self.state.tuning_params.bias
             }
-            # 關節控制狀態
             joint_info_data = None
-            mode = self.state.control_mode # 模式判斷仍然需要
+            mode = self.state.control_mode
             if mode in ["JOINT_TEST", "MANUAL_CTRL"]:
                 num_motors = self.state.config.num_motors
                 default_pose = self.state.sim.default_pose.copy() if self.state.sim else np.zeros(num_motors)
@@ -465,73 +473,73 @@ class UIController:
                         "default_angle": default_pose[idx],
                         "actual_angle": self.state.latest_joint_positions[idx]
                     }
-                else: # MANUAL_CTRL
+                else:
                     idx = self.state.manual_ctrl_index
                     joint_info_data = {
                         "mode": "absolute", "index": idx,
                         "target_angle": self.state.manual_final_ctrl[idx],
                         "actual_angle": self.state.latest_joint_positions[idx]
                     }
-            # 地形狀態
             terrain_name = self.state.terrain_manager_ref.get_current_terrain_name_simple(self.state)
 
-        # =================================================================
-        # === 階段二：使用數據快照安全地更新所有 UI 元件 (UI Update) ===
-        # =================================================================
-        
-        # --- 【v4.7.0 新增】自動化更新所有由描述字典管理的標籤 ---
         for key, desc in self._label_descriptors.items():
-            # 使用 .get() 進行最終防禦，確保即使描述字典和創建的標籤不匹配也不會崩潰。
             if label_widget := self.status_labels.get(key):
                 try:
                     value = desc['getter'](state_snapshot)
                     formatted_text = desc['formatter'](value)
                     label_widget.set_text(f"{desc['title']}: {formatted_text}")
                 except Exception as e:
-                    # 防禦性程式碼：如果 getter 或 formatter 出錯，只打印警告，不讓 UI 崩潰。
                     log.warning(f"UI 更新失敗 for key '{key}': {e}")
         
-        # 【v4.10.1 新增】根據連結狀態更新 Mute 開關的狀態和可用性
+        # 【手冊實作 - 步驟三：更新儀表板】
+        # 更新 Raw Action 網格
+        action_raw_vector = state_snapshot.latest_action_raw
+        for i in range(4):
+            for j in range(3):
+                key = f"action_raw_{i}_{j}"
+                if key in self.status_labels:
+                    value = action_raw_vector[i * 3 + j]
+                    self.status_labels[key].set_text(f"{value: 7.3f}")
+
+        # 更新 Final Ctrl 網格
+        final_ctrl_vector = state_snapshot.latest_final_ctrl
+        for i in range(4):
+            for j in range(3):
+                key = f"final_ctrl_{i}_{j}"
+                if key in self.status_labels:
+                    value = final_ctrl_vector[i * 3 + j]
+                    self.status_labels[key].set_text(f"{value: 7.3f}")
+
         if self.mute_switch:
             is_verified_or_muted = hw_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]
-            
-            # 【v4.10.2 修正】使用正確的 enable()/disable() API
-            # 根據 is_verified_or_muted 的布林值，呼叫對應的不帶參數的方法。
             if is_verified_or_muted:
                 self.mute_switch.enable()
             else:
                 self.mute_switch.disable()
-            
-            # 根據狀態更新開關的顯示 (on/off)
             current_switch_value = self.mute_switch.value
             should_be_on = (hw_link_status == HardwareLinkStatus.MUTED)
             if current_switch_value != should_be_on:
                 self.mute_switch.set_value(should_be_on)
 
-        # --- 更新非描述性/複雜的 UI 元件 (保留現有邏輯) ---
-        # 更新 AI 策略下拉選單
         primary_policy = state_snapshot.policy_manager_ref.primary_policy_name
         if self.status_labels['policy_selector'].value != primary_policy:
             self.status_labels['policy_selector'].set_value(primary_policy)
         
-        # 更新地形選擇 UI
         if self.ui_terrain_selection != terrain_name:
             self.ui_terrain_selection = terrain_name
 
-        # 更新參數調校滑桿
         for key, slider in self.param_sliders.items():
             state_value = tuning_params_copy[key]
             if abs(slider.value - state_value) > 1e-4:
                 slider.set_value(state_value)
 
-        # 更新關節控制 UI
         if joint_info_data and self.joint_control_slider is not None:
             idx = joint_info_data['index']
             actual_angle = joint_info_data['actual_angle']
             if joint_info_data['mode'] == 'offset':
                 target_abs = joint_info_data['default_angle'] + joint_info_data['offset']
                 text = f"模式: 偏移 | Offset={joint_info_data['offset']:+.2f} | Target={target_abs:+.2f} | Actual={actual_angle:+.2f} | Err={target_abs - actual_angle:+.2f}"
-            else: # 'absolute'
+            else:
                 target_abs = joint_info_data['target_angle']
                 text = f"模式: 絕對 | Target={target_abs:+.2f} | Actual={actual_angle:+.2f} | Err={target_abs - actual_angle:+.2f}"
             
@@ -541,7 +549,6 @@ class UIController:
                 self.joint_control_slider.set_value(target_abs_float)
             self.status_labels['joint_info'].set_text(text)
 
-        # 更新 ONNX 觀察向量和日誌
         self._update_onnx_labels()
         log_content = "\n".join(log_queue)
         if self.log_area.value != log_content:
@@ -561,30 +568,28 @@ class UIController:
             value_slice = std_obs_snapshot.get(comp_name)
 
             if value_slice is not None:
-                # 【v4.7.0 修改】使用固定寬度的數字格式化，類似 pyserial_console.py
-                # 這個 formatter 確保每個數字都佔用 7 個字符寬度，小數點後保留 3 位。
-                # 這將使得所有向量的排版都非常整齊，提升可讀性。
+                # 【v4.7.0 修改】使用固定寬度的數字格式化
                 vec_str = np.array2string(value_slice, 
                                           precision=3, 
                                           suppress_small=True, 
                                           formatter={'float_kind': lambda x: f"{x:7.3f}"})
-                label_widget.set_text(f'{comp_name}: {vec_str}')
+                # 【核心修改】只更新數值標籤的內容，不再包含標題
+                label_widget.set_text(f'{vec_str}')
             else:
                 label_widget.set_text(f'{comp_name}: N/A')
 
     def _toggle_pause(self):
-        """【v4.7.4 新增】線程安全地切換暫停狀態。"""
+        """【新增】線程安全地切換暫停狀態。"""
         with self.state.lock:
             self.state.single_step_mode = not self.state.single_step_mode
 
     def _handle_mute_switch_change(self, event):
         """【v4.10.1 新增】處理靜默開關變更的事件，線程安全地更新狀態。"""
         with self.state.lock:
-            # 只在連結已驗證或已靜默的狀態下進行切換
             if self.state.hardware_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]:
-                if event.value: # 如果開關被使用者打開 (要求靜默)
+                if event.value:
                     self.state.hardware_link_status = HardwareLinkStatus.MUTED
-                else: # 如果開關被使用者關閉 (要求解除靜默)
+                else:
                     self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
 
 
