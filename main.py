@@ -175,6 +175,12 @@ def main():
                     state.hardware_status_text += f"Gyro: {np.array2string(hw_controller.hw_state_data.imu_gyro_radps, precision=2)}"
             else:
                 state.hardware_status_text = "Hardware controller not running."
+                
+            with state.lock:
+                hw_joint_pos = state.raw_joint_positions.copy()
+            
+            sim.data.qpos[7:] = hw_joint_pos
+            mujoco.mj_forward(sim.model, sim.data) # 只更新運動學，不推進物理
         
         elif state.control_mode == "SERIAL_MODE":
             pass

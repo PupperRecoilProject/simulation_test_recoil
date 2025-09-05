@@ -219,6 +219,8 @@ class SimulationController:
             # --- 步驟 1: 物理更新 (僅在模擬模式下執行) ---
             if is_simulation_active:
                 self._simulation_step()
+            elif mode == "HARDWARE_MODE": # <--- 【核心修改】新增這個 elif 區塊
+                self._update_simulation_from_hardware_state()
             else:
                 # 在非模擬模式下，給主迴圈一個短暫休眠以控制頻率
                 time.sleep(1.0 / self.config.control_freq)
@@ -325,6 +327,25 @@ class SimulationController:
         with self.state.lock:
             self.state.manual_mode_is_floating = self._manual_float_active
         log.info(f"手動懸浮物理狀態已切換為: {self._manual_float_active}")
+        
+    def _update_simulation_from_hardware_state(self):
+        """
+        【新增】在硬體模式下，將從實體機器人收到的狀態同步到 MuJoCo 模擬器以進行視覺化。
+        """
+        if isinstance(self.sim, MockSimulation) or not self.state.hardware_is_running:
+            return
+
+        with self.state.lock:
+            # 從 state 讀取最新的、由硬體控制器更新的原始關節角度
+            hw_joint_positions = self.state.raw_joint_positions.copy()
+
+        # 將硬體關節角度寫入 MuJoCo 的數據結構中
+        # qpos[7:] 對應的是12個馬達的關節
+        self.sim.data.qpos[7:] = hw_joint_positions
+
+        # 執行 mj_forward() 來更新模型的運動學（例如身體各部分的位置）
+        # 這一步是讓模型在畫面上動起來的關鍵，但它不會推進物理模擬
+        mujoco.mj_forward(self.sim.model, self.sim.data)
 
 
 
