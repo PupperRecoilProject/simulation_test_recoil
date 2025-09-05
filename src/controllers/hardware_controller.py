@@ -4,6 +4,7 @@
 import serial
 import threading
 import time
+from collections import deque  # 確保 deque 已導入
 from src.core.logger import log
 import numpy as np
 from typing import TYPE_CHECKING
@@ -39,6 +40,7 @@ class HWState(Enum):
 
 class HardwareController:
     """【v4.3.2 修改】管理硬體AI控制迴圈，作為原始數據提供者。"""
+    """【v4.11.0 修改】內建頻率監控並修復資料流。"""
     
     # 【v4.3.2 修改】 __init__ 方法
     def __init__(self, config: 'AppConfig', policy: 'PolicyManager', state: 'SimulationState', serial_comm: 'SerialCommunicator'):
@@ -62,6 +64,15 @@ class HardwareController:
         self.internal_state = HWState.STOPPED
         self.last_state_change_time = time.time()
         self.ai_control_active = False
+        
+        # 【v4.11.0 新增】實現頻率監控方案
+        # 根據您的設計，初始化兩個雙端佇列用於儲存最近的時間戳
+        self.data_received_times = deque(maxlen=100) # 儲存成功解析數據幀的時間
+        self.ai_step_times = deque(maxlen=100)       # 儲存執行AI決策的時間
+
+        self._subscribe_to_events()
+        log.info("✅ 硬體控制器 (v4.11.0 頻率監控版) 已初始化。")
+
 
         self._subscribe_to_events()
         log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
@@ -177,10 +188,40 @@ class HardwareController:
                 pass
 
             if self.internal_state == HWState.RUNNING and self.ai_control_active:
+                # 【v4.11.0 修改】在呼叫前記錄時間戳
+                self.ai_step_times.append(time.perf_counter())
                 self._perform_ai_step()
             
-            time.sleep(1.0 / self.config.control_freq)
+            # 【v4.11.0 新增】在迴圈末尾計算並更新頻率
+            self._update_frequencies()
 
+            time.sleep(1.0 / self.config.control_freq)
+            
+    def _update_frequencies(self):
+        """【v4.11.0 新增】計算 I/O 和 AI 頻率並寫入中央狀態。"""
+        current_time = time.perf_counter()
+        
+        # 計算數據接收 (I/O) 頻率
+        if len(self.data_received_times) > 1:
+            # 移除超過1秒的舊數據，使頻率計算更即時
+            while current_time - self.data_received_times[0] > 1.0:
+                self.data_received_times.popleft()
+                if len(self.data_received_times) <= 1: break
+            
+            if len(self.data_received_times) > 1:
+                elapsed = self.data_received_times[-1] - self.data_received_times[0]
+                self.state.hw_data_freq = (len(self.data_received_times) - 1) / elapsed if elapsed > 0 else 0.0
+
+        # 計算 AI 決策頻率
+        if len(self.ai_step_times) > 1:
+            while current_time - self.ai_step_times[0] > 1.0:
+                self.ai_step_times.popleft()
+                if len(self.ai_step_times) <= 1: break
+
+            if len(self.ai_step_times) > 1:
+                elapsed = self.ai_step_times[-1] - self.ai_step_times[0]
+                self.state.hw_ai_freq = (len(self.ai_step_times) - 1) / elapsed if elapsed > 0 else 0.0
+            
     def _execute_start(self):
         """
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
@@ -338,7 +379,7 @@ class HardwareController:
         【v4.7.1b 修改】 _perform_ai_step 方法，修復 last_action 時序
         【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
         【v4.10.4 修改】簡化指令發送邏輯。
-
+        【v4.11.0 修改】修復 final_control 資料流斷裂點。
         (內部) 執行單步 AI 計算與控制。
         """
         # 【v4.3.2 修改】 直接呼叫 get_action_for_hardware，無需傳遞參數。
@@ -357,6 +398,11 @@ class HardwareController:
         action_scale = self.config.initial_tuning_params.action_scale
         default_pose_hardware = np.zeros(12)
         final_command = default_pose_hardware + action_raw * action_scale
+        
+        # 【v4.11.0 關鍵修復】
+        # 補上遺失的資料流更新。現在 UI 可以正確顯示硬體模式下的最終控制指令。
+        with self.state.lock:
+            self.state.latest_final_ctrl = final_command.copy()
         
         # 【v4.10.4 修改】簡化指令發送調用
         # 這裡直接調用 send_motor_commands，它負責處理底層的發送、
@@ -407,6 +453,9 @@ class HardwareController:
                 return
             
             data_vec = np.array(parts, dtype=np.float32)
+            
+            # 【v4.11.0 新增】在成功解析後記錄時間戳
+            self.data_received_times.append(time.perf_counter())
             
             with self.state.lock:
                 self.state.raw_torso_angular_velocity[:] = data_vec[0:3]

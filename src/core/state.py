@@ -180,6 +180,11 @@ class SimulationState:
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "Not Connected"
     
+    # 【v4.11.0 新增】硬體模式下的頻率監控數據
+    # 這兩個屬性將由 HardwareController 在其主迴圈中更新
+    hw_data_freq: float = 0.0  # 來自 Teensy 的數據幀接收頻率 (I/O 頻率)
+    hw_ai_freq: float = 0.0    # 硬體 AI 決策的實際執行頻率
+    
     # --- UI 相關狀態 ---
     display_page: int = 0
     num_display_pages: int = 2
