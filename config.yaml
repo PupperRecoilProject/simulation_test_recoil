@@ -167,3 +167,7 @@ terrain_generation:
   stepped_pyramid_max_height: 0.5 # 階梯金字塔的最大高度 (原為 0.4-0.8) (預設 0.5)
   stepped_pyramid_steps_min: 12 # 控制階梯金字塔的階梯數量範圍下限 (預設 12)
   stepped_pyramid_steps_max: 16 # 控制階梯金字塔的階梯數量範圍上限 (預設 16)
+
+# ===================================================================
+firearm_recoil_warming:
+  auto_inhibit: true  #false   # true = 關閉自動預警，只保留手動 

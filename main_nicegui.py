@@ -35,6 +35,8 @@ from src.input_handlers.keyboard_input_handler import KeyboardInputHandler
 from src.core.logger import log
 # 【v4.3.2 新增】 導入新的 ObservationManager
 from src.simulation.observation_manager import ObservationManager
+from src.controllers.ui_controller import UIController
+from src.controllers.recoil_warning_controller import RecoilWarningController
 
 
 # 【v4.3.2 修改】 create_simulation_components 函式
@@ -161,7 +163,8 @@ def main() -> None:
     # 初始化中央調度器與 UI 控制器
     simulation_controller = SimulationController(state)
     ui_controller = UIController(state)
-
+    recoil_warning_controller = RecoilWarningController(state)
+    
     # --- 背景執行緒與資源清理設定 ---
     def start_background_threads() -> None:
         log.info("NiceGUI 已啟動，啟動背景執行緒...")

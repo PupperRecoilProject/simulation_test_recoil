@@ -115,31 +115,43 @@ class SimulationController:
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
-    def _update_recoil_state(self):
-        """【新增】管理後座力預警計時器的邏輯。"""
-        # 這個函式模擬訓練環境中的計時器，以產生 firearm_recoil_warming 訊號
-        # 參數定義
-        WARNING_DURATION_S = 0.15 # 預警持續時間 (秒), 對應訓練碼中的 warning_duration=3 (steps) * 0.05 (dt)
-        MIN_INTERVAL_S = 2.5      # 最小間隔 (秒), 對應 50 steps
-        MAX_INTERVAL_S = 10.0     # 最大間隔 (秒), 對應 200 steps
+    def _update_recoil_warning_timer(self) -> None:
+        """
+        更新 Firearm Recoil Warning 計時器邏輯。
+        - auto_inhibit = True 時完全中斷自動預警
+        - 保留計時器循環節奏，避免破壞依賴 recoil_timer 的其他流程
+        """
+        frw_cfg = getattr(self.config, 'firearm_recoil_warming', None)
+        if isinstance(frw_cfg, dict):
+            auto_inhibit = frw_cfg.get('auto_inhibit', False)
+        elif frw_cfg is not None:
+            auto_inhibit = bool(getattr(frw_cfg, 'auto_inhibit', False))
+        else:
+            auto_inhibit = False
+
+
+        WARNING_DURATION_S = 0.15
+        MIN_INTERVAL_S = 2.5
+        MAX_INTERVAL_S = 10.0
 
         with self.state.lock:
-            # 將計時器減去控制時間間隔
             self.state.recoil_timer -= self.config.control_dt
-            
-            # 檢查是否進入預警階段
+
+            if auto_inhibit:
+                self.state.recoil_warning_active = False
+                if self.state.recoil_timer <= 0:
+                    self.state.recoil_interval = random.uniform(MIN_INTERVAL_S, MAX_INTERVAL_S)
+                    self.state.recoil_timer = self.state.recoil_interval
+                return
+
+            # ===== 原本自動預警流程 =====
             if self.state.recoil_timer <= WARNING_DURATION_S:
                 self.state.recoil_warning_active = True
-            
-            # 檢查計時器是否已到期
+
             if self.state.recoil_timer <= 0:
-                # 重置預警旗標
                 self.state.recoil_warning_active = False
-                # 產生下一個隨機的後座力事件間隔
                 self.state.recoil_interval = random.uniform(MIN_INTERVAL_S, MAX_INTERVAL_S)
-                # 重設計時器
                 self.state.recoil_timer = self.state.recoil_interval
-                # 可以在這裡加入一個模擬的物理後座力效果（可選）
                 log.info(f"*** RECOIL EVENT *** Next in {self.state.recoil_interval:.2f}s")
                 
     # ============================ 主要運行 ============================
@@ -210,7 +222,8 @@ class SimulationController:
                 with self.state.lock: self.state.execute_one_step = False
                 
             # 【新增】更新後座力計時器狀態
-            self._update_recoil_state()
+            self._update_recoil_warning_timer()
+
 
             # 【v4.6.0 修改】將 is_simulation_active 的判斷移至此處
             is_headless = isinstance(self.sim, MockSimulation)
