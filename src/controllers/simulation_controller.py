@@ -227,9 +227,9 @@ class SimulationController:
 
             # --- 步驟 2: 數據處理 (在所有模式下執行) ---
             # 【v4.6.0 新增】將此調用移至此處，確保無論模式如何，數據處理鏈路都會被觸發。
-            # 這是解決硬體模式下 UI 數據靜止問題的關鍵。
-            if self.state.observation_manager_ref:
-                self.state.observation_manager_ref.update_all_observations()
+            # 【v4.11.0 刪除】將此呼叫的職責轉移到各自的控制器中
+            # if self.state.observation_manager_ref:
+            #     self.state.observation_manager_ref.update_all_observations()
 
             # 【v4.7.2 修正】在每一幀的末尾，暫存當前幀的動作以供下一幀使用
             with self.state.lock:
@@ -635,7 +635,12 @@ class SimulationController:
         # 【v4.4.7 新增】【v4.6.0 刪除】觸發標準化觀測數據的全量更新
         # 這一行將被移動到 run() 迴圈的公共區域，以確保在所有模式下都能執行。
         # self.state.observation_manager_ref.update_all_observations()
-
+        # 【v4.11.0 新增】觸發標準化觀測資料在模擬模式下的全量更新。
+        # 將此步驟移入 _simulation_step 內部，這樣可以確保它與模擬的每一幀同步，
+        # 而且在模擬暫停時也會跟著暫停，實現了職責的統一。
+        if self.state.observation_manager_ref:
+            self.state.observation_manager_ref.update_all_observations()
+            
         # log.info("--- _simulation_step END ---") # 增加結束 log
 
 
