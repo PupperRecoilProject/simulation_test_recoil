@@ -191,7 +191,13 @@ class HardwareController:
                 # 【v4.11.0-w 修改】在呼叫前記錄時間戳
                 self.ai_step_times.append(time.perf_counter())
                 self._perform_ai_step()
-            
+                
+            # 【v4.11.0 新增】在硬體模式下，觸發標準化觀測資料的全量更新。
+            # 將此步驟移入 HardwareController 的主迴圈，這樣可以確保硬體資料流
+            # 的處理是獨立於 SimulationController 的，不會受到模擬暫停的影響。
+            if self.state.observation_manager_ref:
+                self.state.observation_manager_ref.update_all_observations()
+
             # 【v4.11.0-w 新增】在迴圈末尾計算並更新頻率
             self._update_frequencies()
 

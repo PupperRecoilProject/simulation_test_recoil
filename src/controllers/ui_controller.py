@@ -533,7 +533,7 @@ class UIController:
                         b6 = ui.button('AI 模式 (p)', on_click=lambda: event_bus.publish(EVENT_SERIAL_COMMAND_SEND, command='monitor p')).tooltip('切換到高頻 AI 數據流模式')
                         interactive_elements.extend([b5, b6])
 
-                    freq_options = [10, 20, 30, 50, 100, 200]
+                    freq_options = [1, 2, 10, 50]
                     freq_select = ui.select(freq_options, value=50) \
                                      .props('outlined dense options-dense') \
                                      .style('width: 80px; margin-left: 20px')
