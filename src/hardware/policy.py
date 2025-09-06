@@ -6,6 +6,9 @@ import os
 import time
 from collections import deque
 from typing import TYPE_CHECKING, List, Dict
+# 【v4.12.2 新增】導入必要的模組
+from datetime import datetime
+import csv
 
 # 為了型別提示，避免循環匯入
 if TYPE_CHECKING:
@@ -130,6 +133,55 @@ class PolicyManager:
 
         print(f"✅ 策略管理器初始化完成，主要模型: '{self.primary_policy_name}'")
 
+    # 【v4.12.2 新增】數據捕獲的控制方法
+    def start_data_capture(self):
+        """開始數據捕獲"""
+        if not self.state.is_data_capturing:
+            self.state.data_capture_buffer.clear()
+            self.state.is_data_capturing = True
+            log.info("🚀 [Data Capture] 已開始捕獲 AI 數據...")
+
+    def stop_and_save_data_capture(self):
+        """
+        【v4.12.2 修改】停止捕獲並將數據保存到 CSV 檔案 (使用內建 csv 模組)。
+        
+        停止捕獲並將數據保存到 CSV 檔案
+        """
+        if self.state.is_data_capturing:
+            self.state.is_data_capturing = False
+            log.info("⏹️ [Data Capture] 已停止捕獲。正在保存數據...")
+            
+            buffer = self.state.data_capture_buffer
+            if not buffer:
+                log.warning("[Data Capture] 緩衝區為空，沒有數據可保存。")
+                return
+
+            try:
+                # 產生帶時間戳的檔名
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # 確保 output 文件夾存在
+                os.makedirs("output", exist_ok=True)
+                filename = f"output/sim2real_capture_{timestamp}.csv"
+                
+                # 從緩衝區的第一條記錄中獲取所有鍵，作為 CSV 的表頭
+                headers = list(buffer[0].keys())
+                
+                # 使用 with 陳述句安全地寫入檔案
+                with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                    # 創建一個 DictWriter 物件，它能將字典直接寫入 CSV 行
+                    writer = csv.DictWriter(csvfile, fieldnames=headers)
+                    
+                    # 寫入表頭
+                    writer.writeheader()
+                    
+                    # 寫入所有緩衝的數據行
+                    writer.writerows(buffer)
+                
+                log.info(f"✅ [Data Capture] 數據已成功保存至: {filename}")
+            except Exception as e:
+                log.error(f"❌ [Data Capture] 保存數據失敗: {e}", exc_info=True)
+
+
     # 【v4.3.2 修改】 get_active_recipe 方法 (僅修改註解)
     def get_active_recipe(self) -> List[str]:
         """一個輔助函式，返回當前主要策略所使用的觀察配方，主要供 DebugOverlay 使用。"""
@@ -159,6 +211,9 @@ class PolicyManager:
     def get_action(self, command: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         【v4.4.7 重構】
+        【v4.12.2 修改】在函式內部增加數據捕獲的鉤子 (hook)。
+        【v4.12.2 修改】調整捕獲的數據格式以適應 csv 模組。
+
         【模擬/硬體通用】獲取最終動作。此版本從 state.std_obs 讀取數據，運行所有模型，並根據狀態進行融合。
         """
 
@@ -204,6 +259,28 @@ class PolicyManager:
                 input_name = session.get_inputs()[0].name
                 output_name = session.get_outputs()[0].name
                 action_raw = session.run([output_name], {input_name: onnx_input})[0].flatten() # 執行推論
+
+                # --- 【v4.12.2 修改】數據捕獲鉤子 ---
+                if name == self.primary_policy_name and self.state.is_data_capturing:
+                    
+                    # 為了方便 csv 寫入，我們需要將 NumPy 陣列轉換為 Python 的原生類型（例如列表或字串）
+                    # 我們創建一個輔助函式來處理這個轉換
+                    def format_for_csv(data):
+                        if isinstance(data, np.ndarray):
+                            # 將 NumPy 陣列轉換為易讀的字串，例如 "[0.1, -0.2]"
+                            return np.array2string(data, precision=6, separator=',', suppress_small=True)
+                        return data
+
+                    # 創建一個新的字典，將所有值都進行格式化
+                    formatted_obs = {k: format_for_csv(v) for k, v in std_obs_snapshot.items()}
+
+                    current_frame_data = {
+                        'timestamp': time.time(),
+                        'mode': 'HARDWARE' if self.state.hardware_is_running else 'SIMULATION',
+                        'action_raw': format_for_csv(action_raw),
+                        **formatted_obs
+                    }
+                    self.state.data_capture_buffer.append(current_frame_data)
             
             all_actions[name] = action_raw # 將模型的輸出存入字典
 

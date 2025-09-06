@@ -203,6 +203,10 @@ class SimulationState:
     xbox_handler_ref: 'XboxInputHandler' = None
     available_policies: list = field(default_factory=list)
 
+    # 【v4.12.2 新增】數據捕獲控制旗標
+    is_data_capturing: bool = False
+    data_capture_buffer: list = field(default_factory=list)
+
 
     def __post_init__(self):
         """

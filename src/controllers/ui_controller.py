@@ -22,12 +22,12 @@ from src.core.event_system import (
     EVENT_COMMAND_UPDATED,
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
-    # ↓↓↓ 這四行是新增的 ↓↓↓
     EVENT_FRW_AUTO_INHIBIT_SET,
     EVENT_FRW_AUTO_INHIBIT_CLEAR,
     EVENT_FIREARM_RECOIL_WARNING_TRIGGER_REQUESTED,
     EVENT_FIREARM_RECOIL_WARNING_RESET_REQUESTED,
 )
+
 from src.core.logger import log, log_queue
 # 【v4.10.1 新增】導入 State 和 Enum 以進行類型提示
 from src.core.state import SimulationState, HardwareLinkStatus
@@ -248,6 +248,13 @@ class UIController:
             with ui.row():
                 ui.button('軟重置 (X)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="soft"))
                 ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
+
+            # 【v4.12.2 新增】數據捕獲控制面板
+            ui.separator().classes('my-2')
+            ui.label('Sim2Real 數據捕獲').classes('text-lg')
+            with ui.row():
+                ui.button('開始捕獲', on_click=self.policy_manager.start_data_capture)
+                ui.button('停止並儲存', on_click=self.policy_manager.stop_and_save_data_capture)
 
     # 【v4.11.6-w 關鍵修正】
     # 新增這個被遺漏的方法
