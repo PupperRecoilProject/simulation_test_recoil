@@ -159,101 +159,127 @@ class SimulationController:
         """
         【v4.0.2 修改版】執行緒主迴圈。
         【v4.6.0 修改】分離物理更新與數據處理，確保數據流在所有模式下暢通。
+        【v4.12.0 重構】執行緒主迴圈，採用解耦的邏輯與渲染迴圈。
+        
+        此迴圈現在作為一個協調器，使用基於真實時鐘的頻率調節器，
+        以不同的頻率驅動「邏輯幀」(AI+物理) 和「渲染幀」(視覺更新)。
         """
+        # --- 步驟 1: 初始化 ---
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
             self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
-
-        # 【v4.7.2 修正】用於跨幀傳遞上一幀動作的局部變數
+        
+        # --- 步驟 2: 初始化雙頻率調節器 ---
+        # 【v4.12.0 新增】從 config 讀取兩個獨立的週期
+        logic_interval = 1.0 / self.config.control_freq
+        render_interval = 1.0 / self.config.rendering_frequency if self.config.rendering_frequency > 0 else 0
+        
+        # 【v4.12.0 新增】為兩個迴圈設定獨立的目標時刻
+        next_logic_update_time = time.perf_counter()
+        next_render_update_time = time.perf_counter()
+        
+        # 【v4.12.0 位置移動】此變數現在由邏輯幀管理
         action_from_previous_frame = np.zeros(self.config.num_motors)
 
+        # --- 步驟 3: 進入主協調迴圈 ---
         while self._running.is_set():
-            # 【v4.7.2 新增】在每一幀的開始，將上一幀的動作寫入 state
-            # 這是確保 ObservationManager 讀取到正確時序數據的關鍵
-            with self.state.lock:
-                self.state.raw_last_action = action_from_previous_frame.copy()
-
-            # ======================== [v4.0] 請求處理階段 ========================
-            # 在一個極短的鎖定範圍內，原子性地讀取並清除所有掛起的請求。
+            current_time = time.perf_counter()
+            
+            # --- 子任務 A: 處理掛起的 UI/輸入請求 (高優先級) ---
+            # 這部分邏輯從舊版 run() 完整保留，確保系統能即時響應模式切換、重置等請求
             with self.state.lock:
                 shutdown_req = self.state.shutdown_requested
                 hard_reset_req = self.state.hard_reset_requested
-                # 【v4.0.1 修正】正確讀取 soft_reset_requested
                 soft_reset_req = self.state.soft_reset_requested
                 mode_change_req = self.state.mode_change_request
                 float_toggle_req = self.state.manual_float_toggle_request
 
-                # 清除已讀取的請求
                 self.state.shutdown_requested = False
                 self.state.hard_reset_requested = False
-                # 【v4.0.1 修正】正確清除 soft_reset_requested
                 self.state.soft_reset_requested = False
                 self.state.mode_change_request = None
                 self.state.manual_float_toggle_request = None
 
-            # 在鎖之外，安全地執行請求對應的操作
-            if shutdown_req:
-                self._handle_shutdown()
-                continue # 結束迴圈
-
+            if shutdown_req: self._handle_shutdown(); continue
             if hard_reset_req: self.hard_reset()
-            # 【v4.0.1 修正】補上對軟重置請求的處理
             if soft_reset_req: self.soft_reset()
-
-            if mode_change_req:
-                self._handle_mode_change(mode_change_req)
+            if mode_change_req: self._handle_mode_change(mode_change_req)
+            if float_toggle_req is not None: self._handle_float_toggle(float_toggle_req)
             
-            if float_toggle_req is not None:
-                self._handle_float_toggle(float_toggle_req)
-            
-            # ======================== 主邏輯與模擬步驟 ========================
-            with self.state.lock:
-                mode = self.state.control_mode
-                single_step = self.state.single_step_mode
-                execute_one = self.state.execute_one_step
-            
-            if single_step and not execute_one:
-                self.sim.render_from_thread(self.state)
-                time.sleep(0.01) # 避免空轉
-                continue
-            
-            if execute_one:
-                with self.state.lock: self.state.execute_one_step = False
+            # === 子任務 B: 邏輯迴圈 (由 control_freq 驅動) ===
+            if current_time >= next_logic_update_time:
+                # 調度 _perform_logic_frame 來執行一個完整的邏輯單元
+                self._perform_logic_frame(action_from_previous_frame)
                 
-            # 【新增】更新後座力計時器狀態
-            self._update_recoil_warning_timer()
+                # 執行完後，立即儲存本幀的動作，以供下一個邏輯幀使用
+                with self.state.lock:
+                    action_from_previous_frame = self.state.latest_action_raw.copy()
+                
+                # 更新下一個邏輯幀的目標時刻
+                next_logic_update_time += logic_interval
 
-
-            # 【v4.6.0 修改】將 is_simulation_active 的判斷移至此處
-            is_headless = isinstance(self.sim, MockSimulation)
-            is_simulation_active = not is_headless and mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
-            
-            # --- 步驟 1: 物理更新 (僅在模擬模式下執行) ---
-            if is_simulation_active:
-                self._simulation_step()
-            elif mode == "HARDWARE_MODE": # <--- 【核心修改】新增這個 elif 區塊
-                self._update_simulation_from_hardware_state()
-            else:
-                # 在非模擬模式下，給主迴圈一個短暫休眠以控制頻率
-                time.sleep(1.0 / self.config.control_freq)
-
-            # --- 步驟 2: 數據處理 (在所有模式下執行) ---
-            # 【v4.6.0 新增】將此調用移至此處，確保無論模式如何，數據處理鏈路都會被觸發。
-            # 【v4.11.0 刪除】將此呼叫的職責轉移到各自的控制器中
-            # if self.state.observation_manager_ref:
-            #     self.state.observation_manager_ref.update_all_observations()
-
-            # 【v4.7.2 修正】在每一幀的末尾，暫存當前幀的動作以供下一幀使用
-            with self.state.lock:
-                # latest_action_raw 是由 _simulation_step 或 _perform_ai_step 更新的
-                action_from_previous_frame = self.state.latest_action_raw.copy()
-
-            # --- 步驟 3: 渲染 (在所有可視模式下執行) ---
-            if not is_headless:
+            # === 子任務 C: 渲染迴圈 (由 rendering_frequency 驅動) ===
+            if not is_headless and current_time >= next_render_update_time:
+                # 在渲染前，確保模擬器狀態是最新的（特別是在硬體模式下）
+                if self.state.control_mode == "HARDWARE_MODE":
+                    self._update_simulation_from_hardware_state()
+                
+                # 調度渲染函式
                 self.update_derived_states_and_render()
+                
+                # 更新下一個渲染幀的目標時刻
+                if render_interval > 0:
+                    next_render_update_time += render_interval
+                else: # 如果不限幀率 (render_interval=0)，則每次都渲染
+                    next_render_update_time = time.perf_counter()
+
+            # === 子任務 D: 視窗事件迴圈 (盡力而為) ===
+            if not is_headless:
+                self.sim.poll_window_events()
+
+            # 短暫休眠，將 CPU 時間讓給其他執行緒（如 UI、硬體）
+            time.sleep(0.001)
 
         log.info("模擬執行緒已優雅地停止。")
+
+    def _perform_logic_frame(self, action_from_previous_frame: np.ndarray):
+        """
+        【v4.12.0 新增】執行一個完整的「邏輯幀」。
+        這是一個原子操作單元，包含 AI 決策、物理演進和狀態更新。
+        """
+        with self.state.lock:
+            self.state.raw_last_action = action_from_previous_frame.copy()
+        
+        # --- 步驟 1: AI 決策 ---
+        with self.state.lock:
+            command = self.state.command.copy()
+        onnx_input, action_final = self.policy_manager.get_action(command)
+        
+        # --- 步驟 2: 計算最終控制指令並更新狀態 ---
+        with self.state.lock:
+            control_mode = self.state.control_mode
+            tuning_params = self.state.tuning_params
+            if control_mode == "MANUAL_CTRL":
+                final_ctrl = self.state.manual_final_ctrl.copy()
+            elif control_mode == "JOINT_TEST":
+                final_ctrl = self.sim.default_pose + self.state.joint_test_offsets
+            else:
+                final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
+            
+            self.state.latest_onnx_input = onnx_input.flatten()
+            self.state.latest_action_raw = action_final
+            self.state.latest_final_ctrl = final_ctrl
+
+        # --- 步驟 3: 物理演進 ---
+        is_sim_active = not isinstance(self.sim, MockSimulation) and self.state.control_mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
+        if is_sim_active:
+            self._simulation_step()
+        
+        # --- 步驟 4: 更新標準化觀測值 ---
+        if self.state.observation_manager_ref:
+            self.state.observation_manager_ref.update_all_observations()
+
 
     def _handle_shutdown(self):
         """【v4.0 新增】處理關閉請求的邏輯。"""
@@ -582,81 +608,46 @@ class SimulationController:
         【v4.3.1 修改】執行物理模擬並更新原始物理數據到 SimulationState。
         【v4.4.2 修改】同步更新寫入的 raw_ 變數名。
         【v4.4.7 修改】在方法結尾新增對觀測管理器的統一調用。
+        【v4.12.0 重構】執行固定數量的物理步進，使模擬時間與真實時間同步。
 
-        此函式現在除了執行模擬，還負責將原始物理數據寫入 SimulationState。
+        此函式不再包含 AI 決策邏輯，其職責是純粹的物理演進。它被 _perform_logic_frame 調用，作為一個邏輯幀的一部分。
         """
 
-        # log.info("--- _simulation_step START ---") # 增加起始 log
-
-        # 讀取狀態和獲取 AI 動作的邏輯不變
+        # --- 步驟 1: 從中央狀態獲取最新的控制指令 ---
+        # 這些指令是由 _perform_logic_frame 在本邏輯幀的早些時候計算出的
         with self.state.lock:
-            command = self.state.command.copy()
-            control_mode = self.state.control_mode
+            final_ctrl = self.state.latest_final_ctrl.copy()
             tuning_params = self.state.tuning_params
 
-        # 【v4.4.7 修改】 PolicyManager 的 get_action 內部邏輯將改變，但此處的調用方式不變
-        onnx_input, action_final = self.policy_manager.get_action(command)
+        # --- 步驟 2: 計算在此邏輯幀內需要執行的物理步進次數 ---
+        # 這是保證模擬時間與真實時間同步的關鍵
+        # 例如: control_dt=0.2s, physics_timestep=0.004s -> num_steps=50
+        num_steps = int(self.config.control_dt / self.config.physics_timestep)
 
-        # 根據模式計算最終控制指令的邏輯不變
-        if control_mode == "MANUAL_CTRL":
-            with self.state.lock:
-                final_ctrl = self.state.manual_final_ctrl.copy()
-        elif control_mode == "JOINT_TEST":
-            with self.state.lock:
-                final_ctrl = self.sim.default_pose + self.state.joint_test_offsets
-        else:
-            final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
-
-        # 應用 PD 控制的邏輯不變
-        self.sim.apply_position_control(final_ctrl, tuning_params)
-
-        # 更新 UI 顯示用的數據的邏輯不變
-        with self.state.lock:
-            self.state.latest_onnx_input = onnx_input.flatten()
-            self.state.latest_action_raw = action_final
-            self.state.latest_final_ctrl = final_ctrl
-
-        # 執行物理模擬的迴圈不變
-        target_time = self.sim.data.time + self.config.control_dt
-        while self.sim.data.time < target_time:
+        # --- 步驟 3: 執行固定次數的物理步進 ---
+        for _ in range(num_steps):
             if not self._running.is_set():
                 break
-            # 這是物理引擎的核心步驟
+            
+            # 在每個微小的物理步進前，都應用相同的控制指令
+            # 這模擬了真實世界中，馬達在一個控制週期內維持目標力矩/位置的行為
+            self.sim.apply_position_control(final_ctrl, tuning_params)
             mujoco.mj_step(self.sim.model, self.sim.data)
 
-        # 【v4.3.1 新增】 - 將原始物理數據寫入 State
-        # 在 mj_step 之後，sim.data 中包含了最新的物理狀態，我們將其寫入 state.raw_...
-        # 作為 ObservationManager 的數據源。
+        # --- 步驟 4: 將演進後的物理結果寫回中央狀態 ---
+        # 這部分邏輯從舊版完整保留，確保 raw_... 數據被更新
         with self.state.lock:
-            # 讀取軀幹的姿態四元數
             self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
-            # 讀取軀幹在世界座標系下的線速度和角速度
             self.state.raw_torso_linear_velocity = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
             self.state.raw_torso_angular_velocity = self.sim.data.cvel[self.sim.torso_id, :3].copy()
-            # 讀取所有關節的角度和角速度
             self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
             self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
-            # 從 XML 中定義的感測器讀取加速度計數據
             if self.sim.accelerometer_id != -1:
                  start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
                  end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
                  self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
             else:
-                 # 如果感測器不存在，用零填充
                  self.state.raw_accelerometer.fill(0.0)
-        
-        # 【v4.4.7 新增】【v4.6.0 刪除】觸發標準化觀測數據的全量更新
-        # 這一行將被移動到 run() 迴圈的公共區域，以確保在所有模式下都能執行。
-        # self.state.observation_manager_ref.update_all_observations()
-        # 【v4.11.0 新增】觸發標準化觀測資料在模擬模式下的全量更新。
-        # 將此步驟移入 _simulation_step 內部，這樣可以確保它與模擬的每一幀同步，
-        # 而且在模擬暫停時也會跟著暫停，實現了職責的統一。
-        if self.state.observation_manager_ref:
-            self.state.observation_manager_ref.update_all_observations()
-            
-        # log.info("--- _simulation_step END ---") # 增加結束 log
-
-
 
 
     # ------------------------------------------------------------------

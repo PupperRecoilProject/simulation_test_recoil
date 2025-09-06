@@ -51,6 +51,8 @@ class AppConfig:
     num_motors: int
     physics_timestep: float
     control_freq: float
+    # 【v4.12.0 新增】渲染頻率
+    rendering_frequency: float
     control_dt: float
     warmup_duration: float
     command_scaling_factors: List[float]
@@ -106,6 +108,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         num_motors=config_data['num_motors'],
         physics_timestep=config_data['physics_timestep'],
         control_freq=config_data['control_freq'],
+        # 【v4.12.0 新增】讀取渲染頻率，如果未定義則默認為 60.0
+        rendering_frequency=config_data.get('rendering_frequency', 60.0),
         control_dt=1.0 / float(config_data['control_freq']),
         warmup_duration=config_data['warmup_duration'],
         command_scaling_factors=config_data['command_scaling_factors'],
