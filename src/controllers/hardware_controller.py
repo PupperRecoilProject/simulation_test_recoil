@@ -173,9 +173,35 @@ class HardwareController:
                 self.state.hardware_is_running = (new_state == HWState.RUNNING)
 
     def _control_loop(self):
-        """(執行緒) 狀態機驅動者和命令派發中心。"""
-        log.info("--- 硬體控制執行緒已就緒，等待命令 ---")
+        """
+        【v4.11.1 重構】採用固定時間步長邏輯取代 time.sleep() 以實現精準頻率控制。
+        
+        (執行緒) 狀態機驅動者和命令派發中心。
+        """
+        log.info("--- 硬體控制執行緒已就緒，等待指令 ---")
+
+        # 【v4.11.1 新增】初始化頻率調節器
+        # 從設定檔中獲取控制週期，例如 5Hz -> 0.2秒
+        control_interval = 1.0 / self.config.control_freq
+        # 設定第一次執行的絕對時刻為「現在」
+        next_execution_time = time.perf_counter()
+
         while self._is_running_event.is_set():
+            # --- 步驟 1: 檢查是否到達執行時刻 ---
+            current_time = time.perf_counter()
+            if current_time < next_execution_time:
+                # 如果時間還沒到，就短暫休眠一小段時間，避免空轉浪費 CPU 資源
+                # 這個休眠時間很短（例如 1ms），只是為了讓出 CPU，不影響頻率精度
+                time.sleep(0.001)
+                continue # 跳到下一次迴圈檢查時間
+
+            # --- 步驟 2: 更新下一次的目標執行時刻 ---
+            # 【核心邏輯】無論本輪執行了多久，下一次的目標時刻都是在上一次的
+            # 目標時刻基礎上，加上一個固定的時間間隔。
+            # 這就是「主動追趕」的關鍵：如果本輪有延遲，下一輪的等待時間就會自動縮短。
+            next_execution_time += control_interval
+            
+            # --- 步驟 3: 執行核心任務 (與 v4.11.0 相同) ---
             try:
                 command: HWCommand = self.command_queue.get_nowait()
                 if command == HWCommand.START and self.internal_state in [HWState.STOPPED, HWState.FAILED]:
@@ -201,7 +227,8 @@ class HardwareController:
             # 【v4.11.0-w 新增】在迴圈末尾計算並更新頻率
             self._update_frequencies()
 
-            time.sleep(1.0 / self.config.control_freq)
+            # 【v4.11.1 刪除】移除不精確的 time.sleep()，其功能已被新的調節器取代
+            # time.sleep(1.0 / self.config.control_freq)
             
     def _update_frequencies(self):
         """【v4.11.0-w 新增】計算 I/O 和 AI 頻率並寫入中央狀態。"""
