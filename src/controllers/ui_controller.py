@@ -4,6 +4,7 @@ from nicegui import ui, app
 import numpy as np
 import threading
 from typing import TYPE_CHECKING, List, Dict  # 【修改】從 typing 導入 Dict
+from src.controllers.global_keyboard_driver import GlobalKeyboardDriver  # 【新增】全域鍵盤駕駛
 
 from src.core.event_system import (
     event_bus,
@@ -133,6 +134,13 @@ class UIController:
                 'formatter': lambda v: f"{v:.1f} Hz" if v >= 0 else "N/A"
             },
         }
+        
+        # 【新增】掛上全域鍵盤駕駛（無修飾鍵＋忽略輸入焦點＋超時關閉）
+        self.global_kbd = GlobalKeyboardDriver(self.state)  # 功能：啟用 WASD、A/D 旋轉、Q/E 平移、I/K 俯仰 與 FRW/Reset/F
+
+        # 這兩行沒有必要，會在初始化階段無意義來回切換，已移除
+        # self.global_kbd.on_input_mode_change('VJOY')
+        # self.global_kbd.on_input_mode_change('KEYBOARD')
 
         self._setup_ui()
 
@@ -318,7 +326,11 @@ class UIController:
                 ui.joystick(
                     color='blue',
                     size=100,
-                    on_start=lambda: event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
+                    # 同時呼叫 publish 與 global_kbd，同步輸入來源狀態
+                    on_start=lambda: (
+                        event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="VJOY"),
+                        self.global_kbd.on_input_mode_change('VJOY')
+                    ),
                     on_move=lambda e: event_bus.publish(
                         EVENT_COMMAND_UPDATED,
                         command=np.array([e.x * self.state.config.gamepad_sensitivity['vy'],
@@ -327,7 +339,8 @@ class UIController:
                     ),
                     on_end=lambda e: (
                         event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4)),
-                        event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD")
+                        event_bus.publish(EVENT_INPUT_MODE_CHANGE_REQUESTED, mode="KEYBOARD"),
+                        self.global_kbd.on_input_mode_change('KEYBOARD')
                     )
                 ).props('throttle')
             ui.button('清除命令 (Clear Command)', on_click=lambda: event_bus.publish(EVENT_COMMAND_UPDATED, command=np.zeros(4))).props('outline').classes('w-full mt-2')
@@ -397,11 +410,10 @@ class UIController:
                 video_server_url = "http://localhost:8081"
                 ui.html(f'''
                     <iframe src="{video_server_url}"
-                            width="100%" height="480" frameborder="0" scrolling="no"
-                            style="max-width: 640px; aspect-ratio: 640 / 480; display: block; margin: auto;">
+                            width="100%" height="480" frameborder="0" scrolling="no" tabindex="-1"
+                            style="max-width: 640px; aspect-ratio: 640 / 480; display: block; margin: auto; pointer-events: none;">
                     </iframe>
                 ''')
-
                 with ui.row().classes('w-full items-center'):
                     # 【注意】這裡我們不再需要 self.prompt_input，因為 prompt_input 的作用域只在這個函式內部
                     prompt_input = ui.input(placeholder='輸入識別提示, 例如: [a person]').props('outlined dense').classes('flex-grow')
@@ -410,7 +422,7 @@ class UIController:
                         prompt_value = prompt_input.value
 
                         if not prompt_value:
-                            ui.notify('請先輸入識別提示！', color='warning')
+                            ui.notify('請先輸入識別提示', color='warning')
                             return
 
                         import json
@@ -427,14 +439,13 @@ class UIController:
                                 window[ws_name] = new WebSocket('ws://localhost:8081/ws');
 
                                 window[ws_name].onopen = () => {{
-                                    console.log('%c[WebSocket] 連接成功！現在發送消息...', 'color: green;');
+                                    console.log('%c[WebSocket] 連接成功，現在發送消息', 'color: green;');
                                     window[ws_name].send(prompt);
                                 }};
                                 window[ws_name].onerror = (err) => console.error("[WebSocket] 連接錯誤:", err);
-                                window[ws_name].onclose = () => console.warn("[WebSocket] 連接已關閉。");
-
+                                window[ws_name].onclose = () => console.warn("[WebSocket] 連接已關閉");
                             }} else {{
-                                console.log("WebSocket 已連接，直接發送消息...");
+                                console.log("WebSocket 已連接，直接發送消息");
                                 window[ws_name].send(prompt);
                             }}
                         '''
@@ -506,7 +517,7 @@ class UIController:
 
                 # --- 指令輸入與發送 ---
                 with ui.row().classes('w-full items-center'):
-                    self.serial_command_buffer = ui.input(placeholder='手動輸入指令...') \
+                    self.serial_command_buffer = ui.input(placeholder='手動輸入指令') \
                         .props('outlined dense') \
                         .classes('flex-grow') \
                         .on('keydown.enter', self._send_serial_command)
@@ -585,9 +596,6 @@ class UIController:
 
             # 狀態顯示
             self.frw_status_label = ui.label('狀態：OFF')
-
-
-
 
     def _send_serial_command(self):
         """
@@ -669,10 +677,8 @@ class UIController:
             else:
                 self.enable_motors_switch.disable()
 
-            # 開關的視覺狀態 (ON/OFF) - 邏輯反轉
-            # 只有在 VERIFIED 狀態下，開關才應顯示為 ON。
+            # 開關的視覺狀態
             should_be_on = (hw_link_status == HardwareLinkStatus.VERIFIED)
-
             current_switch_value = self.enable_motors_switch.value
             if current_switch_value != should_be_on:
                 self.enable_motors_switch.set_value(should_be_on)
@@ -717,7 +723,6 @@ class UIController:
         if hasattr(self, 'frw_status_label') and self.frw_status_label is not None:
             self.frw_status_label.set_text(f"狀態：{'ON' if self.state.recoil_warning_active else 'OFF'}")
 
-
     def _update_onnx_short_vector_labels(self, std_obs_snapshot: Dict):
         dims_dict = self.state.observation_manager_ref.ALL_OBS_DIMS if self.state.observation_manager_ref else {}
         for comp_name, md_widget in self.onnx_input_labels.items():
@@ -736,17 +741,12 @@ class UIController:
         with self.state.lock:
             # 只在連結已驗證或已靜默的狀態下進行切換
             if self.state.hardware_link_status in [HardwareLinkStatus.VERIFIED, HardwareLinkStatus.MUTED]:
-                if event.value:  # 如果開關被使用者打開 (要求啟用)
+                if event.value:  # 如果開關被使用者打開
                     self.state.hardware_link_status = HardwareLinkStatus.VERIFIED
                     log.info("🟢 馬達已由使用者啟用。")
-                else:  # 如果開關被使用者關閉 (要求靜默)
+                else:  # 如果開關被使用者關閉
                     self.state.hardware_link_status = HardwareLinkStatus.MUTED
                     log.info("🟡 馬達已由使用者靜默。")
 
-    # 【v4.10.5 刪除】移除舊的 _handle_mute_switch_change 方法
-    # def _handle_mute_switch_change(self, event): ...
-
     def run(self):
         ui.run(title="Pupper Robot Console", port=8080)
-
-        
