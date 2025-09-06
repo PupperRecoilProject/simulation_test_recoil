@@ -112,6 +112,17 @@ param_adjust_steps:
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
+
+# 【v4.11.2 新增】機器人的預設站立姿態 (12個關節的角度, 單位: 弧度)
+# 這個值應與 MuJoCo XML 文件中的 'home' keyframe 保持一致。
+# 這是計算標準化觀測 joint_positions 的基準。
+default_pose: [
+  0.0, 0.0, 0.0,  # Front-Right Leg (Abduction, Hip, Knee)
+  0.0, 0.0, 0.0,  # Front-Left Leg
+  0.0, 0.0, 0.0,  # Hind-Right Leg
+  0.0, 0.0, 0.0   # Hind-Left Leg
+]
+
 initial_tuning_params:
   kp: 2.67  #8000/3000=2.6667
   kd: 0.17 #500/3000=0.1667

@@ -2,6 +2,7 @@
 import yaml
 from dataclasses import dataclass, field
 from typing import Dict, List, Any
+import numpy as np
 
 # 【v4.10.0 新增】為地形生成參數建立一個新的 dataclass
 @dataclass
@@ -52,6 +53,9 @@ class AppConfig:
     gamepad_sensitivity: Dict[str, float]
     param_adjust_steps: Dict[str, float]
 
+    # 【v4.11.2 新增】從配置中讀取的預設站立姿態
+    default_pose: np.ndarray
+
     initial_tuning_params: TuningParamsConfig
     floating_controller: FloatingControllerConfig
     # 【v4.10.0 新增】將地形設定加入到主設定物件中
@@ -74,7 +78,10 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     floating_config = FloatingControllerConfig(**config_data['floating_controller'])
     # 【v4.10.0 新增】載入地形生成設定
     terrain_gen_config = TerrainGenerationConfig(**config_data['terrain_generation'])
-    
+    # 【v4.11.2 新增】讀取並轉換 default_pose 為 NumPy 陣列
+    # 確保從 YAML 讀取的列表被轉換為 NumPy 陣列，以方便後續的向量運算
+    default_pose_np = np.array(config_data['default_pose'], dtype=np.float32)
+
     config_obj = AppConfig(
         mujoco_model_file=config_data['mujoco_model_file'],
         
@@ -91,6 +98,9 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         keyboard_velocity_adjust_step=config_data['keyboard_velocity_adjust_step'],
         gamepad_sensitivity=config_data['gamepad_sensitivity'],
         param_adjust_steps=config_data['param_adjust_steps'],
+
+        # 【v4.11.2 新增】將 NumPy 陣列傳入 AppConfig
+        default_pose=default_pose_np,
         
         initial_tuning_params=tuning_params,
         floating_controller=floating_config,

@@ -152,11 +152,18 @@ class ObservationManager:
         scaled_cmd = self.state.command * np.array(self.config.command_scaling_factors)
         return scaled_cmd
     
-    # 【v4.3.1 修改】 _get_joint_positions 方法
     def _get_joint_positions(self) -> np.ndarray:
-        """獲取相對於預設站姿的關節角度。"""
-        # [修改] 數據源變更
-        return self.state.raw_joint_positions - self.state.sim.default_pose
+        """
+        【v4.11.2 修改】數據源從 sim.default_pose 變更為 config.default_pose。
+        
+        獲取相對於預設站姿的關節角度。
+        """
+        # 【v4.11.2 核心修正】
+        # 數據源從 self.state.sim.default_pose 更改為 self.config.default_pose。
+        # 這使得此函式的運作完全獨立於模擬物件 (sim)，
+        # 徹底解耦了 AI 觀測邏輯與模擬環境，增強了模組的獨立性和
+        # 對無頭 (--no-sim) 模式的支援。
+        return self.state.raw_joint_positions - self.config.default_pose
 
     # 【v4.3.1 修改】 _get_joint_velocities 方法
     def _get_joint_velocities(self) -> np.ndarray:
