@@ -21,6 +21,11 @@ from src.core.event_system import (
     EVENT_COMMAND_UPDATED,
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
+    # ↓↓↓ 這四行是新增的 ↓↓↓
+    EVENT_FRW_AUTO_INHIBIT_SET,
+    EVENT_FRW_AUTO_INHIBIT_CLEAR,
+    EVENT_FIREARM_RECOIL_WARNING_TRIGGER_REQUESTED,
+    EVENT_FIREARM_RECOIL_WARNING_RESET_REQUESTED,
 )
 from src.core.logger import log, log_queue
 # 【v4.10.1 新增】導入 State 和 Enum 以進行類型提示
@@ -197,6 +202,7 @@ class UIController:
                 self._create_main_control_panel()
                 ui.label('策略與地形').classes('text-xl font-bold mt-2 mb-1')
                 self._create_policy_and_terrain_selectors()
+                self._create_recoil_warning_panel()
                 self._create_joystick_panel()
                 self._create_joint_control_panel()
                 self._create_device_panel()
@@ -544,6 +550,45 @@ class UIController:
                     element.bind_enabled_from(self.state, 'serial_is_connected')
                     element.bind_enabled_from(self.state, 'control_mode', lambda mode: mode != 'HARDWARE_MODE')
 
+    def _create_recoil_warning_panel(self):
+        with ui.card().classes('w-full'):
+            ui.label('開火預警控制 (Firearm Recoil Warning)').classes('text-lg font-bold')
+
+            # 讀取 config 的初始值，兼容 dict 或 dataclass，預設 False
+            frw_cfg = getattr(self.state.config, 'firearm_recoil_warming', {})
+            if isinstance(frw_cfg, dict):
+                initial_inhibit = bool(frw_cfg.get('auto_inhibit', False))
+            else:
+                initial_inhibit = bool(getattr(frw_cfg, 'auto_inhibit', False))
+
+            # 建立唯一的 switch 並以 config 值初始化
+            inhibit_switch = ui.switch('抑制自動預警', value=initial_inhibit)
+
+            # 正確事件：on_value_change 會提供 e.value；同時備援讀取 widget.value
+            def on_toggle_inhibit(e):
+                new_val = bool(getattr(e, 'value', inhibit_switch.value))
+                event_bus.publish(EVENT_FRW_AUTO_INHIBIT_SET if new_val else EVENT_FRW_AUTO_INHIBIT_CLEAR)
+
+            # 只綁這一個，避免重複廣播或拿到 GenericEventArguments
+            inhibit_switch.on_value_change(on_toggle_inhibit)
+
+            # 啟動時依 config 值同步一次事件，確保後端狀態一致
+            event_bus.publish(EVENT_FRW_AUTO_INHIBIT_SET if initial_inhibit else EVENT_FRW_AUTO_INHIBIT_CLEAR)
+
+            with ui.row():
+                ui.button('手動觸發', on_click=lambda: event_bus.publish(
+                    EVENT_FIREARM_RECOIL_WARNING_TRIGGER_REQUESTED
+                ))
+                ui.button('手動重置', on_click=lambda: event_bus.publish(
+                    EVENT_FIREARM_RECOIL_WARNING_RESET_REQUESTED
+                ))
+
+            # 狀態顯示
+            self.frw_status_label = ui.label('狀態：OFF')
+
+
+
+
     def _send_serial_command(self):
         """
         [v3.0.1] 從 UI 輸入框獲取命令，並發布序列埠命令發送請求事件。
@@ -667,6 +712,11 @@ class UIController:
         log_content = "\n".join(log_queue)
         if self.log_area.value != log_content:
             self.log_area.set_value(log_content)
+
+        # 避免在面板尚未建立或被重建時觸發例外
+        if hasattr(self, 'frw_status_label') and self.frw_status_label is not None:
+            self.frw_status_label.set_text(f"狀態：{'ON' if self.state.recoil_warning_active else 'OFF'}")
+
 
     def _update_onnx_short_vector_labels(self, std_obs_snapshot: Dict):
         dims_dict = self.state.observation_manager_ref.ALL_OBS_DIMS if self.state.observation_manager_ref else {}
