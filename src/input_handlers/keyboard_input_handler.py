@@ -62,17 +62,18 @@ class KeyboardInputHandler:
             log.warning("glfw 模組不存在，無法註冊鍵盤事件")
             return
 
-        # 先「取回舊回呼」：PyGLFW 的 set_*_callback 會回傳之前的 callback
+        # 取回舊回呼（set_* 會回傳之前的 callback）
         prev_key_cb  = glfw.set_key_callback(window, None)
         prev_char_cb = glfw.set_char_callback(window, None)
 
-        def combo_key_callback(win, key, scancode, action, mods):            # 先執行我們的鍵盤邏輯
+        def combo_key_callback(win, key, scancode, action, mods):
+            # 先執行我們的鍵盤邏輯
             try:
                 self.key_callback(win, key, scancode, action, mods)
             except Exception as ex:
                 log.error(f'key_callback error: {ex}')
-            # 一律再轉交給「舊回呼」（例如 MuJoCo viewer）
-            if prev_key_cb is not None:                
+            # 一律再轉交給舊回呼（讓 MuJoCo 原生快捷鍵也生效）
+            if prev_key_cb is not None:
                 try:
                     prev_key_cb(win, key, scancode, action, mods)
                 except Exception as ex:
@@ -93,8 +94,7 @@ class KeyboardInputHandler:
         # 重新掛上我們的「組合」回呼
         glfw.set_key_callback(window, combo_key_callback)
         glfw.set_char_callback(window, combo_char_callback)
-
-        # 可選：避免失焦漏掉 RELEASE（視需求）
+        # 可選：避免失焦漏掉 RELEASE
         # glfw.set_input_mode(window, glfw.STICKY_KEYS, glfw.TRUE)
 
 
@@ -257,7 +257,8 @@ class KeyboardInputHandler:
             # 夾取 pitch（若有設定）
             try:
                 if hasattr(self.config, 'pitch_limit'):
-                    cmd[3] = float(np.clip(cmd[3], -float(self.config.pitch_limit), float(self.config.pitch_limit)))
+                    import numpy as _np
+                    cmd[3] = float(_np.clip(cmd[3], -float(self.config.pitch_limit), float(self.config.pitch_limit)))
             except Exception:
                 pass
 
@@ -295,6 +296,24 @@ class KeyboardInputHandler:
             if key == glfw.KEY_O:
                 event_bus.publish(EVENT_TERRAIN_CHANGE_REQUESTED, name="TOGGLE")
                 return
+            # 數字鍵 1~9,0 → 選擇策略索引 0~9（動態檢查長度）
+            digit_to_idx = {
+                glfw.KEY_1:0, glfw.KEY_2:1, glfw.KEY_3:2, glfw.KEY_4:3, glfw.KEY_5:4,
+                glfw.KEY_6:5, glfw.KEY_7:6, glfw.KEY_8:7, glfw.KEY_9:8, glfw.KEY_0:9,
+            }
+            if key in digit_to_idx:
+                idx = digit_to_idx[key]
+                try:
+                    policies = list(getattr(self.state, 'available_policies', []))
+                    if 0 <= idx < len(policies):
+                        event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name=policies[idx])
+                except Exception:
+                    pass
+                return
+            # N：與 UI 一致，做「單步」
             if key == glfw.KEY_N:
-                event_bus.publish(EVENT_POLICY_CHANGE_REQUESTED, policy_name="NEXT")
+                try:
+                    self.state.execute_one_step = True
+                except Exception:
+                    pass
                 return
