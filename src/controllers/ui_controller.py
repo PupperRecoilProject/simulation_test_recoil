@@ -114,7 +114,7 @@ class UIController:
                 'getter': lambda s: s.latest_pos,
                 'formatter': lambda v: f"[{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}]"
             },
-            # 【v4.11.0 新增】新增硬體頻率的 UI 描述符
+            # 【v4.11.0-w 新增】新增硬體頻率的 UI 描述符
             'hw_io_freq': {
                 'title': '硬體 I/O 頻率',
                 'getter': lambda s: s.hw_data_freq if s.control_mode == 'HARDWARE_MODE' else -1.0,
@@ -318,7 +318,7 @@ class UIController:
     def _create_status_display(self):
         with ui.card().classes('w-full'):
             ui.label('即時狀態 (Real-time Status)').classes('text-xl font-bold')
-            # 【v4.11.0 修改】增加網格的列數以容納新的顯示項目
+            # 【v4.11.0-w 修改】增加網格的列數以容納新的顯示項目
             with ui.grid(columns=4): # 從 3 改為 4
                 for key, desc in self._label_descriptors.items():
                     # 這裡的邏輯不需要改變，它會自動創建新的標籤
