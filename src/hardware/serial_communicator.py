@@ -84,7 +84,7 @@ class SerialCommunicator:
         """掃描並在終端機列出所有可用的序列埠供使用者選擇。"""
         return select_serial_port() # 呼叫工具函式
 
-    def connect(self, baud_rate=115200) -> bool:
+    def connect(self, baud_rate=921600) -> bool: # 預設 115200
         """連接到指定的序列埠並啟動讀取執行緒。"""
         if not self.port_name: return False # 如果沒有埠名，返回失敗
         try:

@@ -40,7 +40,7 @@ def main():
     SERIAL_PORT = select_serial_port()
     if not SERIAL_PORT:
         sys.exit(1)
-    BAUD_RATE = 115200  # 與 Teensy 端保持一致的鮑率
+    BAUD_RATE = 921600 # 115200  # 與 Teensy 端保持一致的鮑率
     ser = None
     try:
         print(f"\n正在嘗試連接到您選擇的埠 {SERIAL_PORT}...")

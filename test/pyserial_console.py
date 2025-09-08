@@ -146,7 +146,7 @@ def main():
     SERIAL_PORT = select_serial_port()
     if not SERIAL_PORT:
         sys.exit(1)
-    BAUD_RATE = 115200
+    BAUD_RATE = 921600 # 115200
     ser = None
     read_thread = None
     
