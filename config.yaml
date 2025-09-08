@@ -75,6 +75,22 @@ onnx_models:
       - 'commands_4d' # 【修改】從 commands -> commands_4d
       - 'firearm_recoil_warming'
 
+  fire_on_recoil_51_fixed:
+    path: "models/pupper_ppo_policy_e2e_101580800_fixed.onnx"
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
+
+
+  
+
 
 # 模型平滑切換設定
 policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
