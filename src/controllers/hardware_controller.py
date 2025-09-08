@@ -73,9 +73,9 @@ class HardwareController:
         self._subscribe_to_events()
         log.info("✅ 硬體控制器 (v4.11.0-w 頻率監控版) 已初始化。")
 
-
-        self._subscribe_to_events()
-        log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
+        # 【修正】移除重複的訂閱與初始化日誌（避免重複訂閱與重複輸出）
+        # self._subscribe_to_events()
+        # log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
 
     def _subscribe_to_events(self):
         event_bus.subscribe(EVENT_HARDWARE_AI_TOGGLE_REQUESTED, 
@@ -132,17 +132,17 @@ class HardwareController:
         log.debug("[硬體讀取執行緒已啟動] 等待數據...")
         while self._is_running_event.is_set():
             if self.internal_state != HWState.RUNNING or not self.ser or not self.ser.is_open:
-                # log.debug(...) # 使用 debug 級別避免刷屏
-                time.sleep(0.1)
+                # 若未 RUNNING，改用短等待事件或極短讓渡，避免把刷新率鎖死在 10Hz
+                self._is_running_event.wait(timeout=0.02)
                 continue
 
             try:
-                if self.ser.in_waiting > 0:
-                    line = self.ser.readline().decode('utf-8', errors='ignore') # <--- 移除 .strip()
-                    # 【v4.7.4 修改】將診斷日誌降級為 DEBUG
+                # 直接呼叫 readline() 讓 timeout=0.02 自然節流；無資料會在 ~20ms 返回空字串
+                line = self.ser.readline().decode('utf-8', errors='ignore')
+                if line:
+                    # 【修正】先記錄原始資料，再解析，避免重複呼叫
                     log.debug(f"原始串口接收: {repr(line)}")
-                    if line:
-                        self.parse_policy_stream(line) 
+                    self.parse_policy_stream(line)
 
             # 【v4.10.5 修改】實現 FEAT-SAFETY-FUSE 熔斷器
             except (serial.SerialException, OSError) as e:
@@ -160,7 +160,7 @@ class HardwareController:
                 log.error(f"❌ _read_from_port 發生未知錯誤: {e}", exc_info=True)
                 self._set_internal_state(HWState.FAILED)
                 break
-            time.sleep(0.01)
+            # 不再固定 sleep；節流交給 serial timeout 與事件等待
 
     def _set_internal_state(self, new_state: HWState):
         """(內部) 安全地切換狀態機並同步到全局 State。"""
@@ -239,8 +239,10 @@ class HardwareController:
                 time_accumulator -= time_block
             
             # --- 2c: 短暫休眠讓出 CPU ---
-            # 這個休眠確保了即使在無事可做時（等待時間累積），CPU 也不會 100% 空轉
-            time.sleep(0.001)
+            # 【修正】僅在尚未達到下一個 time_block 時，短暫讓出 CPU，避免多餘抖動
+            remaining = time_block - time_accumulator
+            if remaining > 0:
+                time.sleep(min(0.001, remaining))
             
     def _update_frequencies(self):
         """【v4.11.0-w 新增】計算 I/O 和 AI 頻率並寫入中央狀態。"""
