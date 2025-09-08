@@ -356,7 +356,7 @@ class UIController:
     def _create_tuning_sliders(self):
         with ui.card().classes('w-full'):
             params = self.state.tuning_params
-            p_keys = {'kp': (0, 50), 'kd': (0, 5), 'action_scale': (0, 2), 'bias': (-20, 20)}
+            p_keys = {'kp': (0, 5), 'kd': (0, 1), 'action_scale': (0, 2), 'bias': (-20, 20)}
             for key, (min_val, max_val) in p_keys.items():
                 with ui.row().classes('w-full items-center'):
                     ui.label(key.upper()).classes('w-20')
