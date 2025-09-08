@@ -134,17 +134,29 @@ class PolicyManager:
         print(f"✅ 策略管理器初始化完成，主要模型: '{self.primary_policy_name}'")
 
     # 【v4.12.2 新增】數據捕獲的控制方法
-    def start_data_capture(self):
-        """開始數據捕獲"""
-        if not self.state.is_data_capturing:
-            self.state.data_capture_buffer.clear()
-            self.state.is_data_capturing = True
-            log.info("🚀 [Data Capture] 已開始捕獲 AI 數據...")
+    def start_data_capture(self, duration: float = 5.0):
+        """
+        【v4.12.3 修改】開始一段固定時長的數據捕獲。
+        
+        開始數據捕獲
+        """
+        if self.state.is_data_capturing:
+            log.warning("[Data Capture] 正在捕獲中，請等待上一次捕獲完成。")
+            return
+
+        self.state.data_capture_buffer.clear()
+        self.state.is_data_capturing = True
+        self.state.data_capture_start_time = time.time()
+        self.state.data_capture_duration = duration
+        self.state.data_capture_mode_label = 'HARDWARE' if self.state.hardware_is_running else 'SIMULATION'
+        
+        log.info(f"🚀 [Data Capture] 已開始捕獲 {duration} 秒的 {self.state.data_capture_mode_label} 數據...")
 
     def stop_and_save_data_capture(self):
         """
         【v4.12.2 修改】停止捕獲並將數據保存到 CSV 檔案 (使用內建 csv 模組)。
-        
+        【v4.12.3 修改】現在檔名會包含模式標籤。
+
         停止捕獲並將數據保存到 CSV 檔案
         """
         if self.state.is_data_capturing:
@@ -157,11 +169,11 @@ class PolicyManager:
                 return
 
             try:
-                # 產生帶時間戳的檔名
+                # 【v4.12.3 修改】檔名中加入模式標籤，方便對比
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # 確保 output 文件夾存在
+                mode_label = self.state.data_capture_mode_label
                 os.makedirs("output", exist_ok=True)
-                filename = f"output/sim2real_capture_{timestamp}.csv"
+                filename = f"output/sim2real_capture_{mode_label}_{timestamp}.csv"
                 
                 # 從緩衝區的第一條記錄中獲取所有鍵，作為 CSV 的表頭
                 headers = list(buffer[0].keys())
@@ -260,27 +272,34 @@ class PolicyManager:
                 output_name = session.get_outputs()[0].name
                 action_raw = session.run([output_name], {input_name: onnx_input})[0].flatten() # 執行推論
 
-                # --- 【v4.12.2 修改】數據捕獲鉤子 ---
+                # --- 【v4.12.3 修改】數據捕獲鉤子，增加自動停止邏輯 ---
                 if name == self.primary_policy_name and self.state.is_data_capturing:
+                    # 檢查是否到達捕獲時長
+                    current_time = time.time()
+                    elapsed_time = current_time - self.state.data_capture_start_time
                     
-                    # 為了方便 csv 寫入，我們需要將 NumPy 陣列轉換為 Python 的原生類型（例如列表或字串）
-                    # 我們創建一個輔助函式來處理這個轉換
-                    def format_for_csv(data):
-                        if isinstance(data, np.ndarray):
-                            # 將 NumPy 陣列轉換為易讀的字串，例如 "[0.1, -0.2]"
-                            return np.array2string(data, precision=6, separator=',', suppress_small=True)
-                        return data
+                    if elapsed_time <= self.state.data_capture_duration:
+                        # 為了方便 csv 寫入，我們需要將 NumPy 陣列轉換為 Python 的原生類型（例如列表或字串）
+                        # 我們創建一個輔助函式來處理這個轉換
+                        def format_for_csv(data):
+                            if isinstance(data, np.ndarray):
+                                # 將 NumPy 陣列轉換為易讀的字串，例如 "[0.1, -0.2]"
+                                return np.array2string(data, precision=6, separator=',', suppress_small=True)
+                            return data
 
-                    # 創建一個新的字典，將所有值都進行格式化
-                    formatted_obs = {k: format_for_csv(v) for k, v in std_obs_snapshot.items()}
+                        # 創建一個新的字典，將所有值都進行格式化
+                        formatted_obs = {k: format_for_csv(v) for k, v in std_obs_snapshot.items()}
 
-                    current_frame_data = {
-                        'timestamp': time.time(),
-                        'mode': 'HARDWARE' if self.state.hardware_is_running else 'SIMULATION',
-                        'action_raw': format_for_csv(action_raw),
-                        **formatted_obs
-                    }
-                    self.state.data_capture_buffer.append(current_frame_data)
+                        current_frame_data = {
+                            'timestamp': time.time(),
+                            'mode': 'HARDWARE' if self.state.hardware_is_running else 'SIMULATION',
+                            'action_raw': format_for_csv(action_raw),
+                            **formatted_obs
+                        }
+                        self.state.data_capture_buffer.append(current_frame_data)
+                    else:
+                        # --- 時間到，自動停止並保存 ---
+                        self.stop_and_save_data_capture() # 會自動將 is_data_capturing 設為 False
             
             all_actions[name] = action_raw # 將模型的輸出存入字典
 

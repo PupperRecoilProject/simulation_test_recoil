@@ -250,11 +250,18 @@ class UIController:
                 ui.button('硬重置 (R)', on_click=lambda: event_bus.publish(EVENT_SIMULATION_RESET_REQUESTED, type="hard"))
 
             # 【v4.12.2 新增】數據捕獲控制面板
+            # 【v4.12.3 修改】數據捕獲控制面板
             ui.separator().classes('my-2')
             ui.label('Sim2Real 數據捕獲').classes('text-lg')
+            # 新增一個用於輸入捕獲時長的輸入框
+            capture_duration_input = ui.number(label="捕獲時長 (秒)", value=5.0, min=1, step=0.5, format='%.1f').style('width: 150px')
+            
             with ui.row():
-                ui.button('開始捕獲', on_click=self.policy_manager.start_data_capture)
-                ui.button('停止並儲存', on_click=self.policy_manager.stop_and_save_data_capture)
+                # 按鈕現在只負責觸發帶有時長參數的 start_data_capture
+                ui.button('捕獲數據', on_click=lambda: self.policy_manager.start_data_capture(duration=capture_duration_input.value))
+                
+                # 保留一個手動停止按鈕，以防萬一需要提前終止
+                ui.button('手動停止', on_click=self.policy_manager.stop_and_save_data_capture).props('outline')
 
     # 【v4.11.6-w 關鍵修正】
     # 新增這個被遺漏的方法

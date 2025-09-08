@@ -206,6 +206,10 @@ class SimulationState:
     # 【v4.12.2 新增】數據捕獲控制旗標
     is_data_capturing: bool = False
     data_capture_buffer: list = field(default_factory=list)
+    # 【v4.12.3 新增】擴展數據捕獲狀態，增加自動化控制
+    data_capture_start_time: float = 0.0      # 【v4.12.3 新增】記錄捕獲開始的時刻
+    data_capture_duration: float = 0.0        # 【v4.12.3 新增】本次捕獲的目標時長 (秒)
+    data_capture_mode_label: str = "UNKNOWN"  # 【v4.12.3 新增】記錄捕獲時的模式 (SIM/HW)
 
 
     def __post_init__(self):
