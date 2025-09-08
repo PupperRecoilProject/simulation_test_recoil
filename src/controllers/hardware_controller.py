@@ -472,6 +472,7 @@ class HardwareController:
         【v4.6.0 修改】增加 .strip() 來移除換行符，並強化錯誤日誌記錄。
         【v4.7.1b 修改】修復了使用未經清理的行進行分割的 Bug。
         【v4.10.5 重構】實現智慧日誌解析器，分類處理系統訊息和數據幀。
+        【v4.13.0 修改】增強序列埠數據流解析器，以記錄更多詳細的指令回應和數據幀資訊。
 
         此函式是 Teensy 原始數據進入統一數據流系統的唯一入口。
         它能區分系統訊息（如 [CMD], [ERROR]）和純數據幀，並分別處理。
@@ -484,10 +485,21 @@ class HardwareController:
         # 【v4.10.5 新增】智慧訊息分類器
         # 如果該行以 '[' 開頭，我們就假定它是一個系統訊息（如 [CMD], [OK], [錯誤]），
         # 而不是一個資料幀。
+        # 【v4.13.0 增強】智慧訊息分類器
         if clean_line.startswith('['):
-            # 我們將其作為一般資訊記錄下來，而不是當作錯誤處理。
-            # 這保留了所有來自 Teensy 的回饋，同時避免了日誌污染。
             log.info(f"[Teensy Msg]: {clean_line}")
+            
+            # 【v4.13.0 新增】如果收到的是 Teensy 執行指令的回應，嘗試解析其內容
+            if "[CMD] Executing: move all " in clean_line:
+                try:
+                    # 提取指令後面的角度字串
+                    angle_str = clean_line.split("move all ", 1)[1]
+                    # 移除可能的後綴或括號，並轉換為浮點數陣列
+                    angles = np.array(angle_str.split(), dtype=np.float32)
+                    log.info(f"  -> Teensy 已執行 Move 指令，目標角度: {np.array2string(angles, precision=4, suppress_small=True)}")
+                except Exception as e:
+                    log.warning(f"  -> 無法解析 Teensy 的 Move 指令回應: {e}")
+            
             return # 處理完畢，直接返回
 
         try:
@@ -511,6 +523,11 @@ class HardwareController:
                 self.state.raw_pitch_rad = data_vec[9]
                 self.state.raw_joint_positions[:] = data_vec[10:22]
                 self.state.raw_joint_velocities[:] = data_vec[22:34]
+                
+            # 【v4.13.0 新增】成功解析數據幀後，記錄關節位置 (高頻，使用 debug 級別)
+            # 因為這是高頻數據，預設只有在日誌級別設為 DEBUG 時才顯示，避免刷屏
+            if self.state.raw_joint_positions.size == 12:
+                log.debug(f"[Teensy Data] Joint Pos: {np.array2string(self.state.raw_joint_positions, precision=4, suppress_small=True)}")
         
         except (ValueError, IndexError) as e:
             log.error(f"解析數據幀失敗: {e}。Cleaned Line: '{clean_line}', Original Line: '{repr(line)}'")

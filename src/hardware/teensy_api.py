@@ -138,6 +138,7 @@ class TeensyAPI:
     def send_motor_commands(self, angles: np.ndarray) -> bool:
         """
         【v4.10.4 修改】指令：發送所有馬達的目標角度。
+        【v4.13.0 修改】在發送前記錄完整的指令內容。
         
         此方法現在會通過安全守衛，只有在連結狀態為 VERIFIED 時才實際發送。
         """
@@ -147,7 +148,10 @@ class TeensyAPI:
             return True
         
         action_str = ' '.join(f"{a:.4f}" for a in angles)
-        command = f"move all {action_str}"
+        command_to_send = f"move all {action_str}"
+
+        # 【v4.13.0 新增】記錄發送的完整指令，便於除錯
+        log.info(f"[PC -> Teensy]: {command_to_send}")
         
         # 使用 execute_command 來發送，它會自動處理 'move all' 的 NONE 回應協定
-        return self.execute_command(command)
+        return self.execute_command(command_to_send)
