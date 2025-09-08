@@ -140,7 +140,28 @@ class SimulationController:
             physics_accumulator += frame_time
             
             # --- 步驟 2: 處理掛起的 UI 請求 ---
-            # ...[請求處理邏輯完整保留，與 v4.12.0 相同，此處省略]...
+            # 這段程式碼負責檢查由事件回呼設定的狀態旗標，並執行對應的操作。
+            # 如果沒有這段，所有來自 UI 的請求都將被忽略。
+            with self.state.lock:
+                shutdown_req = self.state.shutdown_requested
+                hard_reset_req = self.state.hard_reset_requested
+                soft_reset_req = self.state.soft_reset_requested
+                mode_change_req = self.state.mode_change_request
+                float_toggle_req = self.state.manual_float_toggle_request
+
+                # 執行後立即清除旗標，避免重複觸發
+                self.state.shutdown_requested = False
+                self.state.hard_reset_requested = False
+                self.state.soft_reset_requested = False
+                self.state.mode_change_request = None
+                self.state.manual_float_toggle_request = None
+
+            # 在鎖之外，安全地執行請求對應的函式
+            if shutdown_req: self._handle_shutdown(); continue
+            if hard_reset_req: self.hard_reset()
+            if soft_reset_req: self.soft_reset()
+            if mode_change_req: self._handle_mode_change(mode_change_req)
+            if float_toggle_req is not None: self._handle_float_toggle(float_toggle_req)
             
             # --- 步驟 3: 償還物理時間債務 (物理+AI迴圈) ---
             is_sim_active = not is_headless and self.state.control_mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
