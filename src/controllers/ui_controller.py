@@ -288,7 +288,7 @@ class UIController:
             ui.separator().classes('my-2')
             ui.label('Sim2Real 數據捕獲').classes('text-lg')
             # 新增一個用於輸入捕獲時長的輸入框
-            capture_duration_input = ui.number(label="捕獲時長 (秒)", value=5.0, min=1, step=0.5, format='%.1f').style('width: 150px')
+            capture_duration_input = ui.number(label="捕獲時長 (秒)", value=5.0, min=0.5, step=0.5, format='%.1f').style('width: 150px')
             with ui.row():
                 # 按鈕現在只負責觸發帶有時長參數的 start_data_capture
                 ui.button('捕獲數據', on_click=lambda: self.policy_manager.start_data_capture(duration=capture_duration_input.value))
