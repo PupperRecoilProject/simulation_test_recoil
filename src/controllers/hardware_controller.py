@@ -175,60 +175,72 @@ class HardwareController:
     def _control_loop(self):
         """
         【v4.11.1 重構】採用固定時間步長邏輯取代 time.sleep() 以實現精準頻率控制。
+        【v4.13.0 重構】採用與 SimulationController v4.12.4 完全對稱的時間控制架構。
         
         (執行緒) 狀態機驅動者和命令派發中心。
         """
         log.info("--- 硬體控制執行緒已就緒，等待指令 ---")
 
-        # 【v4.11.1 新增】初始化頻率調節器
-        # 從設定檔中獲取控制週期，例如 5Hz -> 0.2秒
-        control_interval = 1.0 / self.config.control_freq
-        # 設定第一次執行的絕對時刻為「現在」
-        next_execution_time = time.perf_counter()
+        # --- 步驟 1: 初始化時間控制器 ---
+        # 獲取契約中定義的邏輯週期 (e.g., 5Hz -> 0.2s)
+        logic_interval = 1.0 / self.config.control_freq
+        
+        # 獲取執行緒中最小的時間單位，用於累加器
+        # 在硬體模式下，我們沒有 physics_timestep，但可以定義一個理論上的最小步長
+        # 或者直接使用 logic_interval 作為我們的時間塊
+        time_block = logic_interval # 為了簡化，我們先讓時間塊等於邏輯週期
 
+        # 初始化計時器和累加器
+        last_frame_time = time.perf_counter()
+        time_accumulator = 0.0
+        
+        # 保護機制，防止從休眠恢復時的「螺旋式死亡」
+        MAX_FRAME_TIME = 0.25 
+
+        # --- 步驟 2: 進入主控制迴圈 ---
         while self._is_running_event.is_set():
-            # --- 步驟 1: 檢查是否到達執行時刻 ---
+            # --- 2a: 累積真實時間債務 ---
             current_time = time.perf_counter()
-            if current_time < next_execution_time:
-                # 如果時間還沒到，就短暫休眠一小段時間，避免空轉浪費 CPU 資源
-                # 這個休眠時間很短（例如 1ms），只是為了讓出 CPU，不影響頻率精度
-                time.sleep(0.001)
-                continue # 跳到下一次迴圈檢查時間
-
-            # --- 步驟 2: 更新下一次的目標執行時刻 ---
-            # 【核心邏輯】無論本輪執行了多久，下一次的目標時刻都是在上一次的
-            # 目標時刻基礎上，加上一個固定的時間間隔。
-            # 這就是「主動追趕」的關鍵：如果本輪有延遲，下一輪的等待時間就會自動縮短。
-            next_execution_time += control_interval
+            frame_time = current_time - last_frame_time
+            last_frame_time = current_time
+            if frame_time > MAX_FRAME_TIME:
+                frame_time = MAX_FRAME_TIME
+            time_accumulator += frame_time
             
-            # --- 步驟 3: 執行核心任務 (與 v4.11.0 相同) ---
-            try:
-                command: HWCommand = self.command_queue.get_nowait()
-                if command == HWCommand.START and self.internal_state in [HWState.STOPPED, HWState.FAILED]:
-                    self._execute_start()
-                elif command == HWCommand.STOP and self.internal_state == HWState.RUNNING:
-                    self._execute_stop()
-                elif command == HWCommand.TOGGLE_AI and self.internal_state == HWState.RUNNING:
-                    self._execute_toggle_ai()
-            except Empty:
-                pass
+            # --- 2b: 償還時間債務 (執行邏輯幀) ---
+            # 只要累積的時間債務足夠執行一個完整的邏輯幀，就執行
+            if time_accumulator >= time_block:
+                # --- 執行一個完整的邏輯幀 ---
+                # 處理掛起的命令
+                try:
+                    command: HWCommand = self.command_queue.get_nowait()
+                    if command == HWCommand.START and self.internal_state in [HWState.STOPPED, HWState.FAILED]:
+                        self._execute_start()
+                    elif command == HWCommand.STOP and self.internal_state == HWState.RUNNING:
+                        self._execute_stop()
+                    elif command == HWCommand.TOGGLE_AI and self.internal_state == HWState.RUNNING:
+                        self._execute_toggle_ai()
+                except Empty:
+                    pass
 
-            if self.internal_state == HWState.RUNNING and self.ai_control_active:
-                # 【v4.11.0-w 修改】在呼叫前記錄時間戳
-                self.ai_step_times.append(time.perf_counter())
-                self._perform_ai_step()
+                # 執行 AI 決策與指令發送
+                if self.internal_state == HWState.RUNNING and self.ai_control_active:
+                    self.ai_step_times.append(time.perf_counter())
+                    self._perform_ai_step()
+
+                # 更新觀測管理器
+                if self.state.observation_manager_ref:
+                    self.state.observation_manager_ref.update_all_observations()
                 
-            # 【v4.11.0 新增】在硬體模式下，觸發標準化觀測資料的全量更新。
-            # 將此步驟移入 HardwareController 的主迴圈，這樣可以確保硬體資料流
-            # 的處理是獨立於 SimulationController 的，不會受到模擬暫停的影響。
-            if self.state.observation_manager_ref:
-                self.state.observation_manager_ref.update_all_observations()
-
-            # 【v4.11.0-w 新增】在迴圈末尾計算並更新頻率
-            self._update_frequencies()
-
-            # 【v4.11.1 刪除】移除不精確的 time.sleep()，其功能已被新的調節器取代
-            # time.sleep(1.0 / self.config.control_freq)
+                # 更新頻率監控數據
+                self._update_frequencies()
+                
+                # 「償還」一筆時間債務
+                time_accumulator -= time_block
+            
+            # --- 2c: 短暫休眠讓出 CPU ---
+            # 這個休眠確保了即使在無事可做時（等待時間累積），CPU 也不會 100% 空轉
+            time.sleep(0.001)
             
     def _update_frequencies(self):
         """【v4.11.0-w 新增】計算 I/O 和 AI 頻率並寫入中央狀態。"""
