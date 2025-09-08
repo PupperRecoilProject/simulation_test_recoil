@@ -1,4 +1,4 @@
-# src/controllers/ui_controller.py
+# -*- coding: utf-8 -*-
 
 from nicegui import ui, app
 import numpy as np
@@ -115,7 +115,7 @@ class UIController:
             'command': {
                 'title': '運動指令',
                 'getter': lambda s: s.command,
-                'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}, pitch: {v[3]:.2f}"  # 【修改】顯示4D指令
+                'formatter': lambda v: f"vy: {v[0]:.2f}, vx: {v[1]:.2f}, wz: {v[2]:.2f}, pitch: {v[3]:.2f}"
             },
             'robot_pos': {
                 'title': '位置',
@@ -203,6 +203,34 @@ class UIController:
         with ui.header(elevated=True).style('background-color: #3874c8').classes('items-center justify-between'):
             ui.label('Pupper 機器人控制台').classes('text-lg')
 
+            # 右側：說明(~) + Auto-off 快速切換
+            with ui.row().classes('items-center'):
+                ui.button('操作手冊 (~)', on_click=self.global_kbd.show_help).props('outline dense')
+
+                # Header 的 Auto-off 選單（關/30s/60s/5min）
+                options = {'關': 0, '30s': 30, '60s': 60, '5min': 300}
+
+                def _auto_label():
+                    cur = getattr(self.global_kbd, 'timeout_sec', 30)
+                    for k, v in options.items():
+                        if v == cur:
+                            return k
+                    return '30s'
+
+                sel = ui.select(list(options.keys()), value=_auto_label()).props('dense outlined')
+
+                # 新版 NiceGUI：on_value_change；舊版：監聽 'update:model-value'
+                if hasattr(sel, 'on_value_change'):
+                    sel.on_value_change(
+                        lambda e: self.global_kbd.set_timeout_sec(
+                            options.get(getattr(e, 'value', sel.value), 0)
+                        )
+                    )
+                else:
+                    sel.on(
+                        'update:model-value',
+                        lambda e: self.global_kbd.set_timeout_sec(options.get(e.args, 0))
+                    )
         with ui.row().classes('w-full no-wrap').style('height: calc(100vh - 100px);'):
             # 【手冊實作 v1.18】為左欄添加 'custom-scrollbar' class
             with ui.column().classes('w-1/3 custom-scrollbar').style('height: 100%; overflow:hidden auto; min-height: 0; min-width: 0;'):
@@ -238,11 +266,17 @@ class UIController:
             with ui.row():
                 ui.button('關節測試 (Joint Test)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="JOINT_TEST"))
                 ui.button('手動控制 (Manual Ctrl)', on_click=lambda: event_bus.publish(EVENT_MODE_CHANGE_REQUESTED, mode="MANUAL_CTRL"))
+
             ui.separator().classes('my-2')
             ui.label('模擬控制').classes('text-lg')
             with ui.row():
-                ui.button().bind_text_from(self.state, 'single_step_mode', lambda is_paused: '▶️ 播放 (SPACE)' if is_paused else '⏸️ 暫停 (SPACE)').on('click', self._toggle_pause)
-                ui.button('⏭️ 步進 (N)', on_click=lambda: setattr(self.state, 'execute_one_step', True)).bind_enabled_from(self.state, 'single_step_mode')
+                ui.button().bind_text_from(
+                    self.state, 'single_step_mode',
+                    lambda is_paused: '▶️ 播放 (SPACE)' if is_paused else '⏸️ 暫停 (SPACE)'
+                ).on('click', self._toggle_pause)
+                ui.button('⏭️ 步進 (N)', on_click=lambda: setattr(self.state, 'execute_one_step', True)) \
+                .bind_enabled_from(self.state, 'single_step_mode')
+
             ui.separator().classes('my-2')
             ui.label('重置').classes('text-lg')
             with ui.row():
@@ -255,13 +289,40 @@ class UIController:
             ui.label('Sim2Real 數據捕獲').classes('text-lg')
             # 新增一個用於輸入捕獲時長的輸入框
             capture_duration_input = ui.number(label="捕獲時長 (秒)", value=5.0, min=1, step=0.5, format='%.1f').style('width: 150px')
-            
             with ui.row():
                 # 按鈕現在只負責觸發帶有時長參數的 start_data_capture
                 ui.button('捕獲數據', on_click=lambda: self.policy_manager.start_data_capture(duration=capture_duration_input.value))
                 
                 # 保留一個手動停止按鈕，以防萬一需要提前終止
                 ui.button('手動停止', on_click=self.policy_manager.stop_and_save_data_capture).props('outline')
+
+            # ── 修正：鍵盤駕駛 Auto-off（相容不同 NiceGUI 版本）──
+            ui.separator().classes('my-2')
+            ui.label('鍵盤駕駛（Auto-off）').classes('text-lg')
+            with ui.row():
+                options = {'關': 0, '30s': 30, '60s': 60, '5min': 300}
+
+                def _find_default_label():
+                    cur = getattr(self.global_kbd, 'timeout_sec', 30)
+                    for k, v in options.items():
+                        if v == cur:
+                            return k
+                    return '30s'
+
+                sel = ui.select(list(options.keys()), value=_find_default_label()).props('dense outlined')
+
+                # 新版 NiceGUI：用 on_value_change；舊版：退回原生事件
+                if hasattr(sel, 'on_value_change'):
+                    sel.on_value_change(
+                        lambda e: self.global_kbd.set_timeout_sec(options.get(getattr(e, 'value', sel.value), 0))
+                    )
+                else:
+                    sel.on(
+                        'update:model-value',
+                        lambda e: self.global_kbd.set_timeout_sec(options.get(e.args, 0))
+                    )
+
+
 
     # 【v4.11.6-w 關鍵修正】
     # 新增這個被遺漏的方法
@@ -321,7 +382,7 @@ class UIController:
 
             # 現在綁定到 self.hardware_controller.is_running
             # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
-            ui.button('啟用或停用 AI (K)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
+            ui.button('啟用或停用 AI (V)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
                 .bind_enabled_from(self.state, 'hardware_is_running')
 
             ui.separator().classes('my-2')
@@ -444,22 +505,11 @@ class UIController:
 
                         js_script = f'''
                             const prompt = {escaped_prompt};
-                            console.log(`接收到來自 Python 的 Prompt: "${{prompt}}"`);
-
                             const ws_name = 'nanoowl_ws_connection';
-
                             if (!window[ws_name] || window[ws_name].readyState > 1) {{
-                                console.log("WebSocket 未連接，正在創建...");
                                 window[ws_name] = new WebSocket('ws://localhost:8081/ws');
-
-                                window[ws_name].onopen = () => {{
-                                    console.log('%c[WebSocket] 連接成功，現在發送消息', 'color: green;');
-                                    window[ws_name].send(prompt);
-                                }};
-                                window[ws_name].onerror = (err) => console.error("[WebSocket] 連接錯誤:", err);
-                                window[ws_name].onclose = () => console.warn("[WebSocket] 連接已關閉");
+                                window[ws_name].onopen = () => window[ws_name].send(prompt);
                             }} else {{
-                                console.log("WebSocket 已連接，直接發送消息");
                                 window[ws_name].send(prompt);
                             }}
                         '''
@@ -693,8 +743,7 @@ class UIController:
 
             # 開關的視覺狀態
             should_be_on = (hw_link_status == HardwareLinkStatus.VERIFIED)
-            current_switch_value = self.enable_motors_switch.value
-            if current_switch_value != should_be_on:
+            if self.enable_motors_switch.value != should_be_on:
                 self.enable_motors_switch.set_value(should_be_on)
 
         primary_policy = state_snapshot.policy_manager_ref.primary_policy_name
@@ -738,13 +787,11 @@ class UIController:
             self.frw_status_label.set_text(f"狀態：{'ON' if self.state.recoil_warning_active else 'OFF'}")
 
     def _update_onnx_short_vector_labels(self, std_obs_snapshot: Dict):
-        dims_dict = self.state.observation_manager_ref.ALL_OBS_DIMS if self.state.observation_manager_ref else {}
         for comp_name, md_widget in self.onnx_input_labels.items():
             value_slice = std_obs_snapshot.get(comp_name)
             if value_slice is not None:
                 vec_str = np.array2string(value_slice, precision=3, suppress_small=True, formatter={'float_kind': lambda x: f"{x:7.3f}"})
-                md_content = f"`{vec_str}`"
-                md_widget.set_content(md_content)
+                md_widget.set_content(f"`{vec_str}`")
             else:
                 md_widget.set_content('`N/A`')
 
