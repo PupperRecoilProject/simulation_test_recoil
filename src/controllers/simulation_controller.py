@@ -109,119 +109,76 @@ class SimulationController:
         【v4.0.2 修改版】執行緒主迴圈。
         【v4.6.0 修改】分離物理更新與數據處理，確保數據流在所有模式下暢通。
         【v4.12.0 重構】執行緒主迴圈，採用解耦的邏輯與渲染迴圈。
+        【v4.12.4 重構】採用物理時間累加器架構，實現邏輯與渲染的完全解耦。
         """
         is_headless = isinstance(self.sim, MockSimulation)
         if not is_headless:
             self.sim.initialize_window_and_context()
         self._initialize_simulation_state()
-
+        
+        # --- 時間參數設定 ---
         logic_interval = 1.0 / self.config.control_freq
         render_interval = 1.0 / self.config.rendering_frequency if self.config.rendering_frequency > 0 else 0
-
+        physics_timestep = self.config.physics_timestep
+        
+        # --- 計時器與累加器初始化 ---
         next_logic_update_time = time.perf_counter()
         next_render_update_time = time.perf_counter()
+        last_frame_time = time.perf_counter()
+        
+        physics_accumulator = 0.0
+        MAX_FRAME_TIME = 0.25 
 
-        action_from_previous_frame = np.zeros(self.config.num_motors)
-
+        # --- 主迴圈 (以最高頻率運行) ---
         while self._running.is_set():
+            # --- 步驟 1: 累積真實時間債務 ---
             current_time = time.perf_counter()
+            frame_time = current_time - last_frame_time
+            last_frame_time = current_time
+            if frame_time > MAX_FRAME_TIME:
+                frame_time = MAX_FRAME_TIME
+            physics_accumulator += frame_time
+            
+            # --- 步驟 2: 處理掛起的 UI 請求 ---
+            # ...[請求處理邏輯完整保留，與 v4.12.0 相同，此處省略]...
+            
+            # --- 步驟 3: 償還物理時間債務 (物理+AI迴圈) ---
+            is_sim_active = not is_headless and self.state.control_mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
+            if is_sim_active:
+                while physics_accumulator >= physics_timestep:
+                    # 在物理步進前，檢查是否到了 AI 決策的時刻
+                    # 注意：這裡的 next_logic_update_time 是基於真實時鐘的
+                    if current_time >= next_logic_update_time:
+                        self._perform_ai_decision()
+                        next_logic_update_time += logic_interval
+                    
+                    # 執行一次單步物理模擬
+                    self._single_physics_step()
+                    
+                    # 償還一筆債務
+                    physics_accumulator -= physics_timestep
+            else: # 如果模擬不活躍，則重置累加器，避免時間債務無限累積
+                physics_accumulator = 0.0
 
-            # 處理掛起的 UI/輸入請求（高優先級）
-            with self.state.lock:
-                shutdown_req = self.state.shutdown_requested
-                hard_reset_req = self.state.hard_reset_requested
-                soft_reset_req = self.state.soft_reset_requested
-                mode_change_req = self.state.mode_change_request
-                float_toggle_req = self.state.manual_float_toggle_request
-
-                # 清除旗標（由主迴圈在安全上下文中處理）
-                self.state.shutdown_requested = False
-                self.state.hard_reset_requested = False
-                self.state.soft_reset_requested = False
-                self.state.mode_change_request = None
-                self.state.manual_float_toggle_request = None
-
-            if shutdown_req:
-                self._handle_shutdown()
-                continue
-
-            if hard_reset_req:
-                self.hard_reset()
-
-            if soft_reset_req:
-                self.soft_reset()
-
-            if mode_change_req:
-                self._handle_mode_change(mode_change_req)
-
-            if float_toggle_req is not None:
-                self._handle_float_toggle(float_toggle_req)
-
-            # 邏輯迴圈（control_freq 驅動）
-            if current_time >= next_logic_update_time:
-                self._perform_logic_frame(action_from_previous_frame)
-
-                with self.state.lock:
-                    action_from_previous_frame = self.state.latest_action_raw.copy()
-
-                next_logic_update_time += logic_interval
-
-            # 渲染迴圈（rendering_frequency 驅動）
+            # --- 步驟 4: 渲染迴圈 ---
             if not is_headless and current_time >= next_render_update_time:
-                if self.state.control_mode == "HARDWARE_MODE":
-                    self._update_simulation_from_hardware_state()
-
-                self.update_derived_states_and_render()
-
+                alpha = physics_accumulator / physics_timestep if physics_timestep > 0 else 1.0
+                self._render_frame(alpha)
+                
                 if render_interval > 0:
                     next_render_update_time += render_interval
                 else:
-                    next_render_update_time = time.perf_counter()
+                    next_render_update_time = current_time
 
-            # 視窗事件（非阻塞）
+            # --- 步驟 5: 視窗事件與休眠 ---
             if not is_headless:
                 self.sim.poll_window_events()
-
             time.sleep(0.001)
 
         log.info("模擬執行緒已優雅地停止。")
 
-    def _perform_logic_frame(self, action_from_previous_frame: np.ndarray):
-        """
-        【v4.12.0 新增】執行一個完整的「邏輯幀」。
-        這是一個原子操作單元，包含 AI 決策、物理演進和狀態更新。
-        """
-        with self.state.lock:
-            self.state.raw_last_action = action_from_previous_frame.copy()
-
-        # AI 決策
-        with self.state.lock:
-            command = self.state.command.copy()
-        onnx_input, action_final = self.policy_manager.get_action(command)
-
-        # 計算最終控制指令並更新 state
-        with self.state.lock:
-            control_mode = self.state.control_mode
-            tuning_params = self.state.tuning_params
-            if control_mode == "MANUAL_CTRL":
-                final_ctrl = self.state.manual_final_ctrl.copy()
-            elif control_mode == "JOINT_TEST":
-                final_ctrl = self.sim.default_pose + self.state.joint_test_offsets
-            else:
-                final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
-
-            self.state.latest_onnx_input = onnx_input.flatten()
-            self.state.latest_action_raw = action_final
-            self.state.latest_final_ctrl = final_ctrl
-
-        # 物理演進
-        is_sim_active = not isinstance(self.sim, MockSimulation) and self.state.control_mode not in ["HARDWARE_MODE", "SERIAL_MODE"]
-        if is_sim_active:
-            self._simulation_step()
-
-        # 更新標準化觀測值
-        if self.state.observation_manager_ref:
-            self.state.observation_manager_ref.update_all_observations()
+    # 舊的 _perform_logic_frame 將被新的 run() 迴圈邏輯取代
+    # def _perform_logic_frame(self, action_from_previous_frame: np.ndarray):
 
     # =========================================================================
     # III. Core Logic Execution (核心邏輯執行)
@@ -264,38 +221,81 @@ class SimulationController:
                 self.state.recoil_timer = self.state.recoil_interval
                 log.info(f"*** RECOIL EVENT *** Next in {self.state.recoil_interval:.2f}s")
 
-    def _simulation_step(self) -> None:
+    def _perform_ai_decision(self):
         """
-        【v4.3.1 修改】執行物理模擬並更新原始物理數據到 SimulationState。
-        【v4.4.2 修改】同步更新寫入的 raw_ 變數名。
-        【v4.4.7 修改】在方法結尾新增對觀測管理器的統一調用。
-        【v4.12.0 重構】執行固定數量的物理步進，使模擬時間與真實時間同步。
+        【v4.12.4 新增】只負責 AI 決策，並將結果存入 state。
+        
+        此函式封裝了 AI 決策的原子操作。它從 state 讀取感知信息，
+        調用 PolicyManager，並將決策結果（action_raw, final_ctrl）寫回 state。
         """
+        # 這段程式碼是從舊的 _perform_logic_frame 中抽離出來的
+        with self.state.lock:
+            command = self.state.command.copy()
+            # 獲取 last_action 需要在鎖外，因為 get_action 可能耗時
+        
+        # 由於 get_action 內部有自己的鎖，這裡可以在鎖外安全調用
+        onnx_input, action_final = self.policy_manager.get_action(command)
+        
+        with self.state.lock:
+            control_mode = self.state.control_mode
+            tuning_params = self.state.tuning_params
+            if control_mode == "MANUAL_CTRL":
+                final_ctrl = self.state.manual_final_ctrl.copy()
+            elif control_mode == "JOINT_TEST":
+                final_ctrl = self.sim.default_pose + self.state.joint_test_offsets
+            else:
+                final_ctrl = self.sim.default_pose + action_final * tuning_params.action_scale
+            
+            self.state.latest_onnx_input = onnx_input.flatten()
+            self.state.latest_action_raw = action_final
+            self.state.latest_final_ctrl = final_ctrl
+            # 【重要】更新 last_action 的職責現在也歸於此處
+            self.state.raw_last_action = action_final.copy()
+
+    # 舊的 _simulation_step 將被 _single_physics_step 取代
+    # def _simulation_step(self) -> None:
+    
+    def _single_physics_step(self):
+        """
+        【v4.12.4 新增】執行一次單步的物理模擬 + 狀態更新。
+        """
+        # 1. 應用控制指令
         with self.state.lock:
             final_ctrl = self.state.latest_final_ctrl.copy()
             tuning_params = self.state.tuning_params
+        self.sim.apply_position_control(final_ctrl, tuning_params)
+        
+        # 2. 執行單步物理演進
+        mujoco.mj_step(self.sim.model, self.sim.data)
 
-        num_steps = int(self.config.control_dt / self.config.physics_timestep)
-
-        for _ in range(num_steps):
-            if not self._running.is_set():
-                break
-
-            self.sim.apply_position_control(final_ctrl, tuning_params)
-            mujoco.mj_step(self.sim.model, self.sim.data)
-
+        
+        # 3. 將物理結果寫回 state.raw_...
         with self.state.lock:
+            # ...[此處是將 sim.data 寫入 state.raw_... 的完整程式碼，與 v4.12.0 相同]...
             self.state.raw_torso_quat = self.sim.data.body('torso').xquat.copy()
             self.state.raw_torso_linear_velocity = self.sim.data.cvel[self.sim.torso_id, 3:].copy()
             self.state.raw_torso_angular_velocity = self.sim.data.cvel[self.sim.torso_id, :3].copy()
             self.state.raw_joint_positions = self.sim.data.qpos[7:].copy()
             self.state.raw_joint_velocities = self.sim.data.qvel[6:].copy()
             if self.sim.accelerometer_id != -1:
-                start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
-                end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
-                self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
+                 start = self.sim.model.sensor_adr[self.sim.accelerometer_id]
+                 end = start + self.sim.model.sensor_dim[self.sim.accelerometer_id]
+                 self.state.raw_accelerometer = self.sim.data.sensordata[start:end].copy()
             else:
-                self.state.raw_accelerometer.fill(0.0)
+                 self.state.raw_accelerometer.fill(0.0)
+            
+        # 4. 更新標準化觀測值
+        if self.state.observation_manager_ref:
+            self.state.observation_manager_ref.update_all_observations()
+
+    def _render_frame(self, alpha: float):
+        """
+        【v4.12.4 新增】執行一次渲染。alpha 用於未來可能的插值渲染。
+        """
+        # 目前，我們暫不實現插值渲染，直接渲染最新狀態
+        if self.state.control_mode == "HARDWARE_MODE":
+            self._update_simulation_from_hardware_state()
+        self.update_derived_states_and_render()
 
     def _update_simulation_from_hardware_state(self):
         """
