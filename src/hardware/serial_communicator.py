@@ -89,7 +89,7 @@ class SerialCommunicator:
         if not self.port_name: return False # 如果沒有埠名，返回失敗
         try:
             log.info(f"正在連接到 {self.port_name}...")
-            self.ser = serial.Serial(self.port_name, baud_rate, timeout=0.1) # 建立序列埠物件
+            self.ser = serial.Serial(self.port_name, baud_rate, timeout=0.1,write_timeout=0) # 建立序列埠物件
             time.sleep(0.5) # 等待硬體初始化
             self.ser.reset_input_buffer() # 清空輸入緩衝區
             self.ser.reset_output_buffer() # 清空輸出緩衝區
