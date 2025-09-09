@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, List, Dict
 from datetime import datetime
 import csv
 
-# 為了型別提示，避免循環匯入
+# ✅ 這行是新加入的：改用我們的共用工廠自動挑選 EP
+from src.core.ort_provider import create_session, diag_print
+
 if TYPE_CHECKING:
     from src.core.config import AppConfig
     # 【v4.4.7 修改】 新增 State 的類型提示
@@ -44,7 +46,14 @@ class PolicyManager:
         self.model_recipes: Dict[str, List[str]] = {} # 字典，儲存每個模型對應的觀察配方
         self.model_history_lengths: Dict[str, int] = {} # 字典，儲存每個模型需要的歷史觀察幀數
         self.model_names: List[str] = [] # 列表，儲存所有成功載入模型的名稱
-        
+
+
+        # （選用）開機印一次 ORT 診斷，方便你在不同機器上確認 EP
+        try:
+            diag_print()
+        except Exception as _e:
+            pass
+
         print("--- 正在載入所有 ONNX 模型及其配方 ---")
         # 遍歷設定檔中定義的所有模型
         for name, model_info in config.onnx_models.items():
@@ -62,11 +71,11 @@ class PolicyManager:
                 sess_options = ort.SessionOptions() # 建立 ONNX Runtime 的 session 設定
                 # 定義優化後模型的快取檔案路徑，例如 "model.onnx" -> "model.optimized.ort"
                 cache_path = os.path.splitext(path)[0] + ".optimized.ort"
-                sess_options.optimized_model_filepath = cache_path # 設定快取路徑
-                sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL # 啟用所有圖優化
-                
-                # 載入 session。如果 .ort 快取檔案已存在且最新，會直接載入；否則會進行優化並生成快取檔
-                session = ort.InferenceSession(path, sess_options=sess_options, providers=['CPUExecutionProvider'])
+                sess_options.optimized_model_filepath = cache_path
+                sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+                # ✅ 用共用工廠自動挑選最佳 EP（取代寫死 CPU）
+                session = create_session(path, sess_options=sess_options)
 
                 # --- 推斷模型輸入維度和歷史長度 ---
                 # 【v4.3.2 修改】 根據新的 ObservationManager 來計算基礎觀測維度
