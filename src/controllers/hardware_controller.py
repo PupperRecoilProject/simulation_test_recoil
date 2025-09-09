@@ -1,6 +1,6 @@
 # src/controllers/hardware_controller.py
 
-# 【v4.3.2 修改】 調整 import，移除不再需要的 Enum
+# 【v4.3.2 修改】 調整 import
 import serial
 import threading
 import time
@@ -69,6 +69,8 @@ class HardwareController:
         # 根據您的設計，初始化兩個雙端佇列用於儲存最近的時間戳
         self.data_received_times = deque(maxlen=100) # 儲存成功解析數據幀的時間
         self.ai_step_times = deque(maxlen=100)       # 儲存執行AI決策的時間
+        # 【v4.13.9-w】頻率隊列執行緒安全鎖
+        self._freq_lock = threading.Lock()
 
         self._subscribe_to_events()
         log.info("✅ 硬體控制器 (v4.11.0-w 頻率監控版) 已初始化。")
@@ -78,8 +80,11 @@ class HardwareController:
         # log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
 
     def _subscribe_to_events(self):
-        event_bus.subscribe(EVENT_HARDWARE_AI_TOGGLE_REQUESTED, 
-                            lambda: self.command_queue.put(HWCommand.TOGGLE_AI))
+        # 【v4.13.1-w】允許事件帶參數，避免 TypeError
+        event_bus.subscribe(
+            EVENT_HARDWARE_AI_TOGGLE_REQUESTED,
+            lambda *args, **kwargs: self.command_queue.put(HWCommand.TOGGLE_AI)
+        )
         log.info("  -> HardwareController 已訂閱 AI 切換請求事件 (將發送至內部隊列)。")
 
     def request_start(self) -> None:
@@ -133,14 +138,15 @@ class HardwareController:
         while self._is_running_event.is_set():
             if self.internal_state != HWState.RUNNING or not self.ser or not self.ser.is_open:
                 # 若未 RUNNING，改用短等待事件或極短讓渡，避免把刷新率鎖死在 10Hz
-                self._is_running_event.wait(timeout=0.02)
+                # 【v4.13.2-w】使用位置參數以避免某些版本對關鍵字參數的兼容性問題
+                self._is_running_event.wait(0.02)
                 continue
 
             try:
                 # 直接呼叫 readline() 讓 timeout=0.02 自然節流；無資料會在 ~20ms 返回空字串
                 line = self.ser.readline().decode('utf-8', errors='ignore')
                 if line:
-                    # 【修正】先記錄原始資料，再解析，避免重複呼叫
+                    # 【v4.11.0-w】先記錄原始資料，再解析
                     log.debug(f"原始串口接收: {repr(line)}")
                     self.parse_policy_stream(line)
 
@@ -153,12 +159,13 @@ class HardwareController:
                     self.state.hardware_link_status = HardwareLinkStatus.CONNECTION_LOST
                 # 將控制器內部狀態也設置為 FAILED，以阻止後續操作
                 self._set_internal_state(HWState.FAILED)
-                # 終止讀取執行緒
+                self._is_running_event.clear()  # 【v4.13.3-w】讓控制執行緒也能退出
                 break
             
             except Exception as e:
                 log.error(f"❌ _read_from_port 發生未知錯誤: {e}", exc_info=True)
                 self._set_internal_state(HWState.FAILED)
+                self._is_running_event.clear()
                 break
             # 不再固定 sleep；節流交給 serial timeout 與事件等待
 
@@ -212,16 +219,18 @@ class HardwareController:
             if time_accumulator >= time_block:
                 # --- 執行一個完整的邏輯幀 ---
                 # 處理掛起的命令
-                try:
-                    command: HWCommand = self.command_queue.get_nowait()
+                # 【v4.13.6-w】批次處理多筆指令避免堆積
+                for _ in range(8):
+                    try:
+                        command: HWCommand = self.command_queue.get_nowait()
+                    except Empty:
+                        break
                     if command == HWCommand.START and self.internal_state in [HWState.STOPPED, HWState.FAILED]:
                         self._execute_start()
                     elif command == HWCommand.STOP and self.internal_state == HWState.RUNNING:
                         self._execute_stop()
                     elif command == HWCommand.TOGGLE_AI and self.internal_state == HWState.RUNNING:
                         self._execute_toggle_ai()
-                except Empty:
-                    pass
 
                 # 執行 AI 決策與指令發送
                 if self.internal_state == HWState.RUNNING and self.ai_control_active:
@@ -230,7 +239,10 @@ class HardwareController:
 
                 # 更新觀測管理器
                 if self.state.observation_manager_ref:
-                    self.state.observation_manager_ref.update_all_observations()
+                    try:
+                        self.state.observation_manager_ref.update_all_observations()
+                    except Exception as e:
+                        log.warning(f"[HW] 觀測更新失敗，已跳過本幀: {e}")
                 
                 # 更新頻率監控數據
                 self._update_frequencies()
@@ -251,19 +263,19 @@ class HardwareController:
         # 計算數據接收 (I/O) 頻率
         if len(self.data_received_times) > 1:
             # 移除超過1秒的舊數據，使頻率計算更即時
-            while current_time - self.data_received_times[0] > 1.0:
-                self.data_received_times.popleft()
-                if len(self.data_received_times) <= 1: break
-            
-            if len(self.data_received_times) > 1:
-                elapsed = self.data_received_times[-1] - self.data_received_times[0]
-                self.state.hw_data_freq = (len(self.data_received_times) - 1) / elapsed if elapsed > 0 else 0.0
+            with self._freq_lock:  # 【v4.13.9-w】加鎖確保與解析執行緒安全
+                while len(self.data_received_times) > 1 and current_time - self.data_received_times[0] > 1.0:
+                    self.data_received_times.popleft()
+                if len(self.data_received_times) > 1:
+                    elapsed = self.data_received_times[-1] - self.data_received_times[0]
+                    self.state.hw_data_freq = (len(self.data_received_times) - 1) / elapsed if elapsed > 0 else 0.0
 
         # 計算 AI 決策頻率
         if len(self.ai_step_times) > 1:
             while current_time - self.ai_step_times[0] > 1.0:
-                self.ai_step_times.popleft()
-                if len(self.ai_step_times) <= 1: break
+                self.ai_step_times.pop(0)
+                if len(self.ai_step_times) <= 1:
+                    break
 
             if len(self.ai_step_times) > 1:
                 elapsed = self.ai_step_times[-1] - self.ai_step_times[0]
@@ -313,6 +325,9 @@ class HardwareController:
             self.serial_comm.resume_control()
             return
 
+        # 【v4.13.4-w】統一 ser 來源，避免讀寫端不同步
+        self.ser = self.teensy_api.ser
+
         try:
             log.info("--- 開始執行硬體啟動序列 (v4.10.4 協定感知版) ---")
             
@@ -333,7 +348,8 @@ class HardwareController:
                 raise serial.SerialException("發送 'monitor p' 指令失敗，啟動中止。")
 
             time.sleep(0.1) 
-            self.ser.reset_input_buffer()
+            if self.ser:
+                self.ser.reset_input_buffer()
             
             log.info("✅ 硬體啟動序列成功完成，通訊連線已驗證。")
             # 【v4.10.5 FEAT-SAFETY-INTUITIVE】實現預設安全
@@ -343,11 +359,12 @@ class HardwareController:
                 
             self._set_internal_state(HWState.RUNNING)
             
-            self.ai_control_active = True
+            # 【v4.13.5-w】預設靜默，AI 不自動跑
+            self.ai_control_active = False
             with self.state.lock: 
-                self.state.hardware_ai_is_active = True
-            # 【v4.10.5 修改】更新日誌，反映新的預設安全狀態
-            log.info("🤖 AI 控制已準備就緒，但馬達預設為靜默狀態，等待 UI 啟用。")
+                self.state.hardware_ai_is_active = False
+
+            log.info("🤖 啟動完成，預設為 MUTED 並關閉 AI 決策，待 UI 啟用。")
 
         except serial.SerialException as e:
             log.error(f"❌ 硬體啟動序列失敗: {e}")
@@ -381,7 +398,6 @@ class HardwareController:
             log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
             # 【v4.10.5 修正】使用正確的 execute_command API。
             # 根據協定字典，這兩個指令都是 "fire and forget"，無需等待回應。
-            # 舊的 send_command_and_wait_for_ok 已被移除，導致 AttributeError。
             self.teensy_api.execute_command("stop")
             self.teensy_api.execute_command("monitor h")
         
@@ -396,6 +412,13 @@ class HardwareController:
         
         self._set_internal_state(HWState.STOPPED)
 
+        # 【v4.13.10-w】可選，真的停掉執行緒
+        self._is_running_event.clear()
+        if self.control_thread and self.control_thread.is_alive():
+            self.control_thread.join(timeout=0.5)
+        if self.read_thread and self.read_thread.is_alive():
+            self.read_thread.join(timeout=0.5)
+        log.info("  -> 硬體控制與讀取執行緒已停止")
 
     def _execute_toggle_ai(self):
         """
@@ -407,7 +430,7 @@ class HardwareController:
         with self.state.lock:
             self.state.hardware_ai_is_active = self.ai_control_active
         
-        log.info(f"🤖 硬體 AI 控制已 {'啟用' if self.ai_control_active else '暫停'}.")
+        log.info(f"🤖 硬體 AI 控制已 {'啟用' if self.ai_control_active else '暫停'}。")
         
         if self.ai_control_active:
             self.policy.reset()
@@ -458,8 +481,12 @@ class HardwareController:
             if not self.teensy_api.send_motor_commands(final_command):
                 # 如果 send_motor_commands 返回 False，則意味著發送失敗（可能是連接問題）
                 log.error("AI 步驟中發送馬達指令失敗，連接可能已斷開或處於靜默狀態。")
-                # 【v4.10.4 新增】在發送失敗時，將狀態設為 FAILED
+                # 【v4.13.7-w】在失敗時結束控制執行緒並標示掉線
+                with self.state.lock:
+                    self.state.hardware_link_status = HardwareLinkStatus.CONNECTION_LOST
                 self._set_internal_state(HWState.FAILED)
+                self._is_running_event.clear()
+                return
         else:
             # 如果 teensy_api 本身就未初始化，也無法發送
             log.warning("TeensyAPI 未初始化，無法發送馬達指令。")
@@ -487,9 +514,10 @@ class HardwareController:
         # 而不是一個資料幀。
         # 【v4.13.0 增強】智慧訊息分類器
         if clean_line.startswith('['):
-            log.info(f"[Teensy Msg]: {clean_line}")
+            # 【v4.13.8-w】降級到 debug，避免洗版
+            log.debug(f"[Teensy Msg]: {clean_line}")
             
-            # 【v4.13.0 新增】如果收到的是 Teensy 執行指令的回應，嘗試解析其內容
+            # 【v4.13.0 增強】如果收到的是 Teensy 執行指令的回應，嘗試解析其內容
             if "[CMD] Executing: move all " in clean_line:
                 try:
                     # 提取指令後面的角度字串
@@ -500,21 +528,22 @@ class HardwareController:
                 except Exception as e:
                     log.warning(f"  -> 無法解析 Teensy 的 Move 指令回應: {e}")
             
-            return # 處理完畢，直接返回
+            return  # 系統訊息處理完畢，直接返回
 
         try:
             # 只有在確認不是系統訊息後，才嘗試按資料幀格式進行解析
             parts = clean_line.split(',')
 
             if len(parts) != 34:
-                # 這裡的警告現在只會在非系統訊息且欄位數不對時觸發，更有價值。
+                # 在非系統訊息且欄位數不對時警告
                 log.warning(f"數據幀欄位數量錯誤。預期 34，收到 {len(parts)}。原始數據: '{clean_line}'")
                 return
             
             data_vec = np.array(parts, dtype=np.float32)
             
-            # 【v4.11.0-w 新增】在成功解析後記錄時間戳
-            self.data_received_times.append(time.perf_counter())
+            # 【v4.11.0-w】在成功解析後記錄時間戳
+            with self._freq_lock:  # 【v4.13.9-w】多執行緒安全 append
+                self.data_received_times.append(time.perf_counter())
             
             with self.state.lock:
                 self.state.raw_torso_angular_velocity[:] = data_vec[0:3]
