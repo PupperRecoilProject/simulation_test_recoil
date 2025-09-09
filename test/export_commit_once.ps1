@@ -19,7 +19,10 @@ Param(
   # 指定要輸出的 commit，預設 HEAD
   [string]$Commit = 'HEAD',
 
-  # 文字輸出檔名
+  # 【修改】新增輸出資料夾參數，預設為 'output'
+  [string]$OutputDir = 'output',
+
+  # 【修改】註解更新：現在這只代表「檔名」
   [string]$Output = 'commit_export.txt',
 
   # 只看特定路徑或副檔名，例如 "src","*.py"
@@ -32,6 +35,16 @@ Param(
 try {
   $global:OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 } catch { }
+
+# 【新增】組合完整輸出路徑，並確保資料夾存在
+# 如果輸出資料夾不存在，就建立它
+if (-not (Test-Path $OutputDir -PathType Container)) {
+  Write-Host "建立輸出資料夾：$OutputDir" -ForegroundColor Yellow
+  $null = New-Item -Path $OutputDir -ItemType Directory -Force
+}
+# 組合完整的檔案路徑
+$fullOutputPath = Join-Path -Path $OutputDir -ChildPath $Output
+
 
 # 先解析成完整 hash，順便驗證 commit 是否存在
 $fullHash = & git rev-parse $Commit 2>$null
@@ -60,43 +73,20 @@ if ($Paths -and $Paths.Count -gt 0) {
 
 Write-Host "Running: git $($gitArgs -join ' ')" -ForegroundColor Cyan
 
-if (Test-Path $Output) { Remove-Item $Output -Force }
+# 【修改】使用新的完整路徑變數 $fullOutputPath
+if (Test-Path $fullOutputPath) { Remove-Item $fullOutputPath -Force }
 
-# 串流寫入 UTF-8 檔案
-& git @gitArgs | Out-File -FilePath $Output -Encoding UTF8
+# 【修改】串流寫入 UTF-8 檔案到指定路徑
+& git @gitArgs | Out-File -FilePath $fullOutputPath -Encoding UTF8
 
 if ($LASTEXITCODE -ne 0) {
   Write-Warning "git 結束代碼 $LASTEXITCODE，請確認參數是否正確"
 } else {
-  Write-Host "匯出完成 → $Output" -ForegroundColor Green
+  # 【修改】顯示完整的輸出路徑
+  Write-Host "匯出完成 → $fullOutputPath" -ForegroundColor Green
 }
 
 if ($Mode -in @('summary','focus')) {
   Write-Host "說明：summary 與 focus 模式遇到二進制檔案會以 'Binary files differ' 標示" -ForegroundColor DarkGray
   Write-Host "若想看完整二進制差異，可改用 full 模式或另行加上格式轉文字流程" -ForegroundColor DarkGray
 }
-
-#怎麼用
-#
-#只輸出最新一筆，重點版（±3 行）
-#
-#.\test\export_commit_once.ps1 -Mode focus
-#
-#
-#指定某筆 commit（貼短 hash 或完整 hash）
-#      .\test\export_commit_once.ps1 -Mode focus -Commit 91d1d3b -Output one_commit.txt
-#
-#
-#只要摘要與檔案清單（最精簡）
-#
-#.\test\export_commit_once.ps1 -Mode summary -Commit HEAD
-#
-#
-#完整 diff（稽核用）
-#
-#.\test\export_commit_once.ps1 -Mode full -Commit HEAD
-#
-#
-#只看某些路徑或副檔名
-#
-#.\test\export_commit_once.ps1 -Mode focus -Commit HEAD -Paths "src","*.xml"
