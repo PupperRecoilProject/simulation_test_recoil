@@ -23,7 +23,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
   
   agile_model: 
     path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
@@ -35,7 +35,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
 
   new_high_level: 
     path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
@@ -47,7 +47,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
 
   new_e2e: 
     path: "models/pupper_ppo_policy_e2e_203161600.onnx"
@@ -59,21 +59,59 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands'
+      - 'commands_3d' # 【修改】從 commands -> commands_3d
+
+  fire_on_recoil_51: 
+    path: "models/pupper_ppo_policy_e2e_101580800.onnx"
+    # fire_on_recoil_51 模型也使用新的觀察配方
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d' # 【修改】從 commands -> commands_4d
+      - 'firearm_recoil_warming'
+
+  fire_on_recoil_51_fixed:
+    path: "models/pupper_ppo_policy_e2e_101580800_fixed.onnx"
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
+
+
+  
+
 
 # 模型平滑切換設定
 policy_transition_duration: 0.5 # 平滑過渡的持續時間 (秒)
-# ==================================
 
-# 核心參數 (Core Parameters)
+# ==================================
+# === 核心參數 (Core Parameters)
+# ==================================
 num_motors: 12
-physics_timestep: 0.004 # <-- 建議修改：提高模擬精度以增強穩定性
-control_freq: 50.0
+physics_timestep: 0.004
+control_freq: 50.0 # AI決策與物理演進的頻率 (Hz)
+
+# 【v4.12.0 新增】渲染迴圈的目標頻率 (Hz)
+# 用於控制模擬視窗的畫面刷新率，以適應不同性能的電腦。
+# 設為 0 表示不限制幀率，系統將盡力而為。建議值: 30 或 60。
+rendering_frequency: 30.0
+
 warmup_duration: 0.0
 
 # ONNX 模型命令輸入縮放因子
 # 順序: [vy 縮放, vx 縮放, wz 縮放]
-command_scaling_factors: [1.0, 1.0, 1.0] 
+command_scaling_factors: [1.0, 1.0, 1.0, 1.0] 
 
 # ==================================
 # === 輸入控制設定 (Input Control Settings)
@@ -94,6 +132,17 @@ param_adjust_steps:
 # ==================================
 # === 初始調校參數 (Initial Tuning Parameters)
 # ==================================
+
+# 【v4.11.2 新增】機器人的預設站立姿態 (12個關節的角度, 單位: 弧度)
+# 這個值應與 MuJoCo XML 文件中的 'home' keyframe 保持一致。
+# 這是計算標準化觀測 joint_positions 的基準。
+default_pose: [
+  0.0, 0.0, 0.0,  # Front-Right Leg (Abduction, Hip, Knee)
+  0.0, 0.0, 0.0,  # Front-Left Leg
+  0.0, 0.0, 0.0,  # Hind-Right Leg
+  0.0, 0.0, 0.0   # Hind-Left Leg
+]
+
 initial_tuning_params:
   kp: 2.67  #8000/3000=2.6667
   kd: 0.17 #500/3000=0.1667
@@ -139,3 +188,20 @@ floating_controller:
   kd_vertical: 18.0       # 垂直 D (保持與Kp的關係)
   kp_attitude: 20.0       # 姿態 P (再次降低)
   kd_attitude: 4.0        # 姿態 D (相應調整)
+
+# 【v4.10.0 新增】地形生成設定
+# ==================================
+# === 地形生成設定 (Terrain Generation Settings)
+# ==================================
+terrain_generation:
+  sine_waves_amplitude: 0.04  # 正弦波地形的最大高度 (原為 0.08) (預設 0.04)
+  steps_height: 0.025         # 階梯地形的單階高度 (原為 0.05) (預設 0.025)
+  random_noise_amplitude: 0.05 # 隨機噪點地形的最大高度 (原為 0.1) (預設 0.05)
+  pyramid_max_height: 0.4      # 金字塔地形的最大高度 (原為 0.3-0.6) (預設 0.4)
+  stepped_pyramid_max_height: 0.5 # 階梯金字塔的最大高度 (原為 0.4-0.8) (預設 0.5)
+  stepped_pyramid_steps_min: 12 # 控制階梯金字塔的階梯數量範圍下限 (預設 12)
+  stepped_pyramid_steps_max: 16 # 控制階梯金字塔的階梯數量範圍上限 (預設 16)
+
+# ===================================================================
+firearm_recoil_warming:
+  auto_inhibit: true  #false   # true = 關閉自動預警，只保留手動 

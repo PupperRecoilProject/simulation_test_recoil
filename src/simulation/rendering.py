@@ -66,17 +66,18 @@ class DebugOverlay:
 
     def render_hardware_overlay(self, viewport, context, state: SimulationState):
         """
-        【v4.3.3 修改】
-        渲染硬體控制模式的專用介面。
-        數據源已完全重構為從 SimulationState 讀取，移除了對 hw_controller.hw_state_data 的依賴。
+        【v4.3.3 修改】渲染硬體控制模式的專用介面。
+        【v4.4.3 新增】增加原始感測器數據面板，以增強可觀測性。
         """
         # 【v4.0.2 UX 優化】在背景渲染一個半透明遮罩，以明確表示模擬已暫停
         mujoco.mjr_rectangle(viewport, 0.1, 0.1, 0.1, 0.7)
         
         padding = 10
-        panel_width = int(viewport.width * 0.45)
-        panel_height = int(viewport.height * 0.6)
-        top_left_rect = mujoco.MjrRect(padding, viewport.height - panel_height - padding, panel_width, panel_height)
+        panel_width = int(viewport.width * 0.48) # 調整寬度以便並排放置
+        
+        # --- 左側面板：主控制與狀態 ---
+        left_panel_height = int(viewport.height * 0.8)
+        top_left_rect = mujoco.MjrRect(padding, viewport.height - left_panel_height - padding, panel_width, left_panel_height)
         mujoco.mjr_rectangle(top_left_rect, 0.1, 0.1, 0.1, 0.8)
 
         ai_status = "Enabled" if state.hardware_ai_is_active else "Disabled"
@@ -96,33 +97,56 @@ class DebugOverlay:
 
         status_text = f"--- Real-time Hardware Status ---\n{state.hardware_status_text}"
         
-        # 【v4.3.3 修改】 從 state.raw_... 讀取感測器數據
-        # 這裡我們假設 HardwareController 正在運行，並在 state.lock 保護下讀取數據
-        sensor_text = ""
+        full_text_left = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{status_text}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_left_rect, full_text_left, " ", context)
+
+        # --- 右側面板：數據觀察 ---
+        right_panel_x = viewport.width - panel_width - padding
+        right_panel_height = int(viewport.height * 0.8)
+        top_right_rect = mujoco.MjrRect(right_panel_x, viewport.height - right_panel_height - padding, panel_width, right_panel_height)
+        mujoco.mjr_rectangle(top_right_rect, 0.1, 0.1, 0.1, 0.8)
+
+        # 【v4.4.3 新增】Raw Sensor Data 面板
+        # 從 state.raw_... 讀取數據
         with state.lock:
-            # 格式化加速度計數據
-            acc_str = np.array2string(state.raw_accelerometer, precision=2, suppress_small=True)
-            # 格式化陀螺儀數據
-            gyro_str = np.array2string(state.raw_torso_angular_velocity_world, precision=2, suppress_small=True)
-            # 格式化關節角度數據
-            joint_pos_str = np.array2string(state.raw_joint_positions, precision=2, suppress_small=True, max_line_width=80)
-            
-            sensor_text = (
-                f"\n\n--- Sensor Readings (from Robot) ---\n"
-                f"Accelerometer: {acc_str}\n"
-                f"Gyro (World):  {gyro_str}\n"
-                f"Joint Pos (rad):\n{joint_pos_str}"
-            )
+            raw_ang_vel_str = np.array2string(state.raw_torso_angular_velocity, precision=3, suppress_small=True)
+            raw_grav_vec_str = np.array2string(state.raw_gravity_vector, precision=3, suppress_small=True)
+            raw_accel_str = np.array2string(state.raw_accelerometer, precision=3, suppress_small=True)
+            raw_pitch_str = f"{state.raw_pitch_rad:.3f}"
         
-        full_text = f"{title}\n\n{help_text}\n\n{policy_text}\n\n{status_text}{sensor_text}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_left_rect, full_text, " ", context)
+        raw_data_text = (
+            f"--- Raw Sensor Data (from State) ---\n\n"
+            f"Angular Vel: {raw_ang_vel_str}\n"
+            f"Gravity Vec:   {raw_grav_vec_str}\n"
+            f"Accelerometer: {raw_accel_str}\n"
+            f"Pitch (rad):   {raw_pitch_str}\n"
+        )
+        
+        # 顯示 ONNX 觀察向量
+        onnx_input_text = "\n--- ONNX Observation Vector (Final Input) ---\n\n"
+        onnx_input_vec = state.latest_onnx_input
+        
+        if onnx_input_vec.size > 0 and self.recipe and state.observation_manager_ref:
+            obs_manager = state.observation_manager_ref
+            component_dims = obs_manager.component_dims
+            base_obs_dim = sum(component_dims.values())
+            
+            if base_obs_dim > 0:
+                history_len = len(onnx_input_vec) // base_obs_dim
+                current_frame_obs = onnx_input_vec[-base_obs_dim:]
+                
+                current_idx = 0
+                for comp_name in self.recipe:
+                    dim = component_dims.get(comp_name, 0)
+                    if dim > 0:
+                        end_idx = current_idx + dim
+                        value_slice = current_frame_obs[current_idx:end_idx]
+                        vec_str = np.array2string(value_slice, precision=3, suppress_small=True)
+                        onnx_input_text += f"{comp_name:<18}: {vec_str}\n"
+                        current_idx = end_idx
 
-        cmd_panel_height = int(viewport.height * 0.1)
-        bottom_left_rect = mujoco.MjrRect(padding, padding, panel_width, cmd_panel_height)
-        mujoco.mjr_rectangle(bottom_left_rect, 0.1, 0.1, 0.1, 0.8)
-
-        user_cmd_text = f"--- User Command ---\nvy: {state.command[0]:.2f}, vx: {state.command[1]:.2f}, wz: {state.command[2]:.2f}"
-        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, bottom_left_rect, user_cmd_text, " ", context)
+        full_text_right = f"{raw_data_text}\n{onnx_input_text}"
+        mujoco.mjr_overlay(mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, top_right_rect, full_text_right, " ", context)
 
 
     def render_serial_console(self, viewport, context, state: SimulationState):

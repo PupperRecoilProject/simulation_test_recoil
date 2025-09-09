@@ -11,6 +11,8 @@ from typing import List, Dict, Any, Optional
 
 # 【v4.3.4 修正】 導入 deque
 from collections import deque
+# ✅ 新增：共用 ORT 工廠（自動選 TRT→CUDA→DML→CPU）
+from src.core.ort_provider import create_session, diag_print
 
 # 【v4.3.3 修改】 調整 sys.path 以便能夠導入 src 下的模組 (保留此註解)
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -109,8 +111,9 @@ def verify_model(model_name: str, config_path: str = "config.yaml"):
         base_obs_dim = dummy_base_obs.shape[0]
         
         sess_options = ort.SessionOptions()
-        session = ort.InferenceSession(model_path, sess_options=sess_options, providers=['CPUExecutionProvider'])
-        
+        # ✅ 改用共用工廠：自動挑選最適合的 EP（Jetson 用 TensorRT/CUDA；Windows 用 CUDA/DML；否則 CPU）
+        session = create_session(model_path, sess_options=sess_options)
+                
         model_input_dim = session.get_inputs()[0].shape[1]
         history_len = 1
         if base_obs_dim > 0 and model_input_dim % base_obs_dim == 0:

@@ -91,22 +91,52 @@ class MockTerrainManager:
 # class MockObservationBuilder:
 #    ...
 
-# 【v4.3.2 新增】 新增 MockObservationManager
+# 【v4.3.2 新增】 新增 MockObservationManager 
 class MockObservationManager:
-    """
+    """ 
     【v4.3.2 新增】
-    ObservationManager 的 Mock 版本，用於無頭模式。
-    它提供與真實版本相同的 API 接口，但內部不做任何計算。
-    """
-    def __init__(self, *args, **kwargs):
-        self.recipe = []
-        self.component_dims = {}
-        print("ObservationManager disabled in mock mode")
+    ObservationManager 的 Mock 版本，用於無頭模式。 
+    它提供與真實版本相同的 API 接口，但內部不做任何計算。 
+    【v4.3.2 之後的修正】補上缺失的 ALL_OBS_DIMS 屬性以修復 ONNX 模型載入錯誤。 
+    """ 
+    # 從真實的 ObservationManager 複製過來的屬性 
+     # 這是解決 'MockObservationManager' object has no attribute 'ALL_OBS_DIMS' 錯誤的關鍵 
+    ALL_OBS_DIMS: dict[str, int] = { 
+        'gravity_vector': 3, 
+        'commands_3d': 3,
+        'commands_4d': 4, 
+        'joint_positions': 12,
+        'joint_velocities': 12, 
+        'last_action': 12, 
+        'angular_velocity': 3, 
+        'linear_velocity': 3, 
+        'accelerometer': 3, 
+        'current_pitch': 1, 
+        'firearm_recoil_warming': 1, 
+        'z_angular_velocity': 1, 
+        'foot_contact_states': 4, 
+        'phase_signal': 1,
+    } 
 
-    def set_recipe(self, recipe):
-        """Mock set_recipe 方法"""
-        pass
+    def __init__(self, *args, **kwargs): 
+        self.recipe = [] 
+        self.component_dims = {} 
+        print("ObservationManager disabled in mock mode") 
 
-    def get_observation(self, *args, **kwargs) -> np.ndarray:
-        """Mock get_observation 方法，永遠返回空陣列"""
-        return np.array([])
+    def set_recipe(self, recipe): 
+        """Mock set_recipe 方法""" 
+        # 即使是 Mock，也最好模擬一下真實行為 
+        self.recipe = recipe 
+        print(f"[MOCK] Observation recipe set to: {recipe}") 
+
+    def get_observation(self, *args, **kwargs) -> np.ndarray: 
+        """Mock get_observation 方法，永遠返回一個符合維度的零向量""" 
+        # 雖然目前用不到，但一個更健壯的 Mock 應該返回正確形狀的陣列 
+        total_dims = sum(self.ALL_OBS_DIMS[key] for key in self.recipe) 
+        return np.zeros(total_dims, dtype=np.float32)
+
+    def update_all_observations(self):
+        """【v4.10.x 錯誤修正】補上缺失的方法以匹配真實 ObservationManager 的 API。"""
+        # 在無頭/模擬模式下，這個方法不需要執行任何操作，
+        # 只需要存在即可避免 AttributeError。
+        pass # 提供一個空的實現，防止程式在 SimulationController 中崩潰

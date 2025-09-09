@@ -12,6 +12,8 @@ from src.core.logger import log
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from src.core.state import SimulationState
+    # 【v4.10.0 新增】導入 AppConfig 以進行類型提示
+    from src.core.config import AppConfig
 
 class TerrainTile:
     """代表地形網格中的一個地塊(Tile)的資料類別。"""
@@ -26,7 +28,12 @@ class TerrainManager:
     - INFINITE 模式: 根據機器人位置動態生成無盡的隨機地形。
     - SINGLE 模式: 顯示一個由單一類型地塊組成的巨大、固定的地形。
     """
-    def __init__(self, model, data):
+
+    def __init__(self, config: 'AppConfig', model, data):
+        """
+        【v4.10.0 修改】接收完整的 AppConfig 以讀取地形參數。
+        """
+        self.config = config.terrain_generation # <-- 儲存地形生成相關的設定
         self.model = model # 儲存 MuJoCo 模型物件
         self.data = data # 儲存 MuJoCo 資料物件
         self.hfield_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, 'terrain') # 根據名稱 'terrain' 獲取高度場的 ID
@@ -332,13 +339,15 @@ class TerrainManager:
         x = np.linspace(0, 2 * np.pi * random.uniform(2, 4), self.tile_resolution)
         y = np.linspace(0, 2 * np.pi * random.uniform(2, 4), self.tile_resolution)
         X, Y = np.meshgrid(x, y)
-        height_field = 0.08 * (np.sin(X) + np.sin(Y))
+        # 【v4.10.0 修改】使用來自 config 的參數
+        height_field = self.config.sine_waves_amplitude * (np.sin(X) + np.sin(Y))
         return height_field * self._create_boundary_fade()
 
     def generate_steps(self):
         """生成階梯狀地形，並應用邊界淡出。"""
         hfield = np.zeros((self.tile_resolution, self.tile_resolution))
-        step_height = 0.05
+        # 【v4.10.0 修改】使用來自 config 的參數
+        step_height = self.config.steps_height
         num_steps = random.randint(5, 10)
         step_width = self.tile_resolution // num_steps
         for i in range(num_steps):
@@ -347,13 +356,15 @@ class TerrainManager:
 
     def generate_random_noise(self):
         """生成隨機的崎嶇地形，並應用邊界淡出。"""
-        noise = np.random.rand(self.tile_resolution, self.tile_resolution) * 0.1
+        # 【v4.10.0 修改】使用來自 config 的參數
+        noise = np.random.rand(self.tile_resolution, self.tile_resolution) * self.config.random_noise_amplitude
         return noise * self._create_boundary_fade()
 
 
     def generate_pyramid(self):
         """生成一個中央高、四周低的正金字塔地形。"""
-        max_height = random.uniform(0.3, 0.6)
+        # 【v4.10.0 修改】使用來自 config 的參數
+        max_height = self.config.pyramid_max_height
         x = np.linspace(-1, 1, self.tile_resolution)
         y = np.linspace(-1, 1, self.tile_resolution)
         X, Y = np.meshgrid(x, y)
@@ -364,17 +375,21 @@ class TerrainManager:
 
     def generate_stepped_pyramid(self):
         """
+        【v4.10.0 修改】使用來自 config 的參數來決定階梯數。
+
         【高度量化版】生成一個中央高、四周低的階梯狀金字塔地形。
         
         這個函式不使用迴圈，而是透過對一個連續的、平滑的金字塔高度場
         進行數學上的 "量化" 處理，來高效地生成階梯效果。
         """
         # --- 1. 初始化隨機參數 ---
-        # 隨機決定金字塔的階梯數，增加地形的多樣性
-        num_steps = random.randint(12, 16)
-        # 隨機決定金字塔的總高度
-        max_height = random.uniform(0.4, 0.8)
-        # 根據總高度和階梯數，計算出每一階的固定高度
+        # 【v4.10.0 修改】從 config 讀取階梯數的最小值和最大值
+        min_steps = self.config.stepped_pyramid_steps_min
+        max_steps = self.config.stepped_pyramid_steps_max
+        num_steps = random.randint(min_steps, max_steps)
+        
+        # 【v4.10.0 修改】使用來自 config 的參數
+        max_height = self.config.stepped_pyramid_max_height
         step_height = max_height / num_steps
 
         # --- 2. 建立一個標準化的 2D 座標網格 ---

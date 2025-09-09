@@ -1,4 +1,12 @@
 # state.py
+"""
+【v2.0 修改後】中央狀態管理者 (Central State Manager)
+【v4.4.2 修改】新增 Teensy 數據流相關的原始屬性。
+
+這個類別是整個應用程式的"單一真相來源 (Single Source of Truth)"。
+它不再是一個被動的數據容器，而是一個主動的管理者，通過訂閱事件來
+安全地更新自己的狀態，並為其他模組提供查詢。
+"""
 
 # 所有現有的 imports
 from __future__ import annotations
@@ -6,9 +14,29 @@ import numpy as np
 from dataclasses import dataclass, field
 from src.core.config import AppConfig
 from src.core.logger import log
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict
 import threading
+# 【v4.10.1 新增】為硬體通訊連結狀態定義一個 Enum
+from enum import Enum
 
+
+class HardwareLinkStatus(Enum):
+    """
+    【v4.10.5 修改】擴展為四態狀態機。
+    
+    定義了硬體通訊鏈路的完整生命週期狀態。
+    - UNVERIFIED: 初始狀態，鏈路尚未經過驗證。
+    - VERIFIED:   鏈路已驗證，AI 被授權控制馬達。
+    - MUTED:      鏈路已驗證，但使用者手動靜默了馬達控制。
+    - CONNECTION_LOST: 運行時檢測到通訊中斷，進入安全熔斷狀態。
+    """
+    UNVERIFIED = "未驗證"
+    VERIFIED = "已驗證"
+    MUTED = "已靜默"
+    CONNECTION_LOST = "連接中斷"
+
+
+    
 # 導入我們新創建的事件系統模組和核心事件
 # 這是讓 SimulationState 能夠監聽系統事件的關鍵
 from src.core.event_system import (
@@ -32,6 +60,8 @@ if TYPE_CHECKING:
     from src.hardware.serial_communicator import SerialCommunicator
     from src.simulation.simulation import Simulation
     from src.input_handlers.xbox_input_handler import XboxInputHandler
+    from src.simulation.observation_manager import ObservationManager # 【v4.4.7 新增】為新屬性增加類型提示
+
 
 # TuningParams 資料類別
 @dataclass
@@ -61,13 +91,11 @@ class SimulationState:
     # 讓每個 SimulationState 實例都能方便地訪問全域事件匯流排。
     # repr=False 避免在打印 state 物件時產生過長的循環引用輸出。
     events: EventSystem = field(default_factory=lambda: event_bus, repr=False)
-
-    # 【v4.5.0 新增】 渲染執行緒與模擬執行緒之間的數據同步機制
-    render_data_buffer: dict = field(default_factory=dict)
-    render_data_lock: threading.Lock = field(default_factory=threading.Lock)
     
-    # ... 其餘所有屬性保持不變 ...
-    command: np.ndarray = field(default_factory=lambda: np.zeros(3, dtype=np.float32))
+    # --- 用戶輸入與指令狀態 ---
+    # 這些狀態現在主要由 on_command_update 事件回呼來更新
+    # 【修改】將 command 向量擴展為4維，以容納目標俯仰角
+    command: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float32))
     tuning_params: TuningParams = field(init=False)
     
     # --- 系統控制與模式狀態 ---
@@ -91,16 +119,34 @@ class SimulationState:
     latest_pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
     latest_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
     latest_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
+
+    # 【v4.4.7 新增】標準化觀測數據字典 (Standardized Observations)
+    # 這是 v4.4.7 方案的核心 "單一權威數據源"。
+    # ObservationManager 會在每一幀計算所有可能的觀測數據，並填充此字典。
+    # 所有消費者 (PolicyManager, UIController) 都應從此處讀取數據。
+    std_obs: Dict[str, np.ndarray] = field(default_factory=dict)
+
     # [新增] v4.3.1 原始感測器數據 (由數據源更新，供 ObservationManager 使用)
     # 這是原始數據的暫存區，由 SimulationController 或 HardwareController 填充。
     raw_torso_quat: np.ndarray = field(default_factory=lambda: np.array([1., 0., 0., 0.]))
-    raw_torso_linear_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    raw_torso_angular_velocity_world: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # 【v4.4.2 修改】重命名以消除坐標系歧義。註解明確指出坐標系由數據源決定。
+    raw_torso_linear_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_torso_angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    
     raw_joint_positions: np.ndarray = field(default_factory=lambda: np.zeros(12))
     raw_joint_velocities: np.ndarray = field(default_factory=lambda: np.zeros(12))
     raw_accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))
     raw_last_action: np.ndarray = field(default_factory=lambda: np.zeros(12))
     
+    # 【v4.4.2 新增】新增屬性以接收來自 Teensy 的俯仰角和重力向量數據
+    raw_pitch_rad: float = 0.0
+    raw_gravity_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    
+    # 【新增】後座力計時器相關狀態
+    recoil_timer: float = 0.0 # 追蹤距離下次後座力事件的時間
+    recoil_interval: float = 5.0 # 下次後座力事件的隨機間隔
+    recoil_warning_active: bool = False # 後座力預警旗標，直接供 ObservationManager 使用
+
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False
     soft_reset_requested: bool = False
@@ -124,6 +170,8 @@ class SimulationState:
     manual_final_ctrl: np.ndarray = field(default_factory=lambda: np.zeros(12))
     # 【v4.0 修改】這個旗標現在只反映當前的真實狀態，不再被直接寫入
     manual_mode_is_floating: bool = False
+    # 【v4.10.1 新增】引入新的三態狀態機來取代舊的布林旗標
+    hardware_link_status: HardwareLinkStatus = HardwareLinkStatus.UNVERIFIED
     
     # --- 設備連接與狀態 ---
     serial_is_connected: bool = False
@@ -131,6 +179,11 @@ class SimulationState:
     hardware_is_running: bool = False
     hardware_ai_is_active: bool = False
     hardware_status_text: str = "Not Connected"
+    
+    # 【v4.11.0-w 新增】硬體模式下的頻率監控數據
+    # 這兩個屬性將由 HardwareController 在其主迴圈中更新
+    hw_data_freq: float = 0.0  # 來自 Teensy 的數據幀接收頻率 (I/O 頻率)
+    hw_ai_freq: float = 0.0    # 硬體 AI 決策的實際執行頻率
     
     # --- UI 相關狀態 ---
     display_page: int = 0
@@ -143,12 +196,22 @@ class SimulationState:
     floating_controller_ref: 'FloatingController' = None
     terrain_manager_ref: 'TerrainManager' = None
     policy_manager_ref: 'PolicyManager' = None
+    # 【v4.4.7 新增】明確加入 observation_manager_ref 的類型提示
+    observation_manager_ref: 'ObservationManager' = None
     hardware_controller_ref: 'HardwareController' = None
     serial_communicator_ref: 'SerialCommunicator' = None
     xbox_handler_ref: 'XboxInputHandler' = None
     available_policies: list = field(default_factory=list)
 
-    # ... __post_init__ 和所有其他方法保持不變 ...
+    # 【v4.12.2 新增】數據捕獲控制旗標
+    is_data_capturing: bool = False
+    data_capture_buffer: list = field(default_factory=list)
+    # 【v4.12.3 新增】擴展數據捕獲狀態，增加自動化控制
+    data_capture_start_time: float = 0.0      # 【v4.12.3 新增】記錄捕獲開始的時刻
+    data_capture_duration: float = 0.0        # 【v4.12.3 新增】本次捕獲的目標時長 (秒)
+    data_capture_mode_label: str = "UNKNOWN"  # 【v4.12.3 新增】記錄捕獲時的模式 (SIM/HW)
+
+
     def __post_init__(self):
         """
         【修改後】初始化函式。
@@ -260,39 +323,3 @@ class SimulationState:
                 if clear_cmd:
                     self.clear_command()
                 log.info(f"輸入模式已切換至: {self.input_mode}")
-    # 【v4.5.0 新增】 輕量級的狀態修改方法，由事件直接呼叫
-    def update_tuning_param(self, param_name: str = None, value: float = None, direction: int = None):
-        """處理調整參數值的請求。"""
-        with self.lock:
-            if param_name is None:
-                param_keys = ['kp', 'kd', 'action_scale', 'bias']
-                if 0 <= self.tuning_param_index < len(param_keys):
-                    param_name = param_keys[self.tuning_param_index]
-                else:
-                    log.error(f"無效的調校參數索引: {self.tuning_param_index}")
-                    return
-
-            if value is not None:
-                setattr(self.tuning_params, param_name, value)
-            elif direction is not None:
-                step = self.config.param_adjust_steps.get(param_name, 0.1)
-                current_value = getattr(self.tuning_params, param_name)
-                new_value = current_value + step * direction
-                setattr(self.tuning_params, param_name, new_value)
-            else:
-                return
-
-            self.tuning_params.kp = max(0, self.tuning_params.kp)
-            self.tuning_params.kd = max(0, self.tuning_params.kd)
-            self.tuning_params.action_scale = max(0, self.tuning_params.action_scale)
-            log.info(f"參數 '{param_name}' 已調整為: {getattr(self.tuning_params, param_name):.2f}")
-
-    def select_next_tuning_param(self, direction: int):
-        """處理切換當前調校參數的請求。"""
-        with self.lock:
-            num_params = len(self.policy_manager_ref.param_keys)
-            self.tuning_param_index = (self.tuning_param_index + direction) % num_params
-            log.debug(f"調校參數索引已切換至: {self.tuning_param_index}")            
-                
-                
-    

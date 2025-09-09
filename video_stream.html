@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NanoOwl Stream</title>
+    <style>
+        body { margin: 0; padding: 0; background-color: black; }
+        img { width: 100vw; height: 100vh; object-fit: contain; }
+    </style>
+</head>
+<body>
+    <img id="camera_feed" src="" alt="Camera Stream">
+    <script>
+        const img = document.getElementById('camera_feed');
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        ws.onmessage = (event) => {
+            const url = URL.createObjectURL(event.data);
+            img.src = url;
+            // 釋放舊的 URL 以避免記憶體洩漏
+            img.onload = () => { URL.revokeObjectURL(url); }; 
+        };
+    </script>
+</body>
+</html>
