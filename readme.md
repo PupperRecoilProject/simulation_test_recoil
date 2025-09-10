@@ -1,16 +1,91 @@
-前置安裝：你需要安裝 PyYAML。在你的終端機中執行：
-pip install onnxruntime numpy
-pip install PyYAML
-pip install mujoco glfw //這個看看環境有沒有載，我不是用這個
-pip install inputs //搖桿用的
-pip install pygame
-pip install pyserial
-pip install Pillow
-pip install scipy  //運動學 hardware 需用
+## 開發環境安裝指南 (Windows)
 
-pip install numpy onnxruntime PyYAML nicegui pygame pyserial Pillow scipy
+本指南將引導你建立一個乾淨、獨立的 Python 虛擬環境，並安裝所有必要的專案依賴，包括啟用 GPU 加速的 ONNX Runtime。
 
-### 專案目錄結構與模組化原則
+### 第一步：建立並啟用虛擬環境
+
+為避免與系統全局 Python 套件產生衝突，我們強烈建議為本專案建立一個獨立的虛擬環境。
+
+1.  **開啟終端機**：
+    在專案的根目錄下，開啟 PowerShell 或命令提示字元 (CMD)。
+
+2.  **建立虛擬環境**：
+    執行以下指令，這將會在專案目錄下建立一個名為 `.venv` 的資料夾。
+    ```powershell
+    python -m venv .venv
+    ```
+
+3.  **啟用虛擬環境**：
+    啟用後，你的終端機提示符前方會出現 `(.venv)` 字樣。
+    ```powershell
+    .venv\Scripts\activate
+    ```
+
+> **黃金準則**：啟用虛擬環境後，請**永遠使用 `python -m pip`** 來執行安裝或管理套件，以確保操作對象是當前的虛擬環境。
+
+### 第二步：安裝專案依賴套件
+
+我們將安裝分為「核心套件」與「可選套件」。
+
+#### 1. 核心套件 (所有環境必裝)
+
+這些是運行專案核心功能與使用者介面的基礎套件。請執行以下指令一次性安裝：
+
+```powershell
+python -m pip install onnxruntime-directml numpy scipy PyYAML Pillow pyserial nicegui pygame
+```
+
+*   `onnxruntime-directml`: **啟用 GPU (DirectML) 加速**的 ONNX 推論引擎。
+*   `numpy`, `scipy`: 科學計算與運動學基礎。
+*   `nicegui`: 提供現代化的 **Web 使用者介面** (儀表板)。
+*   `pygame`: 用於建立**即時圖形視窗**與處理搖桿/鍵盤輸入。
+*   `PyYAML`: 讀取 `.yaml` 設定檔。
+*   `Pillow`: 圖片處理。
+*   `pyserial`: 序列埠通訊。
+
+#### 2. 可選套件 (依開發需求安裝)
+
+根據你的使用情境，選擇性安裝以下模組。
+
+*   **若需進行物理模擬：**
+    ```powershell
+    python -m pip install mujoco glfw
+    ```
+
+*   **若需使用 `inputs` 函式庫處理搖桿：**
+    (註：`pygame` 也可用於搖桿，此為專案可能使用的另一個選項)
+    ```powershell
+    python -m pip install inputs
+    ```
+
+### 第三步：驗證 ONNX Runtime 環境
+
+安裝完成後，執行以下指令來確認 ONNX Runtime 是否能正確使用你的 GPU。
+
+```powershell
+python -c "import onnxruntime as ort; print('ONNX Runtime Version:', ort.__version__); print('Available Providers:', ort.get_available_providers())"
+```
+
+**你必須看到以下期望輸出：**
+```
+ONNX Runtime Version: 1.18.0 (或其他版本)
+Available Providers: ['DmlExecutionProvider', 'CPUExecutionProvider']
+```
+
+只要 `Available Providers` 列表中**包含 `DmlExecutionProvider`**，就代表你的環境已成功配置，可以利用 GPU 進行高效能推論。
+
+---
+### 常見問題排解
+
+**Q: 虛擬環境啟用後，執行 `python -m pip` 提示 `No module named pip`**
+
+**A:** 這表示你的虛擬環境已損壞或建立不完整。請依照以下步驟重建：
+   1.  **停用環境**: `deactivate`
+   2.  **刪除舊資料夾**: `Remove-Item .venv -Recurse -Force` (在 PowerShell 中)
+   3.  **回到本指南第一步**，重新建立並啟用一個全新的虛擬環境。
+
+
+## 專案目錄結構與模組化原則
 ```
 simulation_test_recoil/
 ├── assets/                     # 靜態資源 (Static Assets)
