@@ -15,7 +15,7 @@ mujoco_model_file: "assets/scene_mjx.xml"
 onnx_models:
   stable_walk: 
     path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
-    # 【新】為每個模型指定觀察配方
+    # 【v4.14.0 整理】移除舊標籤，此為模型的觀察配方定義
     observation_recipe:
       - 'linear_velocity'
       - 'angular_velocity'
@@ -23,7 +23,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
   
   agile_model: 
     path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
@@ -35,11 +35,11 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
 
   new_high_level: 
     path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
-    # 【新】使用新的觀察配方
+    # 使用新的觀察配方
     observation_recipe:
       - 'angular_velocity'
       - 'gravity_vector'
@@ -47,7 +47,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
 
   new_e2e: 
     path: "models/pupper_ppo_policy_e2e_203161600.onnx"
@@ -59,7 +59,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
 
   fire_on_recoil_51: 
     path: "models/pupper_ppo_policy_e2e_101580800.onnx"
@@ -88,7 +88,34 @@ onnx_models:
       - 'commands_4d'
       - 'firearm_recoil_warming'
 
+  # --- 【v4.14.0 新增】Sim2Real v1 模型系列 ---
+  sim2real_v1_flat_0911:
+    path: "models/0911_FlatTerrain.onnx"
+    # 專為平坦地形訓練的模型，使用標準的 51 維觀察配方。
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
 
+  sim2real_v1_rough_0911:
+    path: "models/0911_RoughTerrain.onnx"
+    # 專為崎嶇地形訓練的模型，同樣使用標準的 51 維觀察配方。
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
   
 
 
