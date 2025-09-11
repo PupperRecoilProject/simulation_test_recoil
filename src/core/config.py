@@ -44,6 +44,7 @@ class AppConfig:
     """儲存所有應用程式設定的資料類別。"""
     mujoco_model_file: str
     
+    # 【修改】使用新的 onnx_models 結構，可以包含路徑和配方
     onnx_models: Dict[str, Dict[str, Any]]
     policy_transition_duration: float
     
@@ -68,11 +69,12 @@ class AppConfig:
     # 【v4.10.0 新增】將地形設定加入到主設定物件中
     terrain_generation: TerrainGenerationConfig
 
-    # 【v4.10.0 新增】FRW 設定（可選）
-    firearm_recoil_warming: Optional[FirearmRecoilWarningConfig] = None
-
     # 【v4.14.3 新增】Sim2Real 馬達方向校準設定
     sim2real_motor_calibration: Dict[str, List[int]]
+    
+    # 【v4.14.3 修改】將帶有預設值的參數移到最後，以修正 TypeError。
+    # 【v4.10.0 新增】FRW 設定（可選）
+    firearm_recoil_warming: Optional[FirearmRecoilWarningConfig] = None
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:
