@@ -108,26 +108,101 @@ class HardwareController:
     
     def shutdown(self):
         """
-        【v4.14.0 修改】將執行緒停止的邏輯從 _execute_stop 轉移至此處，並增加了優雅停止的業務邏輯。
-        
-        (外部API, 阻塞) 應用程式關閉時的強制清理。
-        
-        此函式負責優雅地停止所有業務活動，然後終結所有背景執行緒，確保資源被完全釋放。
+        【v4.14.1-w 最小修正】優先讓控制迴圈處理 STOP；如超時未停，執行後援停機。
+        交還控制權後，喚醒 SerialCommunicator 並在 HUMAN 模式下設回 monitor freq，
+        確保 UI 仍能收到 Teensy 遙測。
         """
-        # 【v4.14.0 新增】如果控制器在關閉時仍在運行，先透過命令佇列請求業務層面的停止。
+        # 1) 如果還在 RUNNING，先丟 STOP 給控制迴圈（正常路徑）
         if self.internal_state == HWState.RUNNING:
-            self.command_queue.put(HWCommand.STOP)
-            # 給予 _control_loop 一個短暫的機會去執行 _execute_stop()。
-            time.sleep(0.2) 
+            try:
+                self.command_queue.put(HWCommand.STOP)
+            except Exception as e:
+                log.warning(f"shutdown(): 無法送出 STOP 命令，將直接進入後援停機。原因: {e}")
 
-        # 【v4.14.0 新增】以下是從 _execute_stop 轉移過來的核心執行緒停止邏輯。
-        self._is_running_event.clear()
-        if self.control_thread and self.control_thread.is_alive():
-            self.control_thread.join(timeout=1)
-        if self.read_thread and self.read_thread.is_alive():
-            self.read_thread.join(timeout=1)
-        
-        # 【v4.14.0 新增】執行緒結束後，將其參考設為 None，這是一種良好的程式設計習慣。
+            # 等待控制迴圈去執行 _execute_stop()
+            deadline = time.time() + 0.8
+            while time.time() < deadline:
+                if self.internal_state in (HWState.STOPPING, HWState.STOPPED, HWState.FAILED):
+                    break
+                time.sleep(0.02)
+
+            # 2) 超時仍 RUNNING → 啟動後援停機（不關串口，只切人類模式並交還控制權）
+            if self.internal_state == HWState.RUNNING:
+                log.warning("shutdown(): 正常停機超時，改用安全停機後援。")
+                self._set_internal_state(HWState.STOPPING)
+
+                # 關掉 AI 旗標
+                self.ai_control_active = False
+                try:
+                    with self.state.lock:
+                        self.state.hardware_ai_is_active = False
+                except Exception:
+                    pass
+
+                # 優先用 TeensyAPI（協定感知），否則退回直寫
+                ser_open = bool(self.ser and getattr(self.ser, "is_open", False))
+                try:
+                    if self.teensy_api and ser_open:
+                        self.teensy_api.execute_command("stop")        # NONE
+                        self.teensy_api.execute_command("monitor h")   # NONE
+                    elif ser_open:
+                        self.ser.write(b"stop\n"); time.sleep(0.05)
+                        self.ser.write(b"monitor h\n"); time.sleep(0.05)
+                    else:
+                        log.info("shutdown(): 序列埠未開啟，略過停止指令。")
+                except serial.SerialException as e:
+                    log.warning(f"shutdown(): 後援停機發送指令失敗（略過）：{e}")
+
+                # >>> 這裡是你要插入「交還控制權後的兩步」的位置 <<<
+                # 交還 serial_comm 管理權（不在這裡 close；main.py 會收尾）
+                try:
+                    if self.serial_comm:
+                        self.serial_comm.is_managed_by_hardware_controller = False
+                        log.info("shutdown(): 序列埠控制權已交還給 SerialCommunicator。")
+                except Exception as e:
+                    log.warning(f"shutdown(): 交還控制權時發生非致命錯誤：{e}")
+
+                # 新增 Step A：喚醒 SerialCommunicator 的讀取迴圈
+                if hasattr(self.serial_comm, "resume_control"):
+                    try:
+                        self.serial_comm.resume_control()
+                        log.info("shutdown(): SerialCommunicator 已恢復接手串口讀取。")
+                    except Exception as e:
+                        log.warning(f"shutdown(): resume_control() 失敗（略過）：{e}")
+
+                # 新增 Step B：在 HUMAN 模式下維持遙測頻率（避免 UI 看起來沒資料）
+                try:
+                    if self.teensy_api and self.serial_comm and self.serial_comm.is_connected:
+                        self.teensy_api.execute_command(f"monitor freq {self.config.control_freq}")
+                        log.info(f"shutdown(): HUMAN 模式下已設置 monitor freq = {self.config.control_freq} Hz")
+                except Exception as e:
+                    log.warning(f"shutdown(): monitor freq 設置失敗（略過）：{e}")
+
+                # （可選，但推薦）把 Link 狀態設回可讀狀態，避免 UI 用狀態濾掉顯示
+                try:
+                    with self.state.lock:
+                        self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+                except Exception:
+                    pass
+
+                # 解除本地 ser 引用並標記已停止（實際 close 由 main.py 最後執行）
+                self.ser = None
+                self._set_internal_state(HWState.STOPPED)
+
+        # 3) 關閉控制事件並等待執行緒結束
+        try:
+            self._is_running_event.clear()
+        except Exception:
+            pass
+
+        try:
+            if self.control_thread and self.control_thread.is_alive():
+                self.control_thread.join(timeout=1.2)
+            if self.read_thread and self.read_thread.is_alive():
+                self.read_thread.join(timeout=1.2)
+        except Exception as e:
+            log.warning(f"shutdown(): 等待執行緒結束時出現非致命錯誤：{e}")
+
         self.control_thread = None
         self.read_thread = None
 
@@ -409,25 +484,54 @@ class HardwareController:
         self.ai_control_active = False
         with self.state.lock: 
             self.state.hardware_ai_is_active = False
-            # 【v4.10.2 新增】停止時，將連線狀態重設為未驗證
-            self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
 
-        if self.teensy_api:
-            log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
-            # 【v4.10.5 修正】使用正確的 execute_command API。
-            # 根據協定字典，這兩個指令都是 "fire and forget"，無需等待回應。
-            self.teensy_api.execute_command("stop")
-            self.teensy_api.execute_command("monitor h")
-        
-        # 清理自身資源
-        self.ser = None
-        self.teensy_api = None
-        
-        # 【v4.10.2 修改】將歸還控制權的邏輯放在所有操作的最後
+        # 1) 防呆：檢查序列埠是否仍然開啟
+        ser_open = bool(self.ser and getattr(self.ser, "is_open", False))
+
+        try:
+            # 2) 優先走協定感知 API（可處理 [OK]/NONE 等）
+            if self.teensy_api and ser_open:
+                self.teensy_api.execute_command("stop")        # 對應 v4.10.4 協定
+                self.teensy_api.execute_command("monitor h")   # 對應 v4.10.4 協定
+            # 3) 後備：若尚未建立 TeensyAPI，但序列埠可用，才直接寫入
+            elif ser_open:
+                self.ser.write(b"stop\n"); time.sleep(0.05)
+                self.ser.write(b"monitor h\n"); time.sleep(0.05)
+            else:
+                log.warning("序列埠未開啟，略過停止指令。")
+        except serial.SerialException as e:
+            log.warning(f"停止流程：發送停止/切換指令失敗，將繼續交還控制權。原因: {e}")
+
+        # --- 交還 serial_comm 管理權（你原本就有） ---
         if self.serial_comm:
-            self.serial_comm.resume_control()
-            log.info("  -> 序列埠的控制權已歸還。")
-        
+            self.serial_comm.is_managed_by_hardware_controller = False
+            log.info("  -> 序列埠控制權已交還。")
+
+        # --- 新增：喚醒 SerialCommunicator 的讀取迴圈 ---
+        if hasattr(self.serial_comm, "resume_control"):
+            try:
+                self.serial_comm.resume_control()
+                log.info("  -> SerialCommunicator 已恢復接手串口讀取。")
+            except Exception as e:
+                log.warning(f"resume_control() 失敗（略過）：{e}")
+
+        # --- 新增：在 HUMAN 模式下維持遙測頻率 ---
+        try:
+            if self.teensy_api and self.serial_comm and self.serial_comm.is_connected:
+                self.teensy_api.execute_command(f"monitor freq {self.config.control_freq}")
+                log.info(f"  -> HUMAN 模式下已設置 monitor freq = {self.config.control_freq} Hz")
+        except Exception as e:
+            log.warning(f"monitor freq 設置失敗（略過）：{e}")
+
+        # --- 可選：調整鏈路狀態，避免 UI 鎖住 ---
+        try:
+            with self.state.lock:
+                self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+        except Exception:
+            pass
+
+        # 5) 解除本地引用並結束
+        self.ser = None
         self._set_internal_state(HWState.STOPPED)
 
         # 【v4.14.0 刪除】移除導致死鎖的執行緒停止邏輯。
