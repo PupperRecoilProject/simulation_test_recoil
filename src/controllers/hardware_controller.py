@@ -107,12 +107,30 @@ class HardwareController:
             log.warning(f"當前狀態為 {self.internal_state.name}，忽略停止請求。")
     
     def shutdown(self):
-        """(外部API, 阻塞) 應用程式關閉時的強制清理。"""
+        """
+        【v4.14.0 修改】將執行緒停止的邏輯從 _execute_stop 轉移至此處，並增加了優雅停止的業務邏輯。
+        
+        (外部API, 阻塞) 應用程式關閉時的強制清理。
+        
+        此函式負責優雅地停止所有業務活動，然後終結所有背景執行緒，確保資源被完全釋放。
+        """
+        # 【v4.14.0 新增】如果控制器在關閉時仍在運行，先透過命令佇列請求業務層面的停止。
+        if self.internal_state == HWState.RUNNING:
+            self.command_queue.put(HWCommand.STOP)
+            # 給予 _control_loop 一個短暫的機會去執行 _execute_stop()。
+            time.sleep(0.2) 
+
+        # 【v4.14.0 新增】以下是從 _execute_stop 轉移過來的核心執行緒停止邏輯。
         self._is_running_event.clear()
         if self.control_thread and self.control_thread.is_alive():
             self.control_thread.join(timeout=1)
         if self.read_thread and self.read_thread.is_alive():
             self.read_thread.join(timeout=1)
+        
+        # 【v4.14.0 新增】執行緒結束後，將其參考設為 None，這是一種良好的程式設計習慣。
+        self.control_thread = None
+        self.read_thread = None
+
         log.info("硬體控制器所有執行緒已關閉。")
 
     def _start_threads_if_not_alive(self):
@@ -377,10 +395,10 @@ class HardwareController:
 
     def _execute_stop(self):
         """
-        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
-        【v4.10.2 重構】在停止後，將序列埠的控制權安全地歸還。
+        【【v4.14.0 修改】移除了會導致死鎖的執行緒 self-join 邏輯。此函式現在只負責業務層面的停止操作。
         【v4.10.5 修改】更新 API 呼叫以匹配 v4.10.4 的 TeensyAPI 重構。
-
+        【v4.10.2 重構】在停止後，將序列埠的控制權安全地歸還。
+        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
         
         執行硬體停止流程。
         
@@ -412,13 +430,8 @@ class HardwareController:
         
         self._set_internal_state(HWState.STOPPED)
 
-        # 【v4.13.10-w】可選，真的停掉執行緒
-        self._is_running_event.clear()
-        if self.control_thread and self.control_thread.is_alive():
-            self.control_thread.join(timeout=0.5)
-        if self.read_thread and self.read_thread.is_alive():
-            self.read_thread.join(timeout=0.5)
-        log.info("  -> 硬體控制與讀取執行緒已停止")
+        # 【v4.14.0 刪除】移除導致死鎖的執行緒停止邏輯。
+        # 執行緒的生命週期現在由 shutdown() 方法統一管理，以支持多次啟動/停止。
 
     def _execute_toggle_ai(self):
         """
