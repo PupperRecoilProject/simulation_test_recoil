@@ -290,10 +290,10 @@ class HardwareController:
 
         # 計算 AI 決策頻率
         if len(self.ai_step_times) > 1:
-            while current_time - self.ai_step_times[0] > 1.0:
-                self.ai_step_times.pop(0)
-                if len(self.ai_step_times) <= 1:
-                    break
+            # 【v4.14.1 修復】使用 deque.popleft() 而不是 deque.pop(0) 來移除最左側（最舊）的元素。
+            # deque.pop(0) 是不合法的語法，會導致 TypeError 並使控制執行緒崩潰。
+            while len(self.ai_step_times) > 1 and current_time - self.ai_step_times[0] > 1.0:
+                self.ai_step_times.popleft()
 
             if len(self.ai_step_times) > 1:
                 elapsed = self.ai_step_times[-1] - self.ai_step_times[0]
