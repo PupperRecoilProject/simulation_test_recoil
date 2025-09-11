@@ -79,6 +79,24 @@ class HardwareController:
         # self._subscribe_to_events()
         # log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
 
+    # 【v4.14.3 新增】Sim2Real 關節方向校準函數
+    def _apply_motor_direction_calibration(self, joint_vector: np.ndarray) -> np.ndarray:
+        """
+        應用 Sim2Real 的馬達方向校準。
+
+        此函數作為模擬空間 (Sim-Space) 與硬體空間 (HW-Space) 之間的雙向轉換器。
+        由於校準向量只包含 1 和 -1，其本身就是自己的逆，因此同一個函數
+        可用於兩個方向的轉換：
+        - Sim-to-HW (指令): 將 AI 的 Sim-Space 指令轉換為 HW-Space。
+        - HW-to-Sim (回饋): 將 Teensy 的 HW-Space 回饋轉換為 Sim-Space。
+        """
+        # 從配置中安全地獲取校準向量
+        vector_list = self.config.sim2real_motor_calibration.get('correction_vector', [1]*self.config.num_motors)
+        calibration_vector = np.array(vector_list, dtype=np.float32)
+        
+        # 執行逐元素乘法進行校準
+        return joint_vector * calibration_vector
+
     def _subscribe_to_events(self):
         # 【v4.13.1-w】允許事件帶參數，避免 TypeError
         event_bus.subscribe(
@@ -584,18 +602,20 @@ class HardwareController:
         
         action_scale = self.config.initial_tuning_params.action_scale
         default_pose_hardware = np.zeros(12)
-        final_command = default_pose_hardware + action_raw * action_scale
+
+        # 在 Sim-Space 計算出 AI 期望的目標關節指令。
+        final_command_sim_space = default_pose_hardware + action_raw * action_scale
         
-        # 【v4.11.0-w 關鍵修復】
-        # 補上遺失的資料流更新。現在 UI 可以正確顯示硬體模式下的最終控制指令。
+        # 【v4.14.3 新增】將 Sim-Space 的指令校準為 HW-Space，以便 Teensy 正確執行。
+        final_command_hw_space = self._apply_motor_direction_calibration(final_command_sim_space)
+
+        # UI 應顯示發送給硬體的實際值（HW-Space）。
         with self.state.lock:
-            self.state.latest_final_ctrl = final_command.copy()
+            self.state.latest_final_ctrl = final_command_hw_space.copy()
         
-        # 【v4.10.4 修改】簡化指令發送調用
-        # 這裡直接調用 send_motor_commands，它負責處理底層的發送、
-        # 協定選擇（NONE）以及安全守衛。
+        # 將校準後的 HW-Space 指令發送給 Teensy。
         if self.teensy_api:
-            if not self.teensy_api.send_motor_commands(final_command):
+            if not self.teensy_api.send_motor_commands(final_command_hw_space):
                 # 如果 send_motor_commands 返回 False，則意味著發送失敗（可能是連接問題）
                 log.error("AI 步驟中發送馬達指令失敗，連接可能已斷開或處於靜默狀態。")
                 # 【v4.13.7-w】在失敗時結束控制執行緒並標示掉線
@@ -662,13 +682,23 @@ class HardwareController:
             with self._freq_lock:  # 【v4.13.9-w】多執行緒安全 append
                 self.data_received_times.append(time.perf_counter())
             
+            # 提取 HW-Space 的原始關節回饋數據。
+            raw_joint_positions_hw_space = data_vec[10:22]
+            raw_joint_velocities_hw_space = data_vec[22:34]
+
+            # 【v4.14.3 新增】將 HW-Space 的關節回饋數據校準回 Sim-Space。
+            # 這樣，ObservationManager 和 AI 模型就能在與其訓練時一致的座標系中接收這些數據。
+            raw_joint_positions_sim_space = self._apply_motor_direction_calibration(raw_joint_positions_hw_space)
+            raw_joint_velocities_sim_space = self._apply_motor_direction_calibration(raw_joint_velocities_hw_space)
+
             with self.state.lock:
                 self.state.raw_torso_angular_velocity[:] = data_vec[0:3]
                 self.state.raw_gravity_vector[:] = data_vec[3:6]
                 self.state.raw_accelerometer[:] = data_vec[6:9]
                 self.state.raw_pitch_rad = data_vec[9]
-                self.state.raw_joint_positions[:] = data_vec[10:22]
-                self.state.raw_joint_velocities[:] = data_vec[22:34]
+                # 【v4.14.3 修改】儲存校準後的 Sim-Space 關節回饋數據。
+                self.state.raw_joint_positions[:] = raw_joint_positions_sim_space
+                self.state.raw_joint_velocities[:] = raw_joint_velocities_sim_space
                 
             # 【v4.13.0 新增】成功解析數據幀後，記錄關節位置 (高頻，使用 debug 級別)
             # 因為這是高頻數據，預設只有在日誌級別設為 DEBUG 時才顯示，避免刷屏
