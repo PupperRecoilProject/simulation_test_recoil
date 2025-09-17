@@ -117,6 +117,19 @@ onnx_models:
       - 'commands_4d'
       - 'firearm_recoil_warming'
   
+  sim2real_v2_0917:
+    path: "models/0917_pupper_ppo_policy_e2e_101580800.onnx"
+    # 專為崎嶇地形訓練的模型，同樣使用標準的 51 維觀察配方。
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
 
 
 # 模型平滑切換設定
