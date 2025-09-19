@@ -443,10 +443,12 @@ class HardwareController:
             log.info("--- 開始執行硬體啟動序列 (v4.10.4 協定感知版) ---")
             
             # 【v4.10.4 修改】啟動指令序列現在調用新的 execute_command API
-            # 1. 發送 'stop' (協定: NONE, 只需確認發送成功)
-            log.info("  -> 步驟 1/3：發送 'stop' 指令...")
-            if not self.teensy_api.execute_command("stop"):
-                raise serial.SerialException("發送 'stop' 指令失敗，啟動中止。")
+            # 【v4.14.3 刪除】移除了啟動時發送 'stop' 指令的步驟。
+            # 理由：為了實現從現有站姿無縫進入硬體模式，避免機器人掉電癱軟。
+            # 前提：假設 Teensy 在此之前已處於一個已知的安全狀態（例如，站立）。
+            # log.info("  -> 步驟 1/3：發送 'stop' 指令...")
+            # if not self.teensy_api.execute_command("stop"):
+            #     raise serial.SerialException("發送 'stop' 指令失敗，啟動中止。")
             
             # 2. 發送 'monitor freq' (協定: OK, 會等待 [OK] 確認)
             log.info(f"  -> 步驟 2/3：設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
