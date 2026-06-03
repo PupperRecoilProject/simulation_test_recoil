@@ -21,6 +21,9 @@
    哪個是現役、SAC 路線是否值得評估。
 7. **地形模型對應** — sim 新增 `0911_FlatTerrain/RoughTerrain.onnx`(sim2real_v1) 與訓練的
    `scene_mjx.xml`(flat) / `hfield_mjx.xml`(rough) 的對應關係。
+8. **🔴 後座力倒數計時器疑似沒在跑（T6 發現）** — `simulation_controller.py:208 _update_recoil_warning_timer`
+   （唯一遞減 `recoil_timer` 的邏輯）**全 repo 無呼叫者**。若屬實，sim 隨機後座力事件不會觸發。
+   需核對 `recoil_warning_controller.py` 是否另有獨立計時，或確認此為斷線的死碼。見 reports/REVIEW_timing_2026-06-04.md T6-6。
 
 ## B. 已識別、刻意延後（多數待實體機）
 - **sim 模擬模式 `_get_current_pitch` 修正**：改用側向分量對齊訓練（訓練 = `-arcsin(up_vector[1])`）。
