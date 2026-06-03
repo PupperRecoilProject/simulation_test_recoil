@@ -39,6 +39,20 @@
 - 記憶：已是專案本地記憶（在專案 .claude 目錄下）。
 - 不急著 compact，先充分研究討論。
 
+## 目標架構決策（已採納，2026-06-04）
+**分離原則：headless 控制核心 + 薄客戶端。** 把控制邏輯做成無介面的核心（乾淨 Python API），
+介面只是可替換的客戶端。好處：可測試、AI 可完全自主操作、UI 隨時換皮。
+- 核心：headless 控制 API（Python）。
+- 開發/自動化/我操作 + 測試驅動：**CLI（建議 Typer）**。
+- 即時 UI（之後挑）：FastAPI+WebSocket+單頁 HTML/JS（取代現有 NiceGUI），資料視覺化可用 rerun.io。
+- 測試策略：單元/整合測試打**核心 API**（快、不需 UI）；CLI/GUI 只配少量 smoke/e2e（Playwright）。
+- 現有 NiceGUI：API 出來後降級為可替換客戶端，不滿意直接換。
+
+## 自主測試範圍（我能做 vs 需 Harrison）
+- ✅ 可全自主：pytest、啟動 sim 做 smoke test、瀏覽器自動化驅動 web UI、**用 `src/mock` 假硬體跑「進出硬體模式」**（故能自主重現/驗證「退出硬體卡死」）、靜態分析、效能/記憶體 profiling。
+- 🙋 需 Harrison：真 Teensy/機器狗實測、馬達方向/IMU 正負號、插拔 USB、主觀 UX 拍板、push 核可、重大架構決策。
+- 前提：要我自主跑 sim 測試，需先建好裝有 sim 依賴的 Python 環境（見 environment 記憶；待辦）。
+
 ## 待 Harrison 補充 / 我注意到的缺口
 - 你訊息中有兩處「還有」後面似乎沒接內容，可能有想講漏掉的，請補。
 - recoil 模型 OOD 問題（餵非零運動指令給站立模型）也屬「將就/需釐清」。

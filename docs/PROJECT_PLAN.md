@@ -38,6 +38,10 @@
 - [ ] 過時文件修正 — ✅ 已做(本機 commit 未 push)：fw README/platformio baud→921600、sim readme 移除 main.py/tennsy.md 過時引用
 - [ ] **🔴 修 `hardware_controller._execute_stop` self-join bug**（不需實體機，純軟體）— 見 `reports/REVIEW_hardware_stability_2026-06-04.md` F1，疑似「進出硬體卡死」主因
 - [ ] hardware 交接 try/finally 保證 resume_control（REVIEW F2）
+- [ ] 建立機器狗 Python 環境（conda 在 `C:\Users\Harrison\miniconda3`、未 init；sim 與訓練各一 env，釘 3.11/3.12）→ 讓 AI 能自主跑 sim 測試
+- [ ] **重構：採「headless 控制核心 + 薄客戶端(CLI/API/web)」分離架構**（已採納，見 REFACTOR_SCOPE「目標架構決策」）；CLI/API 優先以利測試與 AI 自主操作，再決定即時 UI（FastAPI+WS+HTML 或 rerun.io），逐步汰換 NiceGUI
+- [ ] 建立測試 SOP（核心 API 單元/整合 + CLI/GUI smoke/e2e）與需 Harrison 介入的操作 SOP
+- [ ] feature inventory：記錄現有所有功能後再重構
 
 ## 夜間自動任務成果（2026-06-04，本機 commit 未 push）
 - `reports/INVESTIGATION_2026-06-04.md`：recoil 是 +Y 側向力（解釋 roll）、command_4d=目標側傾(非 pitch)、訓練時 vx/vy/omega 恆為零（recoil 模型是站立吸力模型）、e2e_fixed 為子元重匯的不同權重、teensy 輸出問題線索。
