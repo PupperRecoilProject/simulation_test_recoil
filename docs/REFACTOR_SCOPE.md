@@ -32,6 +32,7 @@
 - 現有 NiceGUI：功能內容 OK，但**運作不一定正常、不夠好用**。
 - **退出硬體模式會卡死** → 已對應到 `hardware_controller._execute_stop` 的 self-join bug（REVIEW_hardware_stability F1，高度吻合）。
 - 若不利 AI 自主操作，可整套換（需保留可被測試/自動操作的控制介面，例如 CLI/API 優先、UI 為薄層）。
+- **NiceGUI UX 評估（瀏覽器截圖+問題清單）= 需 Harrison 在場一起做、重要、不自動執行。** 等重構方向定了再評估介面較有意義。
 
 ## F. 流程 / 雜項
 - 先**記錄所有現有功能**（feature inventory），再重構、替換舊機制架構。
