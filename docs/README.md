@@ -28,6 +28,7 @@
 | `FEATURE_INVENTORY.md` | 現有功能完整盤點（模式/按鍵/UI/硬體/模擬） | 活文件 |
 | `ARCHITECTURE_PROPOSAL.md` | 重構目標架構（headless 核心+薄客戶端）+ strangler-fig 遷移（草稿） | 活文件 |
 | `TEST_SOP.md` | 測試 SOP（三層測試 + 需 Harrison 介入步驟）（草稿） | 活文件 |
+| `GLOSSARY.md` | 三方命名正規化（關節/roll-pitch/軸向/指令）權威對照 | 活文件 |
 | `INTERFACE_CONTRACT.md` | PC↔Teensy 序列埠契約（34欄位/指令/馬達/疑點） | 活文件 |
 | `ARCHITECTURE.md` | sim 架構 onboarding | 活文件 |
 | `OPEN_THREADS.md` | 未展開線索 / 調查待辦 | 活文件 |

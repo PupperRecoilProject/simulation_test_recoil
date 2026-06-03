@@ -25,7 +25,7 @@
 - [x] **T9 重構架構提案 + 測試 SOP 草稿** ✅ → `docs/ARCHITECTURE_PROPOSAL.md`(headless 核心+薄客戶端分層、模組邊界對照表[把每個問題編號對應到修掉它的模組]、strangler-fig 6 步遷移) + `docs/TEST_SOP.md`(測試金字塔、Layer A/B/C、需 Harrison 介入步驟、每次改動最小回歸清單)。已加入 README 清單。**主任務 T1–T9 全數完成。**
 
 ## 備選池（主任務做完才做；同樣依序、同規則）
-- [ ] **B1 術語正規化文件**：把軸向慣例、roll/pitch、關節命名(hip/abduction…)的權威名稱定死→`docs/GLOSSARY.md`，消除三方命名混淆。
+- [x] **B1 術語正規化文件** ✅ → `docs/GLOSSARY.md`：關節命名(hip 兩邊不同義→用軸序/ID)、馬達編號(三方一致)+方向(只翻 sim)、roll/pitch(韌體送 roll 正確、建議正名 lean)、座標軸(Y 前後非標準)、command 佈局、控制模式、baud 921600、縮寫。已加入 README。
 - [ ] **B2 git 歷史考古：找被改壞的功能**：掃 sim git log 找「設計過又壞掉/被 revert」的功能線索→reports。純讀。
 - [ ] **B3 死碼/未使用偵測（只報告、不刪）**：找未使用函式/孤兒檔(如舊 observation.py)→REFACTOR_SCOPE。**不自動刪除**。
 - [ ] **B4 config.yaml 稽核**：逐鍵記錄用途、標出過時/未用鍵(如註解掉的 recipes、warmup_duration)→reports/REFACTOR_SCOPE。
