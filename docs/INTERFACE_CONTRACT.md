@@ -138,9 +138,20 @@ raw_joint_velocities       = data_vec[22:34]
 2. **方向雙重補償風險**
    韌體校準鏡像左腿 + sim correction_vector 也處理左腿，兩者是否會疊加/抵消需上機核對。
 
-3. **加速度座標系**
-   韌體註解標明送的是「未經座標系修正的原始 IMU 加速度」，需與 sim 端假設核對
-   （Teensy IMU 可能是 Y-fwd / X-right）。
+3. **加速度座標系（歷史上已對應過）**
+   韌體註解標明送的是「未經座標系修正的原始 IMU 加速度」。據開發者回憶，
+   加速度（欄位 6–8）的座標系**當時已在訓練端與執行端之間對應/校對過**，確認兩邊不同並做了轉換。
+   （Teensy IMU 可能是 Y-fwd / X-right。）
+
+4. **角速度座標系（尚未驗證）**
+   角速度（欄位 0–2）的慣例**當時未驗證**是否與訓練端一致。需重新驗證，
+   但須實體機器狗在場才能做（見 PROJECT_PLAN Phase 2 待辦）。
+
+### 訓練端權威來源
+模型由組員以 **MuJoCo Playground** 訓練，repo：`PupperRecoilProject/mujoco_playground_recoil`
+（≈350MB，Jupyter Notebook；尚未 clone）。觀測順序、單位、座標系慣例的**最終權威在此**，
+特別是 `joystick.py` 的 `state_obs`。釐清上述疑點（尤其 roll/pitch、角速度）前需取得其定義
+（可只抓關鍵檔，不必整包 clone）。重啟時亦可評估是否重新設計訓練方式。
 
 ---
 

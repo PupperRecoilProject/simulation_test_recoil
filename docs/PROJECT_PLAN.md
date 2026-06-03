@@ -32,6 +32,8 @@
 
 ## Phase 2+ — 之後再排
 - [ ] **roll/pitch 疑點調查**（韌體第 9 欄送 roll 卻被當 pitch；需訓練 repo 的 `joystick.py` 才能定權威）
+- [ ] **角速度座標系驗證**（欄位 0–2，當時未驗證與訓練端是否一致）— ⚠️ 需實體機器狗在場
+- [ ] （評估）重新設計訓練方式（現由組員用 MuJoCo Playground；重啟可重評）
 - [ ] 過時文件修正（README baud 115200、platformio monitor_speed 460800、sim readme 指向已刪除的 tennsy.md 破連結）
 - [ ] 版本號註解雜訊清理（`【v4.x.x 修改】`）— 改靠 git 歷史，不再行內標版本
 - [ ] 硬體進出穩定性（「teensy 輸出問題」線頭）
