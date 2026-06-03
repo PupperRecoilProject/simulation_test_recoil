@@ -373,17 +373,23 @@ class UIController:
 
             # 【v4.10.5 修改】全面更新 UI 標籤和邏輯
             with ui.row().classes('items-center'):
-                ui.label('啟用馬達 (Enable Motors)').classes('text-sm')
-                # 1. 重新命名 self.mute_switch -> self.enable_motors_switch
-                # 2. 更新 on_change 的處理函式
-                # 3. 更新 tooltip 的說明文字
+                ui.label('啟用馬達 (Enable Motors)').classes('text-sm').classes('w-32') # 【v4.14.2 新增】增加固定寬度以對齊
                 self.enable_motors_switch = ui.switch(on_change=self._handle_enable_motors_switch_change) \
                     .tooltip('手動啟用或禁用 AI 對馬達的控制。僅在硬體通訊驗證成功後可用。')
 
-            # 現在綁定到 self.hardware_controller.is_running
-            # 只有在硬體控制器成功啟動後，這個按鈕才能被點擊
-            ui.button('啟用或停用 AI (V)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
-                .bind_enabled_from(self.state, 'hardware_is_running')
+            # 【v4.14.2 修改】將原有的按鈕升級為功能更明確的開關 (ui.switch)。
+            with ui.row().classes('items-center'):
+                ui.label('運行 AI (Run AI)').classes('text-sm').classes('w-32') # 【v4.14.2 新增】增加固定寬度以對齊
+                
+                # 這個新的開關不僅能觸發事件，還能實時反映 state.hardware_ai_is_active 的狀態。
+                ui.switch(on_change=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
+                    .bind_value_from(self.state, 'hardware_ai_is_active') \
+                    .bind_enabled_from(self.state, 'hardware_is_running') \
+                    .tooltip('啟用或禁用 AI 決策迴圈。僅在硬體模式成功運行後可用。(快捷鍵: V)')
+
+            # 【v4.14.2 刪除】移除舊的 "啟用或停用 AI" 按鈕。
+            # ui.button('啟用或停用 AI (V)', on_click=lambda: event_bus.publish(EVENT_HARDWARE_AI_TOGGLE_REQUESTED)) \
+            #     .bind_enabled_from(self.state, 'hardware_is_running')
 
             ui.separator().classes('my-2')
             ui.label('設備連接').classes('text-lg')

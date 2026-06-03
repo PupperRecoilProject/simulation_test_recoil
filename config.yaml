@@ -15,7 +15,7 @@ mujoco_model_file: "assets/scene_mjx.xml"
 onnx_models:
   stable_walk: 
     path: "models/pupper_ppo_policy_30965760_tf_converted_穩定步態版.onnx"
-    # 【新】為每個模型指定觀察配方
+    # 【v4.14.0 整理】移除舊標籤，此為模型的觀察配方定義
     observation_recipe:
       - 'linear_velocity'
       - 'angular_velocity'
@@ -23,7 +23,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
   
   agile_model: 
     path: "models/pupper_ppo_policy_200540160_tf_converted.onnx"
@@ -35,11 +35,11 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
 
   new_high_level: 
     path: "models/pupper_ppo_policy_203161600_tf_v2.3_converted.onnx"
-    # 【新】使用新的觀察配方
+    # 使用新的觀察配方
     observation_recipe:
       - 'angular_velocity'
       - 'gravity_vector'
@@ -47,7 +47,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
 
   new_e2e: 
     path: "models/pupper_ppo_policy_e2e_203161600.onnx"
@@ -59,7 +59,7 @@ onnx_models:
       - 'joint_positions'
       - 'joint_velocities'
       - 'last_action'
-      - 'commands_3d' # 【修改】從 commands -> commands_3d
+      - 'commands_3d' 
 
   fire_on_recoil_51: 
     path: "models/pupper_ppo_policy_e2e_101580800.onnx"
@@ -88,8 +88,48 @@ onnx_models:
       - 'commands_4d'
       - 'firearm_recoil_warming'
 
+  # --- 【v4.14.0 新增】Sim2Real v1 模型系列 ---
+  sim2real_v1_flat_0911:
+    path: "models/0911_FlatTerrain.onnx"
+    # 專為平坦地形訓練的模型，使用標準的 51 維觀察配方。
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
 
+  sim2real_v1_rough_0911:
+    path: "models/0911_RoughTerrain.onnx"
+    # 專為崎嶇地形訓練的模型，同樣使用標準的 51 維觀察配方。
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
   
+  sim2real_v2_0917:
+    path: "models/0917_pupper_ppo_policy_e2e_101580800.onnx"
+    # 專為崎嶇地形訓練的模型，同樣使用標準的 51 維觀察配方。
+    observation_recipe:
+      - 'angular_velocity'
+      - 'gravity_vector'
+      - 'accelerometer'
+      - 'current_pitch'
+      - 'joint_positions'
+      - 'joint_velocities'
+      - 'last_action'
+      - 'commands_4d'
+      - 'firearm_recoil_warming'
 
 
 # 模型平滑切換設定
@@ -205,3 +245,15 @@ terrain_generation:
 # ===================================================================
 firearm_recoil_warming:
   auto_inhibit: true  #false   # true = 關閉自動預警，只保留手動 
+
+# 【v4.14.3 新增】Sim2Real 馬達方向校準設定
+# ===================================================================
+sim2real_motor_calibration:
+  # 描述：一個 12 維向量，用於校準 ONNX 模型輸出與真實硬體馬達之間的旋轉方向。
+  # 1 表示同向, -1 表示反向。此向量同時作為從 Sim-Space 到 HW-Space 的轉換係數。
+  # 順序: [FR_Abduction, FR_Hip, FR_Knee, FL_Abduction, FL_Hip, FL_Knee, RR_Abduction, RR_Hip, RR_Knee, RL_Abduction, RL_Hip, RL_Knee]
+  # 根據分析：
+  # - Abduction (Hip) 關節: FR(0)+1, FL(3)-1, RR(6)+1, RL(9)-1 (左側反向)
+  # - Upper Leg & Lower Leg 關節 (所有): -1 (ONNX正向後，Teensy期望正向前，完全反向)
+  # 最終向量: [FR_H(+1), FR_U(-1), FR_L(-1), FL_H(-1), FL_U(-1), FL_L(-1), RR_H(+1), RR_U(-1), RR_L(-1), RL_H(-1), RL_U(-1), RL_L(-1)]
+  correction_vector: [1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1]

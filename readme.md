@@ -1,16 +1,174 @@
-前置安裝：你需要安裝 PyYAML。在你的終端機中執行：
-pip install onnxruntime numpy
-pip install PyYAML
-pip install mujoco glfw //這個看看環境有沒有載，我不是用這個
-pip install inputs //搖桿用的
-pip install pygame
-pip install pyserial
-pip install Pillow
-pip install scipy  //運動學 hardware 需用
+## 開發環境安裝指南 (Windows)
 
-pip install numpy onnxruntime PyYAML nicegui pygame pyserial Pillow scipy
+本指南將引導你建立一個乾淨、獨立的 Python 虛擬環境。指南分為兩部分：**核心環境** (適用於所有使用者) 和**可選的物理模擬環境** (適用於需要模擬功能的使用者)。
 
-### 專案目錄結構與模組化原則
+---
+
+### 第一章：核心環境安裝 (基礎功能)
+
+完成此章節後，你將能夠運行專案的基礎功能 (例如，在 `--no-sim` 模式下)。
+
+#### 第一步：建立並啟用虛擬環境
+
+為避免與系統全局 Python 套件產生衝突，我們為專案建立一個獨立的虛擬環境。
+
+1.  **開啟終端機**：
+    在專案的根目錄下，開啟 PowerShell 或命令提示字元 (CMD)。
+
+2.  **建立虛擬環境**：
+    執行以下指令，這將會在專案目錄下建立一個名為 `.venv` 的資料夾。
+    ```powershell
+    python -m venv .venv
+    ```
+
+3.  **啟用虛擬環境**：
+    啟用後，你的終端機提示符前方會出現 `(.venv)` 字樣。
+    ```powershell
+    .venv\Scripts\activate
+    ```
+
+> **黃金準則**：啟用虛擬環境後，請**永遠使用 `python -m pip`** 來執行安裝或管理套件，以確保操作對象是當前的虛擬環境。
+
+#### 第二步：安裝核心套件
+
+這些是運行專案核心功能與使用者介面的基礎套件。請執行以下指令一次性安裝：
+
+```powershell
+python -m pip install onnxruntime-directml numpy scipy PyYAML Pillow pyserial nicegui pygame
+```
+
+#### 第三步：驗證 ONNX Runtime 環境
+
+安裝完成後，執行以下指令來確認 ONNX Runtime 是否能正確使用你的 GPU (Intel/NVIDIA/AMD 皆可)。
+
+```powershell
+python -c "import onnxruntime as ort; print('ONNX Runtime Version:', ort.__version__); print('Available Providers:', ort.get_available_providers())"
+```
+
+**期望輸出：**
+```
+ONNX Runtime Version: 1.18.0 (或其他版本)
+Available Providers: ['DmlExecutionProvider', 'CPUExecutionProvider']
+```
+看到 `DmlExecutionProvider`，代表你的 GPU 加速已為核心推論功能準備就緒。
+
+**至此，你已可以運行專案的無模擬 (`--no-sim`) 模式。**
+
+---
+
+### 第二章：可選：安裝 MuJoCo 物理模擬環境
+
+若你需要運行物理模擬、訓練或與虛擬環境互動，請繼續此章節。
+
+此安裝的核心是 `JAX` 函式庫，它負責物理計算。你需要根據你的電腦硬體，選擇 **CPU** 或 **NVIDIA GPU** 其中一條安裝路徑。
+
+<br>
+
+<details>
+<summary><b> 👉 路徑 A：NVIDIA GPU 加速環境 (推薦，適用於配備 NVIDIA 顯示卡的桌機)</b></summary>
+
+此路徑將利用你的 NVIDIA GPU 進行高效能物理模擬。
+
+**前置準備：安裝 NVIDIA CUDA Toolkit**
+1.  在終端機執行 `nvidia-smi`，確認右上角顯示的 `CUDA Version` (例如 `12.x`)。
+2.  前往 [NVIDIA CUDA Toolkit 存檔頁面](https://developer.nvidia.com/cuda-toolkit-archive) 下載並安裝與之對應的版本 (例如 CUDA Toolkit 12.4)。
+
+**安裝步驟**
+1.  **Clone `mujoco_playground` 專案 (若尚未執行)**
+    ```powershell
+    git clone https://github.com/google-deepmind/mujoco_playground.git
+    cd mujoco_playground
+    ```
+2.  **安裝 JAX (CUDA 版本)**
+    ```powershell
+    python -m pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+    ```
+3.  **驗證 JAX GPU 後端**
+    ```powershell
+    python -c "import jax; print('JAX default backend:', jax.default_backend())"
+    ```
+    *   **期望輸出：** `JAX default backend: gpu`
+
+4.  **安裝 MuJoCo Playground (核心依賴)**
+    ```powershell
+    python -m pip install -e .
+    ```
+5.  **最終驗證**
+    ```powershell
+    python -c "import mujoco_playground"
+    ```
+    若無錯誤訊息，即表示安裝成功。
+
+</details>
+
+<br>
+
+<details>
+<summary><b> 👉 路徑 B：CPU 通用環境 (適用於所有筆電及無 NVIDIA 顯示卡的電腦)</b></summary>
+
+此路徑將使用 CPU 進行物理模擬，相容性最好。
+
+**安裝步驟**
+1.  **Clone `mujoco_playground` 專案 (若尚未執行)**
+    ```powershell
+    git clone https://github.com/google-deepmind/mujoco_playground.git
+    cd mujoco_playground
+    ```
+2.  **安裝 JAX (CPU 版本)**
+    ```powershell
+    python -m pip install jax jaxlib
+    ```
+3.  **驗證 JAX CPU 後端**
+    ```powershell
+    python -c "import jax; print('JAX default backend:', jax.default_backend())"
+    ```    *   **期望輸出：** `JAX default backend: cpu`
+
+4.  **安裝 MuJoCo Playground (核心依賴)**
+    ```powershell
+    python -m pip install -e .
+    ```
+5.  **最終驗證**
+    ```powershell
+    python -c "import mujoco_playground"
+    ```
+    若無錯誤訊息，即表示安裝成功。
+
+</details>
+
+---
+
+### 第三章：常見問題排解 (FAQ)
+
+<details>
+<summary><b>Q1: 虛擬環境啟用後，執行 `python -m pip` 提示 `No module named pip`</b></summary>
+
+**A:** 這表示你的虛擬環境已損壞。請依照以下步驟重建：
+   1.  **停用環境**: `deactivate`
+   2.  **刪除舊資料夾**: `Remove-Item .venv -Recurse -Force` (在 PowerShell 中)
+   3.  **回到本指南第一章**，重新建立並啟用一個全新的虛擬環境。
+
+</details>
+
+<details>
+<summary><b>Q2: 安裝 `mujoco_playground` 時，出現 `Microsoft Visual C++ 14.0 or greater is required` 錯誤</b></summary>
+
+**A:** 這是因為你嘗試安裝了包含 C++ 原始碼的**開發者工具** (例如 `pytype`)，但系統缺少 C++ 編譯器。
+*   **最佳解法：** 確認你在安裝 `mujoco_playground` 時使用的是 `python -m pip install -e .` 而**非** `python -m pip install -e ".[all]"`。前者只會安裝運行所必需的核心依賴，完美繞過此問題。
+*   **根本解法：** 前往 [Visual Studio 官網](https://visualstudio.microsoft.com/visual-cpp-build-tools/)下載並安裝 "Build Tools for Visual Studio"，並在安裝選項中勾選「使用 C++ 的桌面開發」。
+
+</details>
+
+<details>
+<summary><b>Q3: 我有 NVIDIA 顯示卡並安裝了 CUDA，但 JAX 驗證後端仍顯示 `cpu`</b></summary>
+
+**A:** 這通常是 JAX 官方暫時沒有提供適用於你目前 Python/Windows 版本的預編譯 CUDA 套件所致。
+*   **建議：** 先接受 CPU 後端並完成安裝，確保專案可以運行。`mujoco_playground` 的多數功能在 CPU 上依然表現良好。
+*   **進階方案：** 考慮使用 [WSL2 (Windows Subsystem for Linux)](https://learn.microsoft.com/zh-tw/windows/wsl/install)，在 Windows 內建的 Linux 環境中進行開發，這是 JAX 官方支援度最高的平台。
+
+</details>
+
+
+## 專案目錄結構與模組化原則
 ```
 simulation_test_recoil/
 ├── assets/                     # 靜態資源 (Static Assets)

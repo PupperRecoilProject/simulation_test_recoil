@@ -69,6 +69,10 @@ class AppConfig:
     # 【v4.10.0 新增】將地形設定加入到主設定物件中
     terrain_generation: TerrainGenerationConfig
 
+    # 【v4.14.3 新增】Sim2Real 馬達方向校準設定
+    sim2real_motor_calibration: Dict[str, List[int]]
+    
+    # 【v4.14.3 修改】將帶有預設值的參數移到最後，以修正 TypeError。
     # 【v4.10.0 新增】FRW 設定（可選）
     firearm_recoil_warming: Optional[FirearmRecoilWarningConfig] = None
 
@@ -127,6 +131,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         terrain_generation=terrain_gen_config,
         # 傳入 FRW 設定（可為 None）
         firearm_recoil_warming=frw_config,
+        # 【v4.14.3 新增】載入 Sim2Real 馬達方向校準設定
+        sim2real_motor_calibration=config_data.get('sim2real_motor_calibration', {'correction_vector': [1]*12}),
     )
     
     print("✅ 設定檔載入成功 (包含懸浮控制器設定)。")

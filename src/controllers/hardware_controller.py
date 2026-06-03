@@ -79,6 +79,24 @@ class HardwareController:
         # self._subscribe_to_events()
         # log.info("✅ 硬體控制器 (v4.3.2 數據流統一版) 已初始化。")
 
+    # 【v4.14.3 新增】Sim2Real 關節方向校準函數
+    def _apply_motor_direction_calibration(self, joint_vector: np.ndarray) -> np.ndarray:
+        """
+        應用 Sim2Real 的馬達方向校準。
+
+        此函數作為模擬空間 (Sim-Space) 與硬體空間 (HW-Space) 之間的雙向轉換器。
+        由於校準向量只包含 1 和 -1，其本身就是自己的逆，因此同一個函數
+        可用於兩個方向的轉換：
+        - Sim-to-HW (指令): 將 AI 的 Sim-Space 指令轉換為 HW-Space。
+        - HW-to-Sim (回饋): 將 Teensy 的 HW-Space 回饋轉換為 Sim-Space。
+        """
+        # 從配置中安全地獲取校準向量
+        vector_list = self.config.sim2real_motor_calibration.get('correction_vector', [1]*self.config.num_motors)
+        calibration_vector = np.array(vector_list, dtype=np.float32)
+        
+        # 執行逐元素乘法進行校準
+        return joint_vector * calibration_vector
+
     def _subscribe_to_events(self):
         # 【v4.13.1-w】允許事件帶參數，避免 TypeError
         event_bus.subscribe(
@@ -107,12 +125,105 @@ class HardwareController:
             log.warning(f"當前狀態為 {self.internal_state.name}，忽略停止請求。")
     
     def shutdown(self):
-        """(外部API, 阻塞) 應用程式關閉時的強制清理。"""
-        self._is_running_event.clear()
-        if self.control_thread and self.control_thread.is_alive():
-            self.control_thread.join(timeout=1)
-        if self.read_thread and self.read_thread.is_alive():
-            self.read_thread.join(timeout=1)
+        """
+        【v4.14.1-w 最小修正】優先讓控制迴圈處理 STOP；如超時未停，執行後援停機。
+        交還控制權後，喚醒 SerialCommunicator 並在 HUMAN 模式下設回 monitor freq，
+        確保 UI 仍能收到 Teensy 遙測。
+        """
+        # 1) 如果還在 RUNNING，先丟 STOP 給控制迴圈（正常路徑）
+        if self.internal_state == HWState.RUNNING:
+            try:
+                self.command_queue.put(HWCommand.STOP)
+            except Exception as e:
+                log.warning(f"shutdown(): 無法送出 STOP 命令，將直接進入後援停機。原因: {e}")
+
+            # 等待控制迴圈去執行 _execute_stop()
+            deadline = time.time() + 0.8
+            while time.time() < deadline:
+                if self.internal_state in (HWState.STOPPING, HWState.STOPPED, HWState.FAILED):
+                    break
+                time.sleep(0.02)
+
+            # 2) 超時仍 RUNNING → 啟動後援停機（不關串口，只切人類模式並交還控制權）
+            if self.internal_state == HWState.RUNNING:
+                log.warning("shutdown(): 正常停機超時，改用安全停機後援。")
+                self._set_internal_state(HWState.STOPPING)
+
+                # 關掉 AI 旗標
+                self.ai_control_active = False
+                try:
+                    with self.state.lock:
+                        self.state.hardware_ai_is_active = False
+                except Exception:
+                    pass
+
+                # 優先用 TeensyAPI（協定感知），否則退回直寫
+                ser_open = bool(self.ser and getattr(self.ser, "is_open", False))
+                try:
+                    if self.teensy_api and ser_open:
+                        self.teensy_api.execute_command("stop")        # NONE
+                        self.teensy_api.execute_command("monitor h")   # NONE
+                    elif ser_open:
+                        self.ser.write(b"stop\n"); time.sleep(0.05)
+                        self.ser.write(b"monitor h\n"); time.sleep(0.05)
+                    else:
+                        log.info("shutdown(): 序列埠未開啟，略過停止指令。")
+                except serial.SerialException as e:
+                    log.warning(f"shutdown(): 後援停機發送指令失敗（略過）：{e}")
+
+                # >>> 這裡是你要插入「交還控制權後的兩步」的位置 <<<
+                # 交還 serial_comm 管理權（不在這裡 close；main.py 會收尾）
+                try:
+                    if self.serial_comm:
+                        self.serial_comm.is_managed_by_hardware_controller = False
+                        log.info("shutdown(): 序列埠控制權已交還給 SerialCommunicator。")
+                except Exception as e:
+                    log.warning(f"shutdown(): 交還控制權時發生非致命錯誤：{e}")
+
+                # 新增 Step A：喚醒 SerialCommunicator 的讀取迴圈
+                if hasattr(self.serial_comm, "resume_control"):
+                    try:
+                        self.serial_comm.resume_control()
+                        log.info("shutdown(): SerialCommunicator 已恢復接手串口讀取。")
+                    except Exception as e:
+                        log.warning(f"shutdown(): resume_control() 失敗（略過）：{e}")
+
+                # 新增 Step B：在 HUMAN 模式下維持遙測頻率（避免 UI 看起來沒資料）
+                try:
+                    if self.teensy_api and self.serial_comm and self.serial_comm.is_connected:
+                        self.teensy_api.execute_command(f"monitor freq {self.config.control_freq}")
+                        log.info(f"shutdown(): HUMAN 模式下已設置 monitor freq = {self.config.control_freq} Hz")
+                except Exception as e:
+                    log.warning(f"shutdown(): monitor freq 設置失敗（略過）：{e}")
+
+                # （可選，但推薦）把 Link 狀態設回可讀狀態，避免 UI 用狀態濾掉顯示
+                try:
+                    with self.state.lock:
+                        self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+                except Exception:
+                    pass
+
+                # 解除本地 ser 引用並標記已停止（實際 close 由 main.py 最後執行）
+                self.ser = None
+                self._set_internal_state(HWState.STOPPED)
+
+        # 3) 關閉控制事件並等待執行緒結束
+        try:
+            self._is_running_event.clear()
+        except Exception:
+            pass
+
+        try:
+            if self.control_thread and self.control_thread.is_alive():
+                self.control_thread.join(timeout=1.2)
+            if self.read_thread and self.read_thread.is_alive():
+                self.read_thread.join(timeout=1.2)
+        except Exception as e:
+            log.warning(f"shutdown(): 等待執行緒結束時出現非致命錯誤：{e}")
+
+        self.control_thread = None
+        self.read_thread = None
+
         log.info("硬體控制器所有執行緒已關閉。")
 
     def _start_threads_if_not_alive(self):
@@ -272,10 +383,10 @@ class HardwareController:
 
         # 計算 AI 決策頻率
         if len(self.ai_step_times) > 1:
-            while current_time - self.ai_step_times[0] > 1.0:
-                self.ai_step_times.pop(0)
-                if len(self.ai_step_times) <= 1:
-                    break
+            # 【v4.14.1 修復】使用 deque.popleft() 而不是 deque.pop(0) 來移除最左側（最舊）的元素。
+            # deque.pop(0) 是不合法的語法，會導致 TypeError 並使控制執行緒崩潰。
+            while len(self.ai_step_times) > 1 and current_time - self.ai_step_times[0] > 1.0:
+                self.ai_step_times.popleft()
 
             if len(self.ai_step_times) > 1:
                 elapsed = self.ai_step_times[-1] - self.ai_step_times[0]
@@ -332,10 +443,12 @@ class HardwareController:
             log.info("--- 開始執行硬體啟動序列 (v4.10.4 協定感知版) ---")
             
             # 【v4.10.4 修改】啟動指令序列現在調用新的 execute_command API
-            # 1. 發送 'stop' (協定: NONE, 只需確認發送成功)
-            log.info("  -> 步驟 1/3：發送 'stop' 指令...")
-            if not self.teensy_api.execute_command("stop"):
-                raise serial.SerialException("發送 'stop' 指令失敗，啟動中止。")
+            # 【v4.14.3 刪除】移除了啟動時發送 'stop' 指令的步驟。
+            # 理由：為了實現從現有站姿無縫進入硬體模式，避免機器人掉電癱軟。
+            # 前提：假設 Teensy 在此之前已處於一個已知的安全狀態（例如，站立）。
+            # log.info("  -> 步驟 1/3：發送 'stop' 指令...")
+            # if not self.teensy_api.execute_command("stop"):
+            #     raise serial.SerialException("發送 'stop' 指令失敗，啟動中止。")
             
             # 2. 發送 'monitor freq' (協定: OK, 會等待 [OK] 確認)
             log.info(f"  -> 步驟 2/3：設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
@@ -377,10 +490,10 @@ class HardwareController:
 
     def _execute_stop(self):
         """
-        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
-        【v4.10.2 重構】在停止後，將序列埠的控制權安全地歸還。
+        【【v4.14.0 修改】移除了會導致死鎖的執行緒 self-join 邏輯。此函式現在只負責業務層面的停止操作。
         【v4.10.5 修改】更新 API 呼叫以匹配 v4.10.4 的 TeensyAPI 重構。
-
+        【v4.10.2 重構】在停止後，將序列埠的控制權安全地歸還。
+        【v4.9.0 修改】使用 TeensyAPI 進行指令通訊。
         
         執行硬體停止流程。
         
@@ -391,34 +504,58 @@ class HardwareController:
         self.ai_control_active = False
         with self.state.lock: 
             self.state.hardware_ai_is_active = False
-            # 【v4.10.2 新增】停止時，將連線狀態重設為未驗證
-            self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
 
-        if self.teensy_api:
-            log.info("  -> 命令 Teensy 停止並恢復 HUMAN 模式...")
-            # 【v4.10.5 修正】使用正確的 execute_command API。
-            # 根據協定字典，這兩個指令都是 "fire and forget"，無需等待回應。
-            self.teensy_api.execute_command("stop")
-            self.teensy_api.execute_command("monitor h")
-        
-        # 清理自身資源
-        self.ser = None
-        self.teensy_api = None
-        
-        # 【v4.10.2 修改】將歸還控制權的邏輯放在所有操作的最後
+        # 1) 防呆：檢查序列埠是否仍然開啟
+        ser_open = bool(self.ser and getattr(self.ser, "is_open", False))
+
+        try:
+            # 2) 優先走協定感知 API（可處理 [OK]/NONE 等）
+            if self.teensy_api and ser_open:
+                self.teensy_api.execute_command("stop")        # 對應 v4.10.4 協定
+                self.teensy_api.execute_command("monitor h")   # 對應 v4.10.4 協定
+            # 3) 後備：若尚未建立 TeensyAPI，但序列埠可用，才直接寫入
+            elif ser_open:
+                self.ser.write(b"stop\n"); time.sleep(0.05)
+                self.ser.write(b"monitor h\n"); time.sleep(0.05)
+            else:
+                log.warning("序列埠未開啟，略過停止指令。")
+        except serial.SerialException as e:
+            log.warning(f"停止流程：發送停止/切換指令失敗，將繼續交還控制權。原因: {e}")
+
+        # --- 交還 serial_comm 管理權（你原本就有） ---
         if self.serial_comm:
-            self.serial_comm.resume_control()
-            log.info("  -> 序列埠的控制權已歸還。")
-        
+            self.serial_comm.is_managed_by_hardware_controller = False
+            log.info("  -> 序列埠控制權已交還。")
+
+        # --- 新增：喚醒 SerialCommunicator 的讀取迴圈 ---
+        if hasattr(self.serial_comm, "resume_control"):
+            try:
+                self.serial_comm.resume_control()
+                log.info("  -> SerialCommunicator 已恢復接手串口讀取。")
+            except Exception as e:
+                log.warning(f"resume_control() 失敗（略過）：{e}")
+
+        # --- 新增：在 HUMAN 模式下維持遙測頻率 ---
+        try:
+            if self.teensy_api and self.serial_comm and self.serial_comm.is_connected:
+                self.teensy_api.execute_command(f"monitor freq {self.config.control_freq}")
+                log.info(f"  -> HUMAN 模式下已設置 monitor freq = {self.config.control_freq} Hz")
+        except Exception as e:
+            log.warning(f"monitor freq 設置失敗（略過）：{e}")
+
+        # --- 可選：調整鏈路狀態，避免 UI 鎖住 ---
+        try:
+            with self.state.lock:
+                self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+        except Exception:
+            pass
+
+        # 5) 解除本地引用並結束
+        self.ser = None
         self._set_internal_state(HWState.STOPPED)
 
-        # 【v4.13.10-w】可選，真的停掉執行緒
-        self._is_running_event.clear()
-        if self.control_thread and self.control_thread.is_alive():
-            self.control_thread.join(timeout=0.5)
-        if self.read_thread and self.read_thread.is_alive():
-            self.read_thread.join(timeout=0.5)
-        log.info("  -> 硬體控制與讀取執行緒已停止")
+        # 【v4.14.0 刪除】移除導致死鎖的執行緒停止邏輯。
+        # 執行緒的生命週期現在由 shutdown() 方法統一管理，以支持多次啟動/停止。
 
     def _execute_toggle_ai(self):
         """
@@ -467,18 +604,20 @@ class HardwareController:
         
         action_scale = self.config.initial_tuning_params.action_scale
         default_pose_hardware = np.zeros(12)
-        final_command = default_pose_hardware + action_raw * action_scale
+
+        # 在 Sim-Space 計算出 AI 期望的目標關節指令。
+        final_command_sim_space = default_pose_hardware + action_raw * action_scale
         
-        # 【v4.11.0-w 關鍵修復】
-        # 補上遺失的資料流更新。現在 UI 可以正確顯示硬體模式下的最終控制指令。
+        # 【v4.14.3 新增】將 Sim-Space 的指令校準為 HW-Space，以便 Teensy 正確執行。
+        final_command_hw_space = self._apply_motor_direction_calibration(final_command_sim_space)
+
+        # UI 應顯示發送給硬體的實際值（HW-Space）。
         with self.state.lock:
-            self.state.latest_final_ctrl = final_command.copy()
+            self.state.latest_final_ctrl = final_command_hw_space.copy()
         
-        # 【v4.10.4 修改】簡化指令發送調用
-        # 這裡直接調用 send_motor_commands，它負責處理底層的發送、
-        # 協定選擇（NONE）以及安全守衛。
+        # 將校準後的 HW-Space 指令發送給 Teensy。
         if self.teensy_api:
-            if not self.teensy_api.send_motor_commands(final_command):
+            if not self.teensy_api.send_motor_commands(final_command_hw_space):
                 # 如果 send_motor_commands 返回 False，則意味著發送失敗（可能是連接問題）
                 log.error("AI 步驟中發送馬達指令失敗，連接可能已斷開或處於靜默狀態。")
                 # 【v4.13.7-w】在失敗時結束控制執行緒並標示掉線
@@ -545,13 +684,23 @@ class HardwareController:
             with self._freq_lock:  # 【v4.13.9-w】多執行緒安全 append
                 self.data_received_times.append(time.perf_counter())
             
+            # 提取 HW-Space 的原始關節回饋數據。
+            raw_joint_positions_hw_space = data_vec[10:22]
+            raw_joint_velocities_hw_space = data_vec[22:34]
+
+            # 【v4.14.3 新增】將 HW-Space 的關節回饋數據校準回 Sim-Space。
+            # 這樣，ObservationManager 和 AI 模型就能在與其訓練時一致的座標系中接收這些數據。
+            raw_joint_positions_sim_space = self._apply_motor_direction_calibration(raw_joint_positions_hw_space)
+            raw_joint_velocities_sim_space = self._apply_motor_direction_calibration(raw_joint_velocities_hw_space)
+
             with self.state.lock:
                 self.state.raw_torso_angular_velocity[:] = data_vec[0:3]
                 self.state.raw_gravity_vector[:] = data_vec[3:6]
                 self.state.raw_accelerometer[:] = data_vec[6:9]
                 self.state.raw_pitch_rad = data_vec[9]
-                self.state.raw_joint_positions[:] = data_vec[10:22]
-                self.state.raw_joint_velocities[:] = data_vec[22:34]
+                # 【v4.14.3 修改】儲存校準後的 Sim-Space 關節回饋數據。
+                self.state.raw_joint_positions[:] = raw_joint_positions_sim_space
+                self.state.raw_joint_velocities[:] = raw_joint_velocities_sim_space
                 
             # 【v4.13.0 新增】成功解析數據幀後，記錄關節位置 (高頻，使用 debug 級別)
             # 因為這是高頻數據，預設只有在日誌級別設為 DEBUG 時才顯示，避免刷屏
