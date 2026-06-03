@@ -16,6 +16,7 @@
 - [ ] **T1 建 sim 環境**：用 `C:\Users\Harrison\miniconda3\Scripts\conda.exe` 建 env `pupper-sim`(Python 3.11)，pip 裝 sim 依賴(numpy onnxruntime PyYAML nicegui pygame pyserial Pillow scipy mujoco glfw)，做 import smoke test。更新 environment 記憶。卡住→BLOCKED。
 - [ ] **T2 sim 啟動 smoke test**：能跑就啟動 `main_nicegui.py`(sim 模式,含超時保護)，記錄 error/warning →`reports/SMOKE_2026-06-04.md`。無 env→BLOCKED。
 - [ ] **T3 退出硬體卡死 bug（授權碰控制碼，僅限分支）**：在分支 `fix/hardware-stop-selfjoin` 用 `src/mock` 寫重現 `_execute_stop` self-join 的特徵測試＋最小修復；有 env 就跑測試驗證。**不併 main、不 push**。無 env→寫好但標「未驗證」。
+- [ ] **T3b 修 F2 序列埠交接洩漏（授權碰控制碼，同分支 `fix/hardware-stop-selfjoin`）**：用 `try/finally` 保證 `relinquish_control` 後一定呼叫 `resume_control`；並修 `SerialCommunicator.close()` 在暫停狀態直接 return 不關埠的問題（避免序列埠洩漏、下次連不上）。有 env 就用 mock 補特徵測試驗證。**不併 main、不 push**。Harrison 已確認此 bug 實際遇過。
 - [ ] **T4 Feature inventory**：通讀 sim，整理現有所有功能(模式/按鍵/UI/硬體)→`docs/FEATURE_INVENTORY.md`。
 - [ ] **T5 「將就/理所當然」設計 sweep**：系統掃 sim，每條可疑設計(檔:行+為何+建議)記進 `REFACTOR_SCOPE.md`。
 - [ ] **T6 時間/單一時鐘 專題**：靜態分析 sim/hw 時間機制→`reports/REVIEW_timing_2026-06-04.md`。
