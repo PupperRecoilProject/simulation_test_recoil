@@ -30,6 +30,28 @@
   重構應移出主入口、改為可選外掛。詳見 SMOKE S2、孤兒檔見 B3。
 - **C-S3（噪音）**：ONNX 預熱刷一堆 onnxruntime C++ 最佳化警告，可降 graph_optimization_level 或調 ORT log severity。
 
+### C2. T5 系統性 sweep（2026-06-04 靜態掃描所得，按嚴重度排）
+- **C2-1（🔴 架構重複｜雙鍵盤系統）**：同時存在兩套鍵盤輸入處理：
+  `src/input_handlers/keyboard_input_handler.py`（GLFW，掛在 MuJoCo 視窗）與
+  `src/controllers/global_keyboard_driver.py::GlobalKeyboardDriver`（NiceGUI 瀏覽器端，ui_controller.py:139 實例化）。
+  兩者都綁 WASD/QE/IK/重置/FRW 等重疊鍵位 → 來源不明、行為可能不一致、維護成本翻倍。
+  疑為「GLFW 視窗→瀏覽器」遷移的中間遺留。重構應收斂為單一輸入抽象（事件源 → 指令），是高價值清理點。
+- **C2-2（🟡 單向數據流破例）**：`xbox_input_handler.py:50` 註解明載「暫時還需要直接修改 state，後續可以改為發布事件」
+  → 直接寫 state 而非走 event_bus，違反專案「輸入→事件→Controller→改 state」原則。應改發事件。
+- **C2-3（🟡 執行期變動 config）**：`keyboard_input_handler.py:51-56` 在執行期對 config dataclass 補寫
+  `keyboard_pitch_step`（若 yaml 沒定義）。config 應為不可變 SSoT；缺鍵應在載入/驗證階段補預設，而非散落在 handler。
+- **C2-4（🟡 寬鬆 except 吞錯）**：`keyboard_input_handler.py` 與 `global_keyboard_driver.py` 多處 `except Exception:`（甚至 pass）
+  靜默吞掉所有錯誤（global_keyboard_driver 就有 ~9 處）→ 難除錯、可能遮蓋真實 bug。應收斂為具體例外型別 + 記 log。
+- **C2-5（🟡 print 濫用｜C-S1 根因）**：src 內 **64 處頂層 `print(`**（含 emoji），未走 `log`。
+  這正是 C-S1 cp950 崩潰的根因，也使日誌等級/導向失效。應統一改用 `log`。
+- **C2-6（⚪ 版本註解雜訊）**：src 內 **274 處 `【vX.X.X 修改/新增】` 行內版本註解**（hardware_controller 就 76 處）。
+  CLAUDE.md 已定調：版本歷史交給 git，不再行內標。屬大規模清理（建議重構時順手移除，勿單獨大改）。
+- **C2-7（⚪ 全域可變狀態）**：`main_nicegui.py` 用 module-global `nanoowl_process` 持有子程序。與 C-S2 同根（NanoOwl 硬塞主入口），重構移出時一併處理。
+- **C2-8（指向既有議題）**：`observation_manager.py:197` TODO（v5.0.0 狀態估算器）、`:240` TODO（需與 Teensy IMU
+  實際座標 Y-fwd/X-right 校對）→ 與 B 節「非標準軸向慣例」同源，正名/校對時一起處理。`xbox_input_handler.py:67`
+  手把第 4 軸 pitch 固定 0（未映射）。
+- 備註：上述僅靜態掃描的代表性樣本，非窮舉；重構各模組時應再就地複查。
+
 ## D. 測試 / 品質（從零建立，工程化）
 - 當時幾乎沒寫 pytest → 必有運行 bug、以及「原本設計但被改壞」的功能。
 - 目前無完整測試 SOP：需涵蓋 (1) 程式單元/整合測試 (2) GUI 介面測試 (3) 模擬測試。
