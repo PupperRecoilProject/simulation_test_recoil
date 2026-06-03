@@ -115,25 +115,30 @@ raw_joint_velocities       = data_vec[22:34]
 
 ## 4. 已知疑點（待釐清，見 PROJECT_PLAN.md Phase 2）
 
-1. **roll/pitch 錯位（最高優先）** — 由讀碼發現（程式碼 vs 註解不符），非文件記載。
+1. **roll/pitch — 已用訓練端原始碼釐清（2026-06-03）**
 
-   **確定事實：**
-   - 韌體 `TelemetrySystem.cpp::printAsPolicyStream` 第 9 欄：註解寫 `// 4. 俯仰角(pitch)`，
-     但程式碼是 `Serial.print(_telemetry_data.roll * DEG_TO_RAD)` → **實際送 roll**。
-   - sim `parse_policy_stream`：`raw_pitch_rad = data_vec[9]` → **當 pitch 收**。
-   - 此欄只餵給 `fire_on_recoil_51` / `fire_on_recoil_51_fixed` 的 `current_pitch` 觀測
-     （一般步態模型的 recipe 不含 `current_pitch`，不受影響）。
-   - **關鍵不對稱**：`ObservationManager._get_current_pitch` 在 sim 模式從四元數算**真 pitch**，
-     在硬體模式直接用 `raw_pitch_rad`（= Teensy 的 roll）。
-     → 同一個 recoil 模型，模擬 vs 上機時第 9 維輸入是**不同的物理量**。
+   **訓練端權威定義**（`mujoco_playground_recoil` `.../locomotion/pupper/base.py::get_pitch`）：
+   ```python
+   def get_pitch(self, data):
+       up_vector = self.get_upvector(data)
+       return -jp.arcsin(up_vector[1])   # 取上向量的 Y(側向)分量
+   ```
+   IMU sensor 沿用 Go1 慣例（X=前, Y=左, Z=上），故 `up_vector[1]`（側向分量）
+   數學上算的是 **roll（側傾）**，只是被命名為 "pitch"。recoil 模型 (`joystickwithgun.py`)
+   的 `current_pitch` 觀測學的就是這個側傾量。
 
-   **待補（無法只靠本兩個 repo 確認）：**
-   - IMU 實際安裝方向（是否剛好 robot-pitch = sensor-roll 而歪打正著）。
-   - 韌體註解標明「根據 **joystick.py** 的 state_obs」——`joystick.py` 在**訓練 repo**（尚未 clone），
-     它才是「第 9 欄該是 pitch 還 roll」的權威來源。釐清此疑點前需先取得它。
-   - 韌體 AHRS 的 roll/pitch 定義 vs 模型訓練時的機身座標系是否一致。
+   **三方比對：**
+   | 來源 | 第 9 欄/`current_pitch` 實際量 | 對訓練 |
+   |------|------|------|
+   | 訓練（權威） | `-arcsin(up_vector[1])` 側向 = roll | — |
+   | 韌體 policy stream 第 9 欄 | 送 `roll` | ✓ 一致 |
+   | sim 模擬模式 `_get_current_pitch` | `arcsin(-R[2,0])` 前向 = 真 pitch | ✗ 不一致 |
 
-   > **狀態：暫不修改**（問題複雜，缺訓練 repo 的權威定義）。疑似 sim-to-real 上機問題的真兇。
+   **結論（暫不改碼，待實體驗證）：**
+   - 上機（硬體模式）送 roll **很可能是對的**；歧異點其實在 **sim 模擬模式的 pitch 公式**
+     （用前向分量算真 pitch，但模型是用側向 roll 訓練的）。原本以為韌體錯，方向反了。
+   - 仍需實體機台確認：Teensy AHRS 的 roll 正負號/軸向是否與 MuJoCo `up_vector[1]` 一致（取決 IMU 安裝方向）。
+   - 「pitch」一名在三方都誤導，未來建議統一正名為 roll/側傾。
 
 2. **方向雙重補償風險**
    韌體校準鏡像左腿 + sim correction_vector 也處理左腿，兩者是否會疊加/抵消需上機核對。
@@ -143,15 +148,19 @@ raw_joint_velocities       = data_vec[22:34]
    加速度（欄位 6–8）的座標系**當時已在訓練端與執行端之間對應/校對過**，確認兩邊不同並做了轉換。
    （Teensy IMU 可能是 Y-fwd / X-right。）
 
-4. **角速度座標系（尚未驗證）**
-   角速度（欄位 0–2）的慣例**當時未驗證**是否與訓練端一致。需重新驗證，
-   但須實體機器狗在場才能做（見 PROJECT_PLAN Phase 2 待辦）。
+4. **角速度座標系（座標系已確認一致，正負號待實體驗證）**
+   訓練 `get_gyro` 用 `GYRO_SENSOR` = IMU local/body frame；韌體欄位 0–2 也送 body frame
+   → **座標系一致 ✓**。剩餘僅軸對應/正負號需實體機台確認（當時未驗證過）。
 
-### 訓練端權威來源
-模型由組員以 **MuJoCo Playground** 訓練，repo：`PupperRecoilProject/mujoco_playground_recoil`
-（≈350MB，Jupyter Notebook；尚未 clone）。觀測順序、單位、座標系慣例的**最終權威在此**，
-特別是 `joystick.py` 的 `state_obs`。釐清上述疑點（尤其 roll/pitch、角速度）前需取得其定義
-（可只抓關鍵檔，不必整包 clone）。重啟時亦可評估是否重新設計訓練方式。
+### 訓練端權威來源（已 clone）
+模型由組員以 **MuJoCo Playground** fork 訓練：`mujoco_playground_recoil`（已 clone `dev-v2.3.2` 分支於工作區根目錄）。
+- recoil 環境：`mujoco_playground/_src/locomotion/pupper/joystickwithgun.py`（含 `firearm_recoil_warning`）
+- sensor getter / 軸定義：同目錄 `base.py`、`pupper_constants.py`
+- obs `state` 順序（`_get_obs`）：gyro(3), gravity(3), accel(3), current_pitch(1),
+  joint_pos-default(12), joint_vel(12), last_act(12), command(4), recoil_warning(1)
+  → 與 sim `fire_on_recoil_51` recipe 完全對應 ✓
+- 部署 recoil 模型 `pupper_ppo_policy_e2e_101580800.onnx`：PPO ~1.016 億步、e2e，經 `convert_tf.py` 轉 ONNX。
+觀測順序/單位/座標系慣例的**最終權威在此**。
 
 ---
 

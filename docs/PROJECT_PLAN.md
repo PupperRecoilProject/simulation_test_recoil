@@ -31,9 +31,17 @@
 - [x] 1.4 連線參數（baud 921600）+ 已知疑點清單
 
 ## Phase 2+ — 之後再排
-- [ ] **roll/pitch 疑點調查**（韌體第 9 欄送 roll 卻被當 pitch；需訓練 repo 的 `joystick.py` 才能定權威）
-- [ ] **角速度座標系驗證**（欄位 0–2，當時未驗證與訓練端是否一致）— ⚠️ 需實體機器狗在場
-- [ ] （評估）重新設計訓練方式（現由組員用 MuJoCo Playground；重啟可重評）
+- [x] **roll/pitch 疑點調查** — 已用訓練端原始碼釐清：訓練 `get_pitch`=`-arcsin(up_vector[1])`(側向=roll)，韌體送 roll **一致**；歧異在 sim **模擬模式** `_get_current_pitch` 用了真 pitch 公式。詳見 INTERFACE_CONTRACT §4-1。
+- [ ] **roll/pitch 後續**：(a) 實體機台確認 Teensy AHRS roll 正負號/軸向；(b) 修 sim 模擬模式 pitch 公式使與訓練一致；(c) 三方正名 pitch→roll。⚠️ (a) 需實體機器狗
+- [ ] **角速度正負號驗證**（座標系已確認一致；剩軸對應/符號）— ⚠️ 需實體機器狗在場
+- [ ] **（評估）訓練流程是否重做** — 見下節
+
+## 訓練流程評估（mujoco_playground_recoil，待決策）
+現況：MuJoCo Playground（DeepMind/brax PPO）的 **fork**，pupper 環境改自 Go1。
+- 觀察到的問題：notebook 為訓練入口（不易重現/版控）、多份「複製」檔與多個 joystick 變體
+  （joystick / joystickwithgun / joysticks_sac / *-複製）、sensor/常數沿用 Go1 可能挾帶假設、已與上游 playground 分岔。
+- 選項：A 保留並整理 fork（收斂成單一 env + 腳本化 + 文件化）｜B 重新基於最新上游 playground 乾淨移植 recoil env｜C 換框架（最大工程）。
+- 建議：列為**戰略項**，待 make-it-right 整理告一段落再決；短期先靠本契約把 obs 定義鎖死即可。
 - [ ] 過時文件修正（README baud 115200、platformio monitor_speed 460800、sim readme 指向已刪除的 tennsy.md 破連結）
 - [ ] 版本號註解雜訊清理（`【v4.x.x 修改】`）— 改靠 git 歷史，不再行內標版本
 - [ ] 硬體進出穩定性（「teensy 輸出問題」線頭）
