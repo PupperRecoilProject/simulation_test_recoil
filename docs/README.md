@@ -25,6 +25,7 @@
 | `PROJECT_PLAN.md` | 計畫、工作流程、進度勾選、訓練流程評估 | 活文件 |
 | `TASK_QUEUE.md` | 自動續跑任務佇列 + 自主執行規則 | 活文件 |
 | `REFACTOR_SCOPE.md` | 重構範圍、問題盤點、將就設計清單 | 活文件 |
+| `FEATURE_INVENTORY.md` | 現有功能完整盤點（模式/按鍵/UI/硬體/模擬） | 活文件 |
 | `INTERFACE_CONTRACT.md` | PC↔Teensy 序列埠契約（34欄位/指令/馬達/疑點） | 活文件 |
 | `ARCHITECTURE.md` | sim 架構 onboarding | 活文件 |
 | `OPEN_THREADS.md` | 未展開線索 / 調查待辦 | 活文件 |
