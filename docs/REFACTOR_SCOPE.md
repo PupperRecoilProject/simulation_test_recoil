@@ -74,6 +74,16 @@
 - **🟡 C4-5 `ai_step_times` `_freq_lock` 保護不一致**：control_loop:348 append 未鎖、其他處有鎖（延續 F3）。統一。
 - 建議全域 lint：稽核「`with state.lock` 區塊內是否有 `event_bus.publish`」（持鎖 publish → 回呼再取鎖＝死鎖）。
 
+### C5. 效能 / 記憶體（T8 專題，詳見 reports/REVIEW_performance_2026-06-04.md）
+- **🔴 C5-1 terrain_cache 無上限成長（「久跑超卡」最強嫌疑）**：INFINITE 地形的 `terrain_cache`
+  (terrain_manager.py:74) 是「持久性」設計，走過的每個網格 tile(含 heightfield 陣列)只增不刪，
+  僅 reset 才 clear、無 eviction → 記憶體隨行走距離單調成長、dict 越大越慢。
+  解：窗口外 tile evict / LRU 上限，或改「種子重生」免快取整塊。
+- **🟡 C5-2 data_capture_buffer 無硬上限**：捕獲中每幀 append，靠時長/手動停止結束；漏關即成長。加最大幀數保護。
+- **🟡 C5-3（呼應 T7）高頻物理步持鎖 + 大量 `.copy()`**：GC churn + 鎖競爭，筆電上拖慢。縮小臨界區/重用緩衝/批次寫回。
+- 已確認有界良好(非洩漏)：log_queue(500)、freq deque(100)、obs_histories(history_length)、
+  rendering 的 scene/context/cam 重用、事件訂閱一次性。
+
 ## D. 測試 / 品質（從零建立，工程化）
 - 當時幾乎沒寫 pytest → 必有運行 bug、以及「原本設計但被改壞」的功能。
 - 目前無完整測試 SOP：需涵蓋 (1) 程式單元/整合測試 (2) GUI 介面測試 (3) 模擬測試。

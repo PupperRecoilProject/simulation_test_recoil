@@ -21,7 +21,7 @@
 - [x] **T5 「將就/理所當然」設計 sweep** ✅：系統掃 sim → REFACTOR_SCOPE「C2. T5 sweep」8 條。重點：🔴C2-1 雙鍵盤系統(GLFW+NiceGUI 重疊綁定)、🟡C2-2 xbox 直接改 state(違反單向流)、C2-3 執行期改 config、C2-4 寬鬆 except 吞錯、C2-5 64 處 print(C-S1 根因)、⚪C2-6 274 處版本註解、C2-7 全域 nanoowl_process、C2-8 IMU 座標 TODO。
 - [x] **T6 時間/單一時鐘 專題** ✅ → `reports/REVIEW_timing_2026-06-04.md`。核心：🔴**sim 非單一時鐘**(物理走模擬時間、AI 決策綁牆鐘，負載高時節奏漂移)；🔴**`_update_recoil_warning_timer` 疑似無呼叫者**(後座力倒數可能沒在跑→OPEN_THREADS A8)；MAX_FRAME_TIME 魔術數字重複、sleep(0.001) vs Windows 計時器解析度、control_freq 一值兼三職。將就項記 REFACTOR C3。
 - [x] **T7 防死鎖/併發 專題** ✅ → `reports/REVIEW_concurrency_2026-06-04.md`。核心：🔴**state.lock 是非重入 Lock + helper「假定持鎖不自鎖」約定**(死鎖/競態地雷，建議改 RLock)；🟡 持鎖跨重活(hard_reset/mode_change)致 UI 凍結、事件回呼同步阻塞發布者執行緒(裝置連接 sleep)、recoil_warning_active/ai_step_times 鎖不一致。將就項記 REFACTOR C4。未見典型 publish-within-lock 死鎖(建議立 lint)。
-- [ ] **T8 效能/記憶體洩漏 靜態獵查**：找無上限成長的緩衝/狀態解釋「久跑超卡」→reports/REFACTOR_SCOPE。
+- [x] **T8 效能/記憶體洩漏 靜態獵查** ✅ → `reports/REVIEW_performance_2026-06-04.md` + REFACTOR C5。核心：🔴**INFINITE 地形 `terrain_cache` 只增不刪**(持久性設計、無 eviction，走越久記憶體越大→「久跑超卡」最強嫌疑)；🟡 高頻物理步持鎖+大量 copy(GC/鎖競爭)、UI 10Hz 持鎖、data_capture_buffer 無硬上限。已確認 log/freq/obs deque、渲染上下文、事件訂閱皆有界良好(非洩漏)。附實測驗證建議(印 cache 長度+RSS)。
 - [ ] **T9 重構架構提案 + 測試 SOP 草稿**：headless 核心 API 草案、模組邊界、strangler-fig 遷移；測試 SOP + 介入 SOP →`docs/` 草稿。
 
 ## 備選池（主任務做完才做；同樣依序、同規則）
