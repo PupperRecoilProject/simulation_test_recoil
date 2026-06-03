@@ -62,6 +62,18 @@
   應設計時器解析度或改事件驅動。
 - **🟡 C3-5**：`control_freq` 一值身兼三職（sim AI 節奏 / hw 控制迴圈 / Teensy 遙測頻率）→ 拆具名參數。
 
+### C4. 併發 / 鎖（T7 專題，詳見 reports/REVIEW_concurrency_2026-06-04.md）
+- **🔴 C4-1 非重入中央鎖 + 隱性持鎖約定**：`state.lock` 是 `threading.Lock`(非 RLock)，而 helper(`set_control_mode`
+  /`reset_control_state`/`clear_command`)「假定呼叫者已持鎖、自己不鎖」。→ helper 一旦被加回鎖即自我死鎖；
+  呼叫者忘了鎖即靜默競態。建議改 RLock 或建立 `_locked` 私有方法分層。
+- **🟡 C4-2 持中央鎖跨重活**：`hard_reset`(鎖內跑 10× mj_step + policy reset)、`_handle_mode_change`(鎖內 request_start)
+  → 其他執行緒被擋，快速切模式/重置時 UI 凍結。應縮小臨界區。
+- **🟡 C4-3 事件回呼同步阻塞發布者執行緒**：`on_device_connect_requested` 在回呼內跑阻塞的 `scan_and_connect`
+  (含 sleep 0.5 + 埠掃描)，會卡住發布它的鍵盤/UI 執行緒。耗時裝置連接應背景化。
+- **🟡 C4-4 `recoil_warning_active` 鎖不一致**：RecoilWarningController 回呼不加鎖直寫，sim 端加鎖寫 → 統一加鎖存取器。
+- **🟡 C4-5 `ai_step_times` `_freq_lock` 保護不一致**：control_loop:348 append 未鎖、其他處有鎖（延續 F3）。統一。
+- 建議全域 lint：稽核「`with state.lock` 區塊內是否有 `event_bus.publish`」（持鎖 publish → 回呼再取鎖＝死鎖）。
+
 ## D. 測試 / 品質（從零建立，工程化）
 - 當時幾乎沒寫 pytest → 必有運行 bug、以及「原本設計但被改壞」的功能。
 - 目前無完整測試 SOP：需涵蓋 (1) 程式單元/整合測試 (2) GUI 介面測試 (3) 模擬測試。

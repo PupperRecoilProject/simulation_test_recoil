@@ -20,7 +20,7 @@
 - [x] **T4 Feature inventory** ✅：通讀 sim 完成 → `docs/FEATURE_INVENTORY.md`（6 執行模式/控制模式、完整鍵盤+Xbox 綁定、NiceGUI 全面板、模擬/地形/懸浮/重置、PolicyManager 多模型混合、硬體狀態機+序列埠指令、架構基礎設施）。已加入 README 文件清單。
 - [x] **T5 「將就/理所當然」設計 sweep** ✅：系統掃 sim → REFACTOR_SCOPE「C2. T5 sweep」8 條。重點：🔴C2-1 雙鍵盤系統(GLFW+NiceGUI 重疊綁定)、🟡C2-2 xbox 直接改 state(違反單向流)、C2-3 執行期改 config、C2-4 寬鬆 except 吞錯、C2-5 64 處 print(C-S1 根因)、⚪C2-6 274 處版本註解、C2-7 全域 nanoowl_process、C2-8 IMU 座標 TODO。
 - [x] **T6 時間/單一時鐘 專題** ✅ → `reports/REVIEW_timing_2026-06-04.md`。核心：🔴**sim 非單一時鐘**(物理走模擬時間、AI 決策綁牆鐘，負載高時節奏漂移)；🔴**`_update_recoil_warning_timer` 疑似無呼叫者**(後座力倒數可能沒在跑→OPEN_THREADS A8)；MAX_FRAME_TIME 魔術數字重複、sleep(0.001) vs Windows 計時器解析度、control_freq 一值兼三職。將就項記 REFACTOR C3。
-- [ ] **T7 防死鎖/併發 專題**：審查 Lock/Event/Queue/事件路徑列死鎖+競態→`reports/REVIEW_concurrency_2026-06-04.md`。
+- [x] **T7 防死鎖/併發 專題** ✅ → `reports/REVIEW_concurrency_2026-06-04.md`。核心：🔴**state.lock 是非重入 Lock + helper「假定持鎖不自鎖」約定**(死鎖/競態地雷，建議改 RLock)；🟡 持鎖跨重活(hard_reset/mode_change)致 UI 凍結、事件回呼同步阻塞發布者執行緒(裝置連接 sleep)、recoil_warning_active/ai_step_times 鎖不一致。將就項記 REFACTOR C4。未見典型 publish-within-lock 死鎖(建議立 lint)。
 - [ ] **T8 效能/記憶體洩漏 靜態獵查**：找無上限成長的緩衝/狀態解釋「久跑超卡」→reports/REFACTOR_SCOPE。
 - [ ] **T9 重構架構提案 + 測試 SOP 草稿**：headless 核心 API 草案、模組邊界、strangler-fig 遷移；測試 SOP + 介入 SOP →`docs/` 草稿。
 
