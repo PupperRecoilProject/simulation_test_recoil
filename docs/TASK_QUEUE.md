@@ -22,7 +22,7 @@
 - [x] **T6 時間/單一時鐘 專題** ✅ → `reports/REVIEW_timing_2026-06-04.md`。核心：🔴**sim 非單一時鐘**(物理走模擬時間、AI 決策綁牆鐘，負載高時節奏漂移)；🔴**`_update_recoil_warning_timer` 疑似無呼叫者**(後座力倒數可能沒在跑→OPEN_THREADS A8)；MAX_FRAME_TIME 魔術數字重複、sleep(0.001) vs Windows 計時器解析度、control_freq 一值兼三職。將就項記 REFACTOR C3。
 - [x] **T7 防死鎖/併發 專題** ✅ → `reports/REVIEW_concurrency_2026-06-04.md`。核心：🔴**state.lock 是非重入 Lock + helper「假定持鎖不自鎖」約定**(死鎖/競態地雷，建議改 RLock)；🟡 持鎖跨重活(hard_reset/mode_change)致 UI 凍結、事件回呼同步阻塞發布者執行緒(裝置連接 sleep)、recoil_warning_active/ai_step_times 鎖不一致。將就項記 REFACTOR C4。未見典型 publish-within-lock 死鎖(建議立 lint)。
 - [x] **T8 效能/記憶體洩漏 靜態獵查** ✅ → `reports/REVIEW_performance_2026-06-04.md` + REFACTOR C5。核心：🔴**INFINITE 地形 `terrain_cache` 只增不刪**(持久性設計、無 eviction，走越久記憶體越大→「久跑超卡」最強嫌疑)；🟡 高頻物理步持鎖+大量 copy(GC/鎖競爭)、UI 10Hz 持鎖、data_capture_buffer 無硬上限。已確認 log/freq/obs deque、渲染上下文、事件訂閱皆有界良好(非洩漏)。附實測驗證建議(印 cache 長度+RSS)。
-- [ ] **T9 重構架構提案 + 測試 SOP 草稿**：headless 核心 API 草案、模組邊界、strangler-fig 遷移；測試 SOP + 介入 SOP →`docs/` 草稿。
+- [x] **T9 重構架構提案 + 測試 SOP 草稿** ✅ → `docs/ARCHITECTURE_PROPOSAL.md`(headless 核心+薄客戶端分層、模組邊界對照表[把每個問題編號對應到修掉它的模組]、strangler-fig 6 步遷移) + `docs/TEST_SOP.md`(測試金字塔、Layer A/B/C、需 Harrison 介入步驟、每次改動最小回歸清單)。已加入 README 清單。**主任務 T1–T9 全數完成。**
 
 ## 備選池（主任務做完才做；同樣依序、同規則）
 - [ ] **B1 術語正規化文件**：把軸向慣例、roll/pitch、關節命名(hip/abduction…)的權威名稱定死→`docs/GLOSSARY.md`，消除三方命名混淆。
