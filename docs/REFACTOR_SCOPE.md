@@ -21,6 +21,14 @@
 - **時間同步 / 時鐘機制不完善**：模擬模式理論上應為單一時鐘，但印象中有問題 → 查專案是否有線索。
 - **防死鎖機制**：當時設計過，疑有未考慮到的情況 → 開專題檢查。
 - **效能**：(a) 筆電跑模擬場景很慢；(b) 久跑會超卡需重開（疑似記憶體洩漏/緩衝無上限）；(c) 按鈕順序有 bug。
+- **C-S1（🔴 啟動 bug，T2 實測）**：滿地 emoji `print("✅…")` 無編碼保護，Windows cp950 + 非 UTF-8
+  stdout（pipe/寫檔）→ `UnicodeEncodeError` → `main()` try 捕捉後 `sys.exit("failed to initialise")`。
+  任何非 UTF-8 終端（含 log 導向檔案/CI/自動化）都起不來。治本：改用既有 `log` logger 取代裸 `print`，
+  或入口 `sys.stdout.reconfigure(encoding="utf-8")`/`PYTHONUTF8=1`。詳見 reports/SMOKE_2026-06-04.md S1。
+- **C-S2（耦合，T2 實測）**：`main_nicegui.py::main()` 啟動時無條件 `Popen("tree_demo_server.py")`
+  拉起 NanoOwl 影像伺服器子程序，無旗標可關；該檔 `import cv2` 缺依賴即崩。與機器狗核心無關的功能硬塞主入口。
+  重構應移出主入口、改為可選外掛。詳見 SMOKE S2、孤兒檔見 B3。
+- **C-S3（噪音）**：ONNX 預熱刷一堆 onnxruntime C++ 最佳化警告，可降 graph_optimization_level 或調 ORT log severity。
 
 ## D. 測試 / 品質（從零建立，工程化）
 - 當時幾乎沒寫 pytest → 必有運行 bug、以及「原本設計但被改壞」的功能。

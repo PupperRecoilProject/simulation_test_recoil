@@ -14,7 +14,7 @@
 
 ## 主任務（依序）
 - [x] **T1 建 sim 環境**：✅ 完成。建好 env `pupper-sim`(python 3.11.15)，裝 numpy2.4.6/onnxruntime1.26/PyYAML6.0.3/nicegui3.12.1/pygame2.6.1/pyserial3.5/Pillow12.2/mujoco3.9/glfw2.10/pytest9.0，import smoke test 全過。**發現**：(a) README 清單的 `scipy` 全 repo 無 import→已剔除；(b) `tree_demo_server.py` 需 aiohttp/cv2/nanoowl 屬無關孤兒檔→未裝(記 B3)；(c) numpy 是 2.x，舊碼若按 1.x 寫恐有 breaking→T2 留意。已更新 environment 記憶。
-- [ ] **T2 sim 啟動 smoke test**：能跑就啟動 `main_nicegui.py`(sim 模式,含超時保護)，記錄 error/warning →`reports/SMOKE_2026-06-04.md`。無 env→BLOCKED。
+- [x] **T2 sim 啟動 smoke test**：✅ 完成。sim 可完整啟動到 NiceGUI server(localhost:8080)，9 個 ONNX 全載入+預熱成功，numpy 2.x 在啟動+warmup 路徑無 breakage。**發現**：🔴S1 cp950 emoji print 編碼 bug(非 UTF-8 終端起不來，記 REFACTOR C-S1)；⚠️S2 NanoOwl 子程序硬編主入口+cv2 缺依賴(C-S2)；ℹ️S3 ORT 警告噪音。詳見 `reports/SMOKE_2026-06-04.md`。自動跑 sim 前須設 `PYTHONUTF8=1`。
 - [ ] **T3 退出硬體卡死 bug（授權碰控制碼，僅限分支）**：在分支 `fix/hardware-stop-selfjoin` 用 `src/mock` 寫重現 `_execute_stop` self-join 的特徵測試＋最小修復；有 env 就跑測試驗證。**不併 main、不 push**。無 env→寫好但標「未驗證」。
 - [ ] **T3b 修 F2 序列埠交接洩漏（授權碰控制碼，同分支 `fix/hardware-stop-selfjoin`）**：用 `try/finally` 保證 `relinquish_control` 後一定呼叫 `resume_control`；並修 `SerialCommunicator.close()` 在暫停狀態直接 return 不關埠的問題（避免序列埠洩漏、下次連不上）。有 env 就用 mock 補特徵測試驗證。**不併 main、不 push**。Harrison 已確認此 bug 實際遇過。
 - [ ] **T4 Feature inventory**：通讀 sim，整理現有所有功能(模式/按鍵/UI/硬體)→`docs/FEATURE_INVENTORY.md`。
