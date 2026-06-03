@@ -187,10 +187,10 @@ simulation_test_recoil/
 ├── .gitignore                  # Git 忽略文件 (Git Ignore File)
 ├── config.yaml                 # 應用程式主配置 (Main Application Configuration)
 ├── project_overview_config.yaml # 專案概覽工具配置 (Project Overview Tool Configuration)
-├── main.py                     # CLI 主入口 (CLI Main Entry Point)
-├── main_nicegui.py             # NiceGUI UI 主入口 (NiceGUI UI Main Entry Point)
+├── main_nicegui.py             # NiceGUI UI 主入口 (唯一入口；舊 main.py 已於 v4.14.2 移除)
 ├── readme.md                   # 專案說明 (Project Readme)
-└── tennsy.md                   # Teensy 韌體文檔 (Teensy Firmware Documentation)
+└── docs/                       # 文件：ARCHITECTURE / INTERFACE_CONTRACT / PROJECT_PLAN / OPEN_THREADS / reports
+                                #   ※ 舊 tennsy.md 已移除；Teensy 韌體文檔見 pupper_recoil repo 及 docs/INTERFACE_CONTRACT.md
 ```
 
 **目錄說明與分類原則：**
@@ -232,4 +232,4 @@ simulation_test_recoil/
     *   **內容**: 專案概覽報告 (`project_overview_*.md/.txt`)、地形快照 (`terrain_snapshot_*.png`)。
 *   **根目錄文件**:
     *   **原則**: 存放專案的頂層配置、主要入口點和通用文檔。力求保持根目錄的簡潔和高層次概覽。
-    *   **內容**: Git 忽略文件 (`.gitignore`)、應用程式主要配置 (`config.yaml`)、專案概覽工具配置 (`project_overview_config.yaml`)、主入口腳本 (`main.py`, `main_nicegui.py`)、專案總說明 (`readme.md`)、Teensy 韌體文檔 (`tennsy.md`)。
+    *   **內容**: Git 忽略文件 (`.gitignore`)、應用程式主要配置 (`config.yaml`)、專案概覽工具配置 (`project_overview_config.yaml`)、主入口腳本 (`main_nicegui.py`)、專案總說明 (`readme.md`)、文件目錄 (`docs/`)。

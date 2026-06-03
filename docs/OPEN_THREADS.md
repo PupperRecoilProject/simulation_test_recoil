@@ -5,6 +5,8 @@
 > 最後更新：2026-06-04。
 
 ## A. 未展開的線索（read-only 可查，多數不需實體機）
+> 📋 2026-06-04 夜間自動任務已調查 1/3/4/5：見 `reports/INVESTIGATION_2026-06-04.md`。
+> 硬體穩定性(項2)見 `reports/REVIEW_hardware_stability.md`（發現疑似 self-join bug）。
 1. **「teensy 輸出問題」** — sim `dev4.13` 最後一個 commit 留言，從未查明是什麼。
    線索：可能與 roll/pitch、或遙測在高頻下的穩定性/掉幀有關。
 2. **硬體進出穩定性** — `hardware_controller.py` 有 +251 行在修「進出硬體閃退 / AI 暫停卡死 / 離開後卡死」。
