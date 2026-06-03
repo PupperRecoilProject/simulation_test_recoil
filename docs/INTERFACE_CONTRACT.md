@@ -1,0 +1,149 @@
+# PC ↔ Teensy 介面契約 (Interface Contract)
+
+> 本文件定義高階控制軟體 (`simulation_test_recoil`, Python) 與即時控制韌體
+> (`pupper_recoil`, Teensy 4.0 C++) 之間，透過序列埠溝通的完整契約。
+> 這是兩個 repo 之間唯一的整合介面，任何一邊改動都必須同步本文件。
+>
+> 最後核對：2026-06-03（對應 sim `main` v4.14.3 / fw `main`）。
+
+---
+
+## 0. 連線參數
+
+| 項目 | 值 | 來源 |
+|------|----|----|
+| Baud rate | **921600** | fw `src/homing_main.cpp:52` `Serial.begin(921600)`；sim 端一致 |
+| 換行 | `\n` (LF) | 指令與資料幀皆以 `\n` 結尾 |
+| 編碼 | UTF-8 (ignore errors) | sim `_read_from_port` 用 `decode('utf-8', errors='ignore')` |
+
+> ⚠️ **過時記載**：fw `README.md` 寫 115200、`platformio.ini` `monitor_speed=460800`，
+> 兩者都**不是**實際運行值。實際以 `Serial.begin(921600)` 為準。（待 Phase 2 修正）
+
+---
+
+## 1. 資料契約 Teensy → PC（Policy Stream, 34 欄位）
+
+由韌體 `monitor p` 指令切換進入。每幀一行 CSV，**34 個浮點數**，逗號分隔，`\n` 結尾，無標頭。
+
+| 欄位 index | 內容 | 維度 | 單位 | 座標系 |
+|-----------|------|------|------|--------|
+| 0–2   | 角速度 (gyro) | 3 | rad/s | 機身 (body) |
+| 3–5   | 重力向量 | 3 | g (正規化) | 機身 |
+| 6–8   | 加速度計 | 3 | m/s² | 機身 |
+| 9     | ⚠️ pitch（見疑點1） | 1 | rad | — |
+| 10–21 | 關節角度 ×12 | 12 | rad | 見 §3 馬達順序 |
+| 22–33 | 關節角速度 ×12 | 12 | rad/s | 見 §3 馬達順序 |
+
+**產生端**：`pupper_recoil/src/TelemetrySystem.cpp::printAsPolicyStream`
+**解析端**：`simulation_test_recoil/src/controllers/hardware_controller.py::parse_policy_stream`
+```python
+raw_torso_angular_velocity = data_vec[0:3]
+raw_gravity_vector         = data_vec[3:6]
+raw_accelerometer          = data_vec[6:9]
+raw_pitch_rad              = data_vec[9]
+raw_joint_positions        = data_vec[10:22]
+raw_joint_velocities       = data_vec[22:34]
+```
+
+> 解析端硬性要求恰好 34 欄，否則丟棄整幀並警告。
+> 韌體單位轉換在送出時完成：gyro 由 dps→rad/s、accel 由 g→m/s²、角度由 deg→rad。
+
+### 系統訊息（非資料幀）
+凡是以 `[` 開頭的行（如 `[CMD]`、`[OK]`、`[ERROR]`）會被解析端當系統訊息處理、不進資料流。
+
+---
+
+## 2. 指令協定 PC → Teensy
+
+封裝於 `simulation_test_recoil/src/hardware/teensy_api.py`。指令為純文字 + `\n`，不分大小寫。
+
+| 指令 | 用途 | 回應協定 |
+|------|------|---------|
+| `stop` | 停止所有馬達、進 IDLE | NONE（送出即可） |
+| `monitor p` | 切換到 Policy Stream 模式 | NONE |
+| `monitor h` | 切回人類可讀模式 | NONE |
+| `monitor freq <hz>` | 設定遙測頻率 | **OK**（等待 `[OK]`，預設 timeout 1s） |
+| `move all <a0> … <a11>` | 一次設定 12 關節目標角度 (rad) | NONE |
+
+**啟動序列**（`hardware_controller._execute_start`）：`stop` → `monitor freq <control_freq>` → `monitor p`。
+**停止序列**（`_execute_stop`）：`stop` → `monitor h`。
+
+> 安全守衛：`send_motor_commands` 只有在 `hardware_link_status == VERIFIED` 時才真正送出
+> `move all`；MUTED/UNVERIFIED 下靜默丟棄但回傳成功（避免上層誤判）。
+
+### 韌體完整指令集（手動除錯用，非 AI 流程）
+`stand` / `zero` / `cal` / `move m<id> <rad>` / `move g<h|u|l> <rad>` /
+`move gl<0-3> <h> <u> <l>` / `set <target> <p> <v>` / `get` / `reset` /
+`monitor (h|c|d|p)` / `focus` / `reboot` / `raw m<id> <mA>` / `test wiggle m<id>`。
+詳見 `pupper_recoil/README.md`。
+
+---
+
+## 3. 馬達編號與方向
+
+### 編號（兩端一致 ✅）
+| ID | 腿 | 關節 |
+|----|----|----|
+| 0,1,2 | Front-Right (FR) | hip, upper, lower |
+| 3,4,5 | Front-Left (FL) | hip, upper, lower |
+| 6,7,8 | Rear-Right (RR) | hip, upper, lower |
+| 9,10,11 | Rear-Left (RL) | hip, upper, lower |
+
+- 韌體來源：`pupper_recoil/src/RobotController.cpp` `manual_calibration_pose_rad` 註解。
+- sim 來源：`config.yaml` `default_pose` 與 `sim2real_motor_calibration` 註解。
+
+### ⚠️ 命名差異（易混）
+| 物理關節 | sim 用詞 | 韌體用詞 |
+|---------|---------|---------|
+| 第1軸 | Abduction | hip |
+| 第2軸 | Hip | upper |
+| 第3軸 | Knee | lower |
+
+> 「hip」這個字兩邊指**不同**關節！溝通與讀碼時務必以「第1/2/3軸」或 ID 為準。
+
+### 方向補償（分散兩處，需小心交互）
+- **韌體**：校準姿態 `manual_calibration_pose_rad` 把左腿 (FL, RL) 整組鏡像為負值。
+- **sim**：`config.yaml` `sim2real_motor_calibration.correction_vector`
+  `= [1,-1,-1, -1,-1,-1, 1,-1,-1, -1,-1,-1]`
+  - hip：右腿 +1 / 左腿 -1（左側鏡像）
+  - upper/lower：全部 -1（ONNX 正向 vs Teensy 期望正向，整體反向）
+
+> 韌體本身的 `move` 指令**不做** ONNX→Teensy 的方向翻轉；翻轉全靠 sim 端 `correction_vector`。
+> 因此手動下 `move all` 測試時的方向，會與 AI 跑的方向不同——這是常見混淆點。
+
+---
+
+## 4. 已知疑點（待釐清，見 PROJECT_PLAN.md Phase 2）
+
+1. **roll/pitch 錯位（最高優先）** — 由讀碼發現（程式碼 vs 註解不符），非文件記載。
+
+   **確定事實：**
+   - 韌體 `TelemetrySystem.cpp::printAsPolicyStream` 第 9 欄：註解寫 `// 4. 俯仰角(pitch)`，
+     但程式碼是 `Serial.print(_telemetry_data.roll * DEG_TO_RAD)` → **實際送 roll**。
+   - sim `parse_policy_stream`：`raw_pitch_rad = data_vec[9]` → **當 pitch 收**。
+   - 此欄只餵給 `fire_on_recoil_51` / `fire_on_recoil_51_fixed` 的 `current_pitch` 觀測
+     （一般步態模型的 recipe 不含 `current_pitch`，不受影響）。
+   - **關鍵不對稱**：`ObservationManager._get_current_pitch` 在 sim 模式從四元數算**真 pitch**，
+     在硬體模式直接用 `raw_pitch_rad`（= Teensy 的 roll）。
+     → 同一個 recoil 模型，模擬 vs 上機時第 9 維輸入是**不同的物理量**。
+
+   **待補（無法只靠本兩個 repo 確認）：**
+   - IMU 實際安裝方向（是否剛好 robot-pitch = sensor-roll 而歪打正著）。
+   - 韌體註解標明「根據 **joystick.py** 的 state_obs」——`joystick.py` 在**訓練 repo**（尚未 clone），
+     它才是「第 9 欄該是 pitch 還 roll」的權威來源。釐清此疑點前需先取得它。
+   - 韌體 AHRS 的 roll/pitch 定義 vs 模型訓練時的機身座標系是否一致。
+
+   > **狀態：暫不修改**（問題複雜，缺訓練 repo 的權威定義）。疑似 sim-to-real 上機問題的真兇。
+
+2. **方向雙重補償風險**
+   韌體校準鏡像左腿 + sim correction_vector 也處理左腿，兩者是否會疊加/抵消需上機核對。
+
+3. **加速度座標系**
+   韌體註解標明送的是「未經座標系修正的原始 IMU 加速度」，需與 sim 端假設核對
+   （Teensy IMU 可能是 Y-fwd / X-right）。
+
+---
+
+## 維護
+- 改動序列埠格式、欄位順序、指令、馬達映射、方向時，**先更新本文件**再改碼。
+- 根目錄 `PROJECT_PLAN.md` 為跨 repo 協調樞紐，會連回本文件。
