@@ -32,7 +32,7 @@
   狀態機由 `state.control_mode` 等旗標驅動。
 - **`hardware_controller.py`** — 硬體主迴圈驅動者（執行緒 + 狀態機 STOPPED/STARTING/RUNNING/STOPPING/FAILED）。
   讀 Teensy 序列埠（34 欄位）寫 `raw_*`、跑 AI、送 `move all`。含安全熔斷與頻率監控。
-  ⚠️ 穩定性疑點見 `reports/REVIEW_hardware_stability.md`。
+  ⚠️ 穩定性疑點見 `reports/REVIEW_hardware_stability_2026-06-04.md`。
 - **`ui_controller.py`** — NiceGUI 介面邏輯；UI 呈現層 SSoT 是其 `_label_descriptors`。
 - **`recoil_warning_controller.py`** — 後座力預警旗標（手動 trigger/reset）。
 - **`global_keyboard_driver.py`** — 全域鍵盤。

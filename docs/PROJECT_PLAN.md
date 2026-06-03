@@ -36,12 +36,12 @@
 - [ ] **角速度正負號驗證**（座標系已確認一致；剩軸對應/符號）— ⚠️ 需實體機器狗在場
 - [ ] **（評估）訓練流程是否重做** — 見下節
 - [ ] 過時文件修正 — ✅ 已做(本機 commit 未 push)：fw README/platformio baud→921600、sim readme 移除 main.py/tennsy.md 過時引用
-- [ ] **🔴 修 `hardware_controller._execute_stop` self-join bug**（不需實體機，純軟體）— 見 `reports/REVIEW_hardware_stability.md` F1，疑似「進出硬體卡死」主因
+- [ ] **🔴 修 `hardware_controller._execute_stop` self-join bug**（不需實體機，純軟體）— 見 `reports/REVIEW_hardware_stability_2026-06-04.md` F1，疑似「進出硬體卡死」主因
 - [ ] hardware 交接 try/finally 保證 resume_control（REVIEW F2）
 
 ## 夜間自動任務成果（2026-06-04，本機 commit 未 push）
 - `reports/INVESTIGATION_2026-06-04.md`：recoil 是 +Y 側向力（解釋 roll）、command_4d=目標側傾(非 pitch)、訓練時 vx/vy/omega 恆為零（recoil 模型是站立吸力模型）、e2e_fixed 為子元重匯的不同權重、teensy 輸出問題線索。
-- `reports/REVIEW_hardware_stability.md`：靜態審查，F1 self-join bug（🔴）、F2 resume_control 洩漏風險。
+- `reports/REVIEW_hardware_stability_2026-06-04.md`：靜態審查，F1 self-join bug（🔴）、F2 resume_control 洩漏風險。
 - `ARCHITECTURE.md`：sim 架構 onboarding。
 - 早上待辦：review 後決定 push；F1 是不需實體機就能修的高價值項。
 

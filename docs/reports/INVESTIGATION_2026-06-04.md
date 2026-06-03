@@ -60,7 +60,7 @@ force_scale_range=[4.1, 4.3]
 - 出處：sim commit `3e61709 修復進出硬體閃退問題 增加檢查確實交接 目前問題teensy輸出問題`。
 - 解讀：在修好「進出硬體閃退 + 確認控制權交接」之後，**殘留**一個 Teensy 輸出（遙測）問題。
   關聯 commit `3c71229 log 的 teensy 回應`。
-- 與硬體穩定性高度相關，詳見 `REVIEW_hardware_stability.md`（其中發現一個 stop 流程的疑似 self-join bug，
+- 與硬體穩定性高度相關，詳見 `REVIEW_hardware_stability_2026-06-04.md`（其中發現一個 stop 流程的疑似 self-join bug，
   可能就是交接後不穩的來源之一）。
 
 ## 待後續（需訓練 notebook 或實體機）
