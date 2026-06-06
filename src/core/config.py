@@ -37,7 +37,7 @@ class FloatingControllerConfig:
 @dataclass
 class FirearmRecoilWarningConfig:
     """開火預警（FRW）設定。"""
-    auto_inhibit: bool = False
+    auto_warning_enabled: bool = False
 
 @dataclass
 class AppConfig:

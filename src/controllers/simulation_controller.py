@@ -211,11 +211,11 @@ class SimulationController:
     def _update_recoil_warning_timer(self) -> None:
         """
         更新 Firearm Recoil Warning 計時器邏輯。
-        - auto_inhibit = True 時完全中斷自動預警
+        - auto_warning_enabled = False 時完全中斷自動預警
         - 保留計時器循環節奏，避免破壞依賴 recoil_timer 的其他流程
-        讀 runtime 旗標 state.frw_auto_inhibit（由 UI switch 即時切換），而非 config（config 只當初始值）。
+        讀 runtime 旗標 state.frw_auto_warning_enabled（由 UI switch 即時切換），而非 config（config 只當初始值）。
         """
-        auto_inhibit = bool(getattr(self.state, 'frw_auto_inhibit', False))
+        auto_warning_enabled = bool(getattr(self.state, 'frw_auto_warning_enabled', False))
 
         WARNING_DURATION_S = 0.15
         MIN_INTERVAL_S = 2.5
@@ -224,7 +224,7 @@ class SimulationController:
         with self.state.lock:
             self.state.recoil_timer -= self.config.control_dt
 
-            if auto_inhibit:
+            if not auto_warning_enabled:
                 self.state.recoil_warning_active = False
                 if self.state.recoil_timer <= 0:
                     self.state.recoil_interval = random.uniform(MIN_INTERVAL_S, MAX_INTERVAL_S)

@@ -146,9 +146,9 @@ class SimulationState:
     recoil_timer: float = 0.0 # 追蹤距離下次後座力事件的時間
     recoil_interval: float = 5.0 # 下次後座力事件的隨機間隔
     recoil_warning_active: bool = False # 後座力預警旗標，直接供 ObservationManager 使用
-    # 自動預警抑制旗標：runtime 可由 UI switch 切換（以 config.auto_inhibit 為初始值）。
+    # 自動預警啟用旗標：runtime 可由 UI switch 切換（以 config.auto_warning_enabled 為初始值）。
     # 計時器讀此旗標而非 config，讓 switch 能即時生效。
-    frw_auto_inhibit: bool = False
+    frw_auto_warning_enabled: bool = False
 
     # --- 請求旗標 (由 UI/輸入 發起，由主驅動者處理) ---
     hard_reset_requested: bool = False

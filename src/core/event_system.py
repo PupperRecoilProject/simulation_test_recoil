@@ -43,8 +43,8 @@ EVENT_SERIAL_COMMAND_SEND = "request.serial_command_send"       # 序列埠命�
 EVENT_STATE_UPDATED = "notification.state_updated" # 全域狀態已更新，通知UI刷新
 EVENT_MODE_CHANGED = "notification.mode_changed"   # 控制模式已成功切換
 
-EVENT_FRW_AUTO_INHIBIT_SET   = "request.frw_auto_inhibit_set"
-EVENT_FRW_AUTO_INHIBIT_CLEAR = "request.frw_auto_inhibit_clear"
+EVENT_FRW_AUTO_WARNING_ENABLE  = "request.frw_auto_warning_enable"
+EVENT_FRW_AUTO_WARNING_DISABLE = "request.frw_auto_warning_disable"
 EVENT_FIREARM_RECOIL_WARNING_TRIGGER_REQUESTED = "request.firearm_recoil_warning.trigger"
 EVENT_FIREARM_RECOIL_WARNING_RESET_REQUESTED   = "request.firearm_recoil_warning.reset"
 

@@ -22,8 +22,8 @@ from src.core.event_system import (
     EVENT_COMMAND_UPDATED,
     EVENT_INPUT_MODE_CHANGE_REQUESTED,
     EVENT_SERIAL_COMMAND_SEND,
-    EVENT_FRW_AUTO_INHIBIT_SET,
-    EVENT_FRW_AUTO_INHIBIT_CLEAR,
+    EVENT_FRW_AUTO_WARNING_ENABLE,
+    EVENT_FRW_AUTO_WARNING_DISABLE,
     EVENT_FIREARM_RECOIL_WARNING_TRIGGER_REQUESTED,
     EVENT_FIREARM_RECOIL_WARNING_RESET_REQUESTED,
 )
@@ -638,23 +638,23 @@ class UIController:
             # 讀取 config 的初始值，兼容 dict 或 dataclass，預設 False
             frw_cfg = getattr(self.state.config, 'firearm_recoil_warming', {})
             if isinstance(frw_cfg, dict):
-                initial_inhibit = bool(frw_cfg.get('auto_inhibit', False))
+                initial_enabled = bool(frw_cfg.get('auto_warning_enabled', False))
             else:
-                initial_inhibit = bool(getattr(frw_cfg, 'auto_inhibit', False))
+                initial_enabled = bool(getattr(frw_cfg, 'auto_warning_enabled', False))
 
             # 建立唯一的 switch 並以 config 值初始化
-            inhibit_switch = ui.switch('抑制自動預警', value=initial_inhibit)
+            auto_warning_switch = ui.switch('自動預警循環', value=initial_enabled)
 
             # 正確事件：on_value_change 會提供 e.value；同時備援讀取 widget.value
-            def on_toggle_inhibit(e):
-                new_val = bool(getattr(e, 'value', inhibit_switch.value))
-                event_bus.publish(EVENT_FRW_AUTO_INHIBIT_SET if new_val else EVENT_FRW_AUTO_INHIBIT_CLEAR)
+            def on_toggle_auto_warning(e):
+                new_val = bool(getattr(e, 'value', auto_warning_switch.value))
+                event_bus.publish(EVENT_FRW_AUTO_WARNING_ENABLE if new_val else EVENT_FRW_AUTO_WARNING_DISABLE)
 
             # 只綁這一個，避免重複廣播或拿到 GenericEventArguments
-            inhibit_switch.on_value_change(on_toggle_inhibit)
+            auto_warning_switch.on_value_change(on_toggle_auto_warning)
 
             # 啟動時依 config 值同步一次事件，確保後端狀態一致
-            event_bus.publish(EVENT_FRW_AUTO_INHIBIT_SET if initial_inhibit else EVENT_FRW_AUTO_INHIBIT_CLEAR)
+            event_bus.publish(EVENT_FRW_AUTO_WARNING_ENABLE if initial_enabled else EVENT_FRW_AUTO_WARNING_DISABLE)
 
             with ui.row():
                 ui.button('手動觸發', on_click=lambda: event_bus.publish(

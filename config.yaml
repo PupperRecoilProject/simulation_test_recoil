@@ -244,7 +244,7 @@ terrain_generation:
 
 # ===================================================================
 firearm_recoil_warming:
-  auto_inhibit: true  #false   # true = 關閉自動預警，只保留手動 
+  auto_warning_enabled: false   # true = 啟用自動預警循環；false = 只保留手動觸發
 
 # 【v4.14.3 新增】Sim2Real 馬達方向校準設定
 # ===================================================================
