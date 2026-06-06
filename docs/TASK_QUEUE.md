@@ -60,8 +60,22 @@
 > 聚焦走路/控制（後座力短期內多半停用）。重構決策權威見 `REFACTOR_DECISIONS.md`。
 - [x] **T03-1 情境A terrain_cache 久跑實測** ✅ → `reports/TERRAIN_CACHE_2026-06-07.html` + `tools/measure_terrain_cache.py`。走 20km：地塊 25→20,020 線性無上限，但 heap 僅 +4.5MB → **卡頓主因非快取記憶體**（C5-1 降 🟡、新增 C5-4 嫌疑）。
   - [ ] T03-1b 情境B **平地**走路品質 baseline：需真實物理+policy 的 headless eval harness（現 run loop 與視窗耦合、headless 僅 mock 無真物理）→ 併入 P3「抽核心」一起設計，暫緩單獨做。
-- [x] **T03-2 第一輪重構完整路線圖** ✅ → `reports/REFACTOR_ROADMAP_2026-06-07.html`（HTML+SVG）。P0✓→P1清理→P2硬化→P3核心+CLI→P4前端；大主題另議。⚠️ 三個取捨待 Harrison 定案（見 REFACTOR_DECISIONS 待續）。
-- [ ] （排程）建 requirements.txt（源自 T02-3 依賴稽核）。
+- [x] **T03-2 第一輪重構完整路線圖** ✅ → `reports/REFACTOR_ROADMAP_2026-06-07.html`（HTML+SVG）。✅ 定案：P1/P2 **串行**、terrain LRU **降 P3**、下一步 **P1 起步**。
+
+## T04 批次 = P1 機械式清理（2026-06-07 規劃，今晚自動執行）
+> **路線圖 P1**。原則：低風險、不動控制路徑邏輯、可回退。決策權威 `REFACTOR_DECISIONS.md`。
+> **自動執行規則**（沿用上方「自主執行規則」，並強化）：
+> - 取最上面 `[ ]` 任務做；本機 commit、**絕不 push**。
+> - **加檔/改文件類在 main**；**動程式碼一律開分支 + 跑測試**；**刪除核心碼一律只列清單不動手**（刪除留 Harrison review）。
+> - **防阻塞**：遇歧義/需決策/環境問題 → 標 `[BLOCKED]` 寫因、**跳下一個**，絕不卡死。
+>   分支類若測試 3 次內修不綠 → `git restore` 該任務變更、標 `[BLOCKED]`、繼續下一個。
+> - 每改一檔跑 `PYTHONUTF8=1 python -m pytest -q`（須維持綠）+ 受影響入口 `ast.parse`/import smoke。
+> - 新發現的將就設計記 `REFACTOR_SCOPE.md`。
+- [ ] **T04-1 建 requirements.txt**（main，加檔最安全）：依 T02-3 稽核——剔 scipy、補 glfw、列 pytest/Pillow/psutil(視用到否)；版本 pin 用 `pupper-sim` env 實際版本。不改任何程式碼。
+- [ ] **T04-2 萃取版本歷史**（main，加檔安全）：把散落的 `【vX.X.X】` 行內註解 + git tag 萃取成 `docs/VERSION_HISTORY.md` 時間線。**只萃取、本批不刪註解**（刪除動到全 repo，留 P1 後續 review 步驟）。
+- [ ] **T04-3 print→log 轉換**（分支 `chore/print-to-log`）：把 `print(...)` 機械式換成對應 log 等級（依 CLAUDE.md 語義：狀態變更=info、診斷=debug）。逐檔轉、逐檔測；全套 pytest 綠才提交。fallback：某檔轉後測試掛且修不動 → restore 該檔、記 BLOCKED、續其他檔。
+- [ ] **T04-4 死碼保守處理**（分支 `chore/deadcode-tidy`）：只做**高信度可逆**動作——`test/` 內非測試腳本移 `tools/`、修 README 對已刪檔的失效引用。**核心程式碼疑似死碼只更新清單於 AUDIT 報告、不刪**。
+- [ ] **T04-5 收尾歸檔**（main）：產 `reports/OVERNIGHT_SUMMARY_2026-06-08.html`（**字級加大、最小 ≥13px**）；更新 `restart-progress` 記憶；確認工作樹乾淨、列出當晚所有 commit 與待 review 分支；**不 push**。
 
 ## 已完成 / 已封存
 （完成的任務移到這裡保留紀錄）
