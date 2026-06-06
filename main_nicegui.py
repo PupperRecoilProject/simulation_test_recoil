@@ -19,7 +19,6 @@
 """
 import sys
 import argparse
-import subprocess
 from nicegui import ui, app
 
 # --- 我們的模組導入 ---
@@ -74,27 +73,8 @@ def create_simulation_components(use_sim: bool, config, state: 'SimulationState'
         obs_manager = MockObservationManager()
         return sim, obs_manager, terrain, floating
 
-# 【整合 NanoOwl】定義全域變數來持有子程序的參考
-nanoowl_process = None
-
-# 【整合 NanoOwl】清理子程序的函式 (從您提供的檔案中複製)
-def nanoowlcleanup_subprocess():
-    """一個專門用來在程式退出時清理子程序的函式。"""
-    global nanoowl_process
-    if nanoowl_process and nanoowl_process.poll() is None:
-        log.info(f"Cleanup: 正在終止 NanoOwl 伺服器子程序 (PID: {nanoowl_process.pid})...")
-        nanoowl_process.terminate()
-        try:
-            nanoowl_process.wait(timeout=2)
-            log.info("Cleanup: ✅ NanoOwl 子程序已終止。")
-        except subprocess.TimeoutExpired:
-            log.warning("Cleanup: NanoOwl 子程序在2秒內未終止，將強制 kill。")
-            nanoowl_process.kill()
-
 # 【v4.3.2 修改】 main 函式
 def main() -> None:
-    global nanoowl_process # <--- 宣告我們要修改全域變數
-    
     """Initialise all components and start UI and simulation threads."""
 
     parser = argparse.ArgumentParser(description="Pupper Robot Controller")
@@ -112,21 +92,6 @@ def main() -> None:
         state = SimulationState(config)
     except Exception as exc:
         sys.exit(f"failed to initialise: {exc}")
-    
-    # ==========================================================
-    # 【整合 NanoOwl】在啟動 NiceGUI 之前，先啟動影像伺服器子程序
-    # ==========================================================
-    try:
-        log.info("正在背景啟動 NanoOwl 影像伺服器...")
-        # 使用 sys.executable 確保用的是同一個 Python 解譯器
-        command = [sys.executable, "tree_demo_server.py"]
-        nanoowl_process = subprocess.Popen(command)
-        log.info(f"✅ NanoOwl 伺服器子程序已啟動 (PID: {nanoowl_process.pid})。")
-    except FileNotFoundError:
-        log.error("❌ 錯誤: 找不到 tree_demo_server.py。請確保它在專案根目錄下。")
-    except Exception as e:
-        log.error(f"❌ 啟動 NanoOwl 伺服器失敗: {e}")
-    # ==========================================================
 
     # --- 核心組件裝配 ---
     # 【v4.3.2 修改】 更新變數名，並傳入 state
@@ -177,11 +142,7 @@ def main() -> None:
 
     def cleanup_resources() -> None:
         log.info("NiceGUI 正在關閉，釋放資源...")
-        
-        # 【整合 NanoOwl】終止影像伺服器子程序
-        # 【修正】直接調用清理函式
-        nanoowlcleanup_subprocess()
-        
+
         # 停止所有背景執行緒
         if simulation_controller:
             simulation_controller.stop()
