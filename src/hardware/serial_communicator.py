@@ -153,14 +153,16 @@ class SerialCommunicator:
 
     def close(self):
         """
-        【v4.10.2 修改】在關閉前確保執行緒已恢復，避免死鎖。
-        
         安全地關閉序列埠和讀取執行緒。
+
+        即使處於暫停狀態（_pause_requested set）也會關閉：明確呼叫 close() 即代表要關閉。
+        舊版在暫停時直接 return 不關埠，一旦 HardwareController 因例外未歸還控制權，
+        會造成序列埠永久洩漏、下次連不上。故此處改為先清除暫停旗標再關閉。
         """
-        # 【v4.10.2 修改】使用 _pause_requested 旗標取代舊旗標
         if self._pause_requested.is_set():
-            log.warning("SerialCommunicator 處於暫停狀態，可能由 HardwareController 管理。跳過關閉操作。")
-            return
+            log.warning("SerialCommunicator 處於暫停狀態仍執行關閉：清除暫停旗標以避免序列埠洩漏。")
+            self._pause_requested.clear()
+            self._is_paused_flag.clear()
 
         if self.read_thread and self.read_thread.is_alive(): # 如果讀取執行緒在運行
             self.exit_signal.set() # 發送退出信號

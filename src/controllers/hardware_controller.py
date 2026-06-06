@@ -418,38 +418,33 @@ class HardwareController:
             return
 
         # --- 步驟 2：安全通行 (執行原有啟動流程) ---
-        self.ser = self.serial_comm.get_serial_connection()
-        if not self.ser:
-            log.error("❌ 硬體啟動失敗：無法獲取有效連線。")
-            self._set_internal_state(HWState.FAILED)
-            self.serial_comm.resume_control() # 發生錯誤，立即歸還控制權
-            return
-
-        self.teensy_api = TeensyAPI(self.serial_comm, self.state)
-
-        # 【v4.10.3 新增】增加檢查，強制執行生命週期契約。
-        # 如果 TeensyAPI 因任何原因未能成功初始化其 ser 物件，
-        # 流程將在此處立即失敗，並提供清晰的錯誤信息。
-        if not self.teensy_api.ser:
-            log.error("❌ 硬體啟動失敗: TeensyAPI 未能獲取序列埠參考。這通常意味著在交接控制權時發生了問題。")
-            self._set_internal_state(HWState.FAILED)
-            self.serial_comm.resume_control()
-            return
-
-        # 【v4.13.4-w】統一 ser 來源，避免讀寫端不同步
-        self.ser = self.teensy_api.ser
-
+        # 取得控制權後，任何失敗路徑都必須成對歸還控制權。用 started_ok 旗標 + try/finally 保證：
+        # 只要啟動未成功（含非預期例外），resume_control() 必被呼叫一次，避免 SerialCommunicator
+        # 讀取執行緒永久暫停與序列埠洩漏（症狀：退出硬體後下次連不上）。成功時則保留控制權給本控制器。
+        started_ok = False
         try:
-            log.info("--- 開始執行硬體啟動序列 (v4.10.4 協定感知版) ---")
-            
-            # 【v4.10.4 修改】啟動指令序列現在調用新的 execute_command API
-            # 【v4.14.3 刪除】移除了啟動時發送 'stop' 指令的步驟。
-            # 理由：為了實現從現有站姿無縫進入硬體模式，避免機器人掉電癱軟。
+            self.ser = self.serial_comm.get_serial_connection()
+            if not self.ser:
+                log.error("❌ 硬體啟動失敗：無法獲取有效連線。")
+                self._set_internal_state(HWState.FAILED)
+                return
+
+            self.teensy_api = TeensyAPI(self.serial_comm, self.state)
+
+            # 強制執行生命週期契約：若 TeensyAPI 未能初始化其 ser 物件，立即失敗。
+            if not self.teensy_api.ser:
+                log.error("❌ 硬體啟動失敗: TeensyAPI 未能獲取序列埠參考。這通常意味著在交接控制權時發生了問題。")
+                self._set_internal_state(HWState.FAILED)
+                self.teensy_api = None
+                return
+
+            # 統一 ser 來源，避免讀寫端不同步
+            self.ser = self.teensy_api.ser
+
+            log.info("--- 開始執行硬體啟動序列 (協定感知版) ---")
+            # 啟動序列不再發送 'stop'：為了從現有站姿無縫進入硬體模式，避免機器人掉電癱軟。
             # 前提：假設 Teensy 在此之前已處於一個已知的安全狀態（例如，站立）。
-            # log.info("  -> 步驟 1/3：發送 'stop' 指令...")
-            # if not self.teensy_api.execute_command("stop"):
-            #     raise serial.SerialException("發送 'stop' 指令失敗，啟動中止。")
-            
+
             # 2. 發送 'monitor freq' (協定: OK, 會等待 [OK] 確認)
             log.info(f"  -> 步驟 2/3：設定遙測頻率為 {self.config.control_freq} Hz 並等待確認...")
             if not self.teensy_api.execute_command(f"monitor freq {self.config.control_freq}", timeout=1.0):
@@ -460,24 +455,24 @@ class HardwareController:
             if not self.teensy_api.execute_command("monitor p"):
                 raise serial.SerialException("發送 'monitor p' 指令失敗，啟動中止。")
 
-            time.sleep(0.1) 
+            time.sleep(0.1)
             if self.ser:
                 self.ser.reset_input_buffer()
-            
+
             log.info("✅ 硬體啟動序列成功完成，通訊連線已驗證。")
-            # 【v4.10.5 FEAT-SAFETY-INTUITIVE】實現預設安全
-            # 啟動成功後，預設進入 MUTED 狀態，等待使用者明確啟用。
+            # 實現預設安全：啟動成功後預設進入 MUTED 狀態，等待使用者明確啟用。
             with self.state.lock:
                 self.state.hardware_link_status = HardwareLinkStatus.MUTED
-                
+
             self._set_internal_state(HWState.RUNNING)
-            
-            # 【v4.13.5-w】預設靜默，AI 不自動跑
+
+            # 預設靜默，AI 不自動跑
             self.ai_control_active = False
-            with self.state.lock: 
+            with self.state.lock:
                 self.state.hardware_ai_is_active = False
 
             log.info("🤖 啟動完成，預設為 MUTED 並關閉 AI 決策，待 UI 啟用。")
+            started_ok = True
 
         except serial.SerialException as e:
             log.error(f"❌ 硬體啟動序列失敗: {e}")
@@ -485,7 +480,22 @@ class HardwareController:
                 self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
             self._set_internal_state(HWState.FAILED)
             self.teensy_api = None
-            self.serial_comm.resume_control()
+        except Exception as e:
+            # 非預期例外也要落入 FAILED；歸還控制權由下方 finally 統一處理，避免序列埠洩漏。
+            log.error(f"❌ 硬體啟動發生非預期錯誤: {e}", exc_info=True)
+            with self.state.lock:
+                self.state.hardware_link_status = HardwareLinkStatus.UNVERIFIED
+            self._set_internal_state(HWState.FAILED)
+            self.teensy_api = None
+        finally:
+            if not started_ok:
+                # 啟動未成功 → 必定歸還控制權（與上面的 relinquish_control 成對），喚醒讀取迴圈。
+                try:
+                    self.serial_comm.resume_control()
+                    log.info("  -> 啟動未成功，已歸還序列埠控制權給 SerialCommunicator。")
+                except Exception as e:
+                    log.warning(f"resume_control() 失敗（略過）：{e}")
+                self.ser = None
 
 
     def _execute_stop(self):
