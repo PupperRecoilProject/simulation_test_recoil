@@ -171,6 +171,9 @@ class SimulationController:
                     # 注意：這裡的 next_logic_update_time 是基於真實時鐘的
                     if current_time >= next_logic_update_time:
                         self._perform_ai_decision()
+                        # 後座力自動循環：每個 AI 決策 tick（= 一個 control_dt）推進一次。
+                        # （此前此函式無呼叫者，導致自動後座力從不觸發。見 INVESTIGATION_recoil_wiring。）
+                        self._update_recoil_warning_timer()
                         next_logic_update_time += logic_interval
                     
                     # 執行一次單步物理模擬
@@ -210,14 +213,9 @@ class SimulationController:
         更新 Firearm Recoil Warning 計時器邏輯。
         - auto_inhibit = True 時完全中斷自動預警
         - 保留計時器循環節奏，避免破壞依賴 recoil_timer 的其他流程
+        讀 runtime 旗標 state.frw_auto_inhibit（由 UI switch 即時切換），而非 config（config 只當初始值）。
         """
-        frw_cfg = getattr(self.config, 'firearm_recoil_warming', None)
-        if isinstance(frw_cfg, dict):
-            auto_inhibit = frw_cfg.get('auto_inhibit', False)
-        elif frw_cfg is not None:
-            auto_inhibit = bool(getattr(frw_cfg, 'auto_inhibit', False))
-        else:
-            auto_inhibit = False
+        auto_inhibit = bool(getattr(self.state, 'frw_auto_inhibit', False))
 
         WARNING_DURATION_S = 0.15
         MIN_INTERVAL_S = 2.5
