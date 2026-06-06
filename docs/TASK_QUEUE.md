@@ -34,5 +34,28 @@
 - [ ] **B7 韌體 pupper_recoil 盤點+sweep**：指令集 inventory + smell sweep→reports(放 sim docs)。純讀。
 - [ ] **B8 工作區根 README**：根目錄寫一份 README 說明三 repo + quickstart(目前根只有 CLAUDE.md+workspace)。
 
+## T02 批次（2026-06-07 規劃，待 compact 後自動執行）
+> 由 `TASK_PLANNER_2026-06-07.html` 規劃 + 第一輪重構討論授權。決策權威見 `REFACTOR_DECISIONS.md`。
+> 規則同 T01：本機 commit 不 push；控制碼/刪碼一律隔離分支 + 加測試、不併 main；遇阻塞標記跳過；將就設計記 REFACTOR_SCOPE。
+> **跑完每項要注記「需歸檔/記憶」的重點，確保可直接 compact。**
+
+純讀 / 文件類（安全，依序）：
+- [ ] **T02-1 死碼/未使用偵測**（原 B3，只報告不刪）：找未使用函式/孤兒檔 → REFACTOR_SCOPE/報告。
+- [ ] **T02-2 config.yaml 逐鍵稽核**（原 B4）：逐鍵記用途、標過時/未用鍵 → 報告。
+- [ ] **T02-3 依賴稽核**（原 B5）：實際 import vs README pip 清單，缺漏/未用/版本釘選 → 報告。
+- [ ] **T02-4 pytest 基礎架構**（原 B6）：conftest/test 目錄/一個 trivial 測試；順手處理 test_joystick.py import 期 exit() 炸收集（D-1）。
+- [ ] **T02-5 韌體 pupper_recoil 盤點+sweep**（原 B7，純讀）：指令集 inventory + smell sweep → 報告（放 sim docs）。
+- [ ] **T02-6 工作區根 README**（原 B8）：根目錄寫 README 說明三 repo + quickstart（含 conda 啟動、PYTHONUTF8）。
+- [ ] **T02-7 後座力斷線端到端深查報告**：把「自動計時器孤兒 + switch 無 subscriber + 手動按鈕正常」整條追到底，
+  對照訓練端期望，寫「現況 vs 應然 + 修復方案」報告（純讀寫，先不改碼）。
+
+授權的程式碼變更（**獨立分支 + 測試，不併 main**）：
+- [ ] **T02-8 後座力接線修復**：自動計時器接回主迴圈 + switch 事件接 subscriber + 加測試。**前置：先完成 T02-7 報告再動手。**
+- [ ] **T02-9 移除 NanoOwl 影像伺服器**：刪主入口 `Popen`、`tree_demo_server.py`、全域 `nanoowl_process`（已授權刪除）。
+
+未納入本批（待決/較重）：
+- terrain_cache 久跑實測佐證（較重、長跑佔資源）；重構新計畫草稿（待 T02 稽核完一起定，見 REFACTOR_DECISIONS「待續」）。
+
 ## 已完成 / 已封存
 （完成的任務移到這裡保留紀錄）
+- T01 批次（2026-06-04）：主 T1–T9 + 備選 B1–B2 全完成；硬體修復 T3/T3b 已於 2026-06-07 併入 main（commit 478ee6c，未 push）。

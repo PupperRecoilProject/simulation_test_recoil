@@ -25,6 +25,7 @@
 | `PROJECT_PLAN.md` | 計畫、工作流程、進度勾選、訓練流程評估 | 活文件 |
 | `TASK_QUEUE.md` | 自動續跑任務佇列 + 自主執行規則 | 活文件 |
 | `REFACTOR_SCOPE.md` | 重構範圍、問題盤點、將就設計清單 | 活文件 |
+| `REFACTOR_DECISIONS.md` | 重構討論「拍板決策 / 延後大主題 / 待續議題」日誌 | 活文件 |
 | `FEATURE_INVENTORY.md` | 現有功能完整盤點（模式/按鍵/UI/硬體/模擬） | 活文件 |
 | `ARCHITECTURE_PROPOSAL.md` | 重構目標架構（headless 核心+薄客戶端）+ strangler-fig 遷移（草稿） | 活文件 |
 | `TEST_SOP.md` | 測試 SOP（三層測試 + 需 Harrison 介入步驟）（草稿） | 活文件 |
