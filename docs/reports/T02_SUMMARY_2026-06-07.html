@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四足機器狗 · T02 批次成果說明（2026-06-07）</title>
+<style>
+  :root{
+    --bg:#0f1115;--panel:#171a21;--panel2:#1d2129;--ink:#e6e9ef;--muted:#9aa4b2;
+    --line:#2a3039;--accent:#5b9dff;--green:#36d399;--amber:#fbbd23;--red:#f87272;--gray:#7c8694;--chip:#222732;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI","Microsoft JhengHei",system-ui,sans-serif;line-height:1.65}
+  .wrap{max-width:1060px;margin:0 auto;padding:30px 22px 90px}
+  header.top{border-bottom:1px solid var(--line);padding-bottom:20px}
+  h1{font-size:25px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 6px;padding-left:10px;border-left:4px solid var(--accent)}
+  .h2note{color:var(--muted);font-size:13px;margin:0 0 14px;padding-left:14px}
+  code{background:#0b0d11;padding:2px 6px;border-radius:5px;font-size:12.5px;color:#c9d4e3}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin:10px 0}
+  .mini{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}
+  @media(max-width:640px){.mini{grid-template-columns:repeat(2,1fr)}}
+  .mini .b{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+  .mini .n{font-size:26px;font-weight:700}.mini .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .pill{display:inline-block;font-size:11.5px;padding:1px 9px;border-radius:20px;font-weight:600}
+  .p-main{background:rgba(54,211,153,.15);color:var(--green)}
+  .p-branch{background:rgba(251,189,35,.15);color:var(--amber)}
+  table{width:100%;border-collapse:collapse;margin:6px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12.5px}
+  tr:hover td{background:#1b1f27}
+  .tid{font-weight:700;color:var(--accent);white-space:nowrap}
+  .finding{border-left:4px solid var(--line);background:var(--panel2);border-radius:0 10px 10px 0;padding:12px 16px;margin:11px 0}
+  .finding.r{border-left-color:var(--red)} .finding.a{border-left-color:var(--amber)} .finding.g{border-left-color:var(--green)}
+  .finding h4{margin:0 0 4px;font-size:15px}
+  .finding .why{color:var(--muted);font-size:13px}
+  .tag{font-size:11px;color:var(--muted);background:var(--chip);padding:1px 7px;border-radius:5px;margin-left:6px}
+  .callout{background:linear-gradient(180deg,#1a2230,#171a21);border:1px solid #2c3a52;border-radius:11px;padding:14px 16px;margin:12px 0;font-size:13.5px}
+  .callout.warn{border-color:#5a4a1e;background:linear-gradient(180deg,#221d10,#1a1710)}
+  ul{margin:6px 0;padding-left:20px} li{margin:4px 0}
+  .legend{font-size:12.5px;color:var(--muted);margin-top:6px}
+  .flow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12.5px;margin:6px 0}
+  .node{background:#0b0d11;border:1px solid var(--line);border-radius:7px;padding:5px 9px}
+  .node.dead{border-color:#5a2a2a;color:#f8a8a8}
+  .node.ok{border-color:#2a5a44;color:#8fe7c4}
+  .arr{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>🐕 T02 批次成果說明</h1>
+  <div class="sub">2026-06-07　·　前景執行（非過夜）　·　規則：本機 commit、不 push、程式碼變更隔離分支</div>
+</header>
+
+<div class="mini">
+  <div class="b"><div class="n green">9/9</div><div class="l">T02 任務完成</div></div>
+  <div class="b"><div class="n green">7</div><div class="l">安全項已併 main</div></div>
+  <div class="b"><div class="n" style="color:var(--amber)">2</div><div class="l">程式碼分支待 review</div></div>
+  <div class="b"><div class="n green">13</div><div class="l">pytest 全綠</div></div>
+</div>
+
+<div class="callout">
+  <b>一句話：</b>T02 把昨晚順延的稽核補完（死碼/config/依賴/韌體），建好<b>測試基礎設施</b>，並動手修了兩個你授權的東西——
+  <b>把斷線的後座力接回來</b>、<b>刪掉沒用的影像伺服器</b>。稽核與報告類已直接進 main；兩個改到程式碼的隔離在分支等你 review。
+</div>
+
+<!-- ===== 安全項 ===== -->
+<h2>① 稽核 / 報告 / 測試（已併 main）</h2>
+<p class="h2note">純讀或新增檔案，零風險，直接進主線。</p>
+<div class="card">
+<table>
+  <thead><tr><th style="width:70px">任務</th><th>做了什麼</th><th>關鍵發現</th></tr></thead>
+  <tbody>
+    <tr><td class="tid">T02-1<br>死碼偵測</td><td>掃全 repo 找孤兒檔/未用函式（只報告不刪）</td><td>tree_demo_server、後座力 timer 孤兒、README 引用已刪的 observation.py、test/ 混入多支非測試腳本</td></tr>
+    <tr><td class="tid">T02-2<br>config 稽核</td><td>config.yaml 逐鍵記用途、標死鍵</td><td>被註解的 observation_recipes（死 config）、warmup_duration=0 疑未用、command_scaling 註解過時</td></tr>
+    <tr><td class="tid">T02-3<br>依賴稽核</td><td>實際 import vs README pip 清單</td><td>scipy 多餘、glfw 漏列、mujoco 應升核心；建議建 requirements.txt</td></tr>
+    <tr><td class="tid">T02-4<br>pytest 基礎</td><td>建 pytest.ini / conftest.py / test_smoke.py</td><td>隔離會炸收集的腳本，測試數 <b>8 → 13 passed</b></td></tr>
+    <tr><td class="tid">T02-5<br>韌體盤點</td><td>讀 pupper_recoil：指令集 + 模組 + 氣味</td><td>指令集完整、baud 921600 確認；氣味：除錯指令未隔離、homing_main 命名</td></tr>
+    <tr><td class="tid">T02-6<br>根 README</td><td>工作區根寫 README</td><td>三 repo 說明 + quickstart（conda / PYTHONUTF8 / 跨 repo 陷阱）</td></tr>
+    <tr><td class="tid">T02-7<br>後座力深查</td><td>後座力接線端到端追蹤 + 修復方案</td><td>見下方圖解（這份報告催生了 T02-8 的修復）</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="legend">報告檔：<code>reports/AUDIT_2026-06-07.md</code>、<code>reports/INVENTORY_firmware_2026-06-07.md</code>、<code>reports/INVESTIGATION_recoil_wiring_2026-06-07.md</code></div>
+
+<!-- ===== 程式碼變更 ===== -->
+<h2>② 程式碼變更（隔離在分支，待你 review）</h2>
+<p class="h2note">這兩個動到實際程式碼，依規則放獨立分支 + 加測試，<b>沒有併進 main</b>。</p>
+
+<div class="finding a">
+  <h4>🌿 <code>fix/recoil-wiring</code> — 把斷線的後座力接回來 <span class="tag">commit 8961fa7</span> <span class="pill p-branch">待 review</span></h4>
+  <p class="why">後座力原本有三條路徑，<b>兩條是斷的</b>，只有「手動按鈕」能動：</p>
+  <div class="flow"><span class="node dead">自動計時器</span><span class="arr">✗ 無人呼叫</span><span class="arr">→</span><span class="node">主迴圈</span></div>
+  <div class="flow"><span class="node dead">「抑制」switch</span><span class="arr">✗ 事件無 subscriber</span><span class="arr">→</span><span class="node">（沒人接）</span></div>
+  <div class="flow"><span class="node ok">手動觸發/重置</span><span class="arr">✓</span><span class="arr">→</span><span class="node ok">controller</span><span class="arr">→</span><span class="node ok">state</span></div>
+  <p class="why" style="margin-top:8px"><b>修法：</b>① 計時器接回主迴圈（每個 AI 決策 tick 推進一次）② 新增 runtime 旗標 <code>state.frw_auto_inhibit</code>，switch 接上 subscriber 即時切換 ③ 計時器改讀此旗標而非 config。<b>＋ 5 個新測試</b>，全套 13 passed。</p>
+</div>
+
+<div class="finding a">
+  <h4>🌿 <code>chore/remove-nanoowl</code> — 刪掉影像伺服器 <span class="tag">commit ce10ff5</span> <span class="pill p-branch">待 review</span></h4>
+  <p class="why">你決定刪除（完成度低、短期不碰硬體、先把走路做好）。移除主入口的 <code>Popen</code> 啟動、清理函式、全域 <code>nanoowl_process</code>、未用的 <code>subprocess</code> import，並刪 <code>tree_demo_server.py</code>。驗證：main_nicegui 匯入 OK、8 passed。</p>
+</div>
+
+<!-- ===== 需要你決策 ===== -->
+<h2>③ 需要你拍板一件事</h2>
+<div class="callout warn">
+  <b>後座力修好後，config 預設 <code>auto_inhibit: true</code>（= 自動預警預設「關」，只留手動）。</b><br>
+  要不要改成 <code>false</code>，讓自動後座力預設就開？我沒擅自改 config，留給你決定。
+</div>
+
+<!-- ===== 整體狀態 ===== -->
+<h2>④ 整體狀態 & 還剩什麼</h2>
+<div class="card">
+  <p><b>佇列實質清空</b>：T01 全完成、T02 全完成、B1–B8 全完成（B3–B8 就是 T02-1~6，先前重複掛載已清）。</p>
+  <p><b>待你 review 的分支（共 2 個）</b>：<code>fix/recoil-wiring</code>、<code>chore/remove-nanoowl</code>。（先前 <code>fix/hardware-stop-selfjoin</code> 已併 main。）</p>
+  <p><b>刻意延後、非 B 項（待一起談）</b>：</p>
+  <ul>
+    <li>terrain_cache 久跑實測佐證（較重、要長跑 sim）</li>
+    <li>重構完整路線圖草稿（你說「待會一起定」）</li>
+  </ul>
+  <p><b>git</b>：main 本機領先 26 commits、<b>全未 push</b>；工作樹乾淨，隨時可 compact。</p>
+</div>
+
+<div class="legend" style="margin-top:18px">權威紀錄以 <code>docs/TASK_QUEUE.md</code> / <code>REFACTOR_DECISIONS.md</code> / <code>reports/</code> 為準；本 HTML 僅為導覽說明。</div>
+
+</div>
+</body>
+</html>
