@@ -58,8 +58,9 @@
 
 ## T03 批次（2026-06-07 規劃）
 > 聚焦走路/控制（後座力短期內多半停用）。重構決策權威見 `REFACTOR_DECISIONS.md`。
-- [ ] **T03-1 terrain_cache 久跑實測 + 數據圖表**：兩情境長跑——(A) 地形模式量 terrain_cache 大小與記憶體成長（佐證該上 LRU 上界）、(B) **平地**量走路品質 baseline（存活時間/前進速度/傾角；金字塔目前全策略走不上去故不取非平地成績）。順帶取每 tick 耗時分布。產出 HTML+SVG 數據分析圖表。
-- [ ] **T03-2 第一輪重構完整路線圖**：把 REFACTOR_DECISIONS「待續」收斂成可執行路線圖（HTML+SVG 呈現）。
+- [x] **T03-1 情境A terrain_cache 久跑實測** ✅ → `reports/TERRAIN_CACHE_2026-06-07.html` + `tools/measure_terrain_cache.py`。走 20km：地塊 25→20,020 線性無上限，但 heap 僅 +4.5MB → **卡頓主因非快取記憶體**（C5-1 降 🟡、新增 C5-4 嫌疑）。
+  - [ ] T03-1b 情境B **平地**走路品質 baseline：需真實物理+policy 的 headless eval harness（現 run loop 與視窗耦合、headless 僅 mock 無真物理）→ 併入 P3「抽核心」一起設計，暫緩單獨做。
+- [x] **T03-2 第一輪重構完整路線圖** ✅ → `reports/REFACTOR_ROADMAP_2026-06-07.html`（HTML+SVG）。P0✓→P1清理→P2硬化→P3核心+CLI→P4前端；大主題另議。⚠️ 三個取捨待 Harrison 定案（見 REFACTOR_DECISIONS 待續）。
 - [ ] （排程）建 requirements.txt（源自 T02-3 依賴稽核）。
 
 ## 已完成 / 已封存

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四足機器狗 · 第一輪重構路線圖（2026-06-07）</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--ink:#e6e9ef;--muted:#9aa4b2;--line:#2a3039;
+    --blue:#5b9dff;--green:#36d399;--amber:#f4a949;--red:#f87272;--purple:#b08cff;--gray:#7c8694;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI","Microsoft JhengHei",system-ui,sans-serif;line-height:1.65}
+  .wrap{max-width:1000px;margin:0 auto;padding:30px 22px 90px}
+  h1{font-size:25px;margin:0 0 4px} .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:36px 0 8px;padding-left:10px;border-left:4px solid var(--blue)}
+  code{background:#0b0d11;padding:2px 6px;border-radius:5px;font-size:12.5px;color:#c9d4e3}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:16px;margin:12px 0}
+  .callout{border:1px solid #2c3a52;background:linear-gradient(180deg,#1a2230,#171a21);border-radius:11px;padding:14px 16px;margin:14px 0;font-size:13.5px}
+  .phase{border-left:4px solid var(--line);background:#1b1f27;border-radius:0 10px 10px 0;padding:12px 16px;margin:12px 0}
+  .phase.p0{border-left-color:var(--green)} .phase.p1{border-left-color:var(--blue)}
+  .phase.p2{border-left-color:var(--amber)} .phase.p3{border-left-color:var(--purple)} .phase.p4{border-left-color:var(--gray)}
+  .phase h3{margin:0 0 6px;font-size:16px} .phase .meta{font-size:12px;color:var(--muted);margin-bottom:6px}
+  ul{margin:6px 0;padding-left:20px} li{margin:4px 0;font-size:14px}
+  .pill{display:inline-block;font-size:11px;padding:1px 9px;border-radius:20px;font-weight:600;margin-left:6px}
+  .done{background:rgba(54,211,153,.15);color:var(--green)}
+  .next{background:rgba(91,157,255,.15);color:var(--blue)}
+  .risk-low{color:var(--green)} .risk-mid{color:var(--amber)} .risk-hi{color:var(--red)}
+  .parked{border:1px dashed #4a4030;background:#1a1710;border-radius:10px;padding:12px 16px;margin:10px 0}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:12px}
+</style></head><body><div class="wrap">
+
+<h1>🧭 第一輪重構路線圖</h1>
+<div class="sub">2026-06-07 · 把 REFACTOR_DECISIONS 的拍板決策收斂成「有階段 / 有相依 / 有優先序」的計畫 · 草稿待你定案</div>
+
+<div class="callout">
+  <b>總方針：</b>聚焦<b>走路與控制</b>（後座力短期多半停用）；<b>先加 headless 核心 + CLI、不急拆 GUI</b>；
+  風險由低到高分階段，<b>每階段獨立可交付、可回退</b>。訓練／硬體／新前端是<b>另開的大主題</b>，不夾帶進一般重構。
+</div>
+
+<h2>① 路線圖總覽</h2>
+<div class="card">
+<svg viewBox="0 0 960 430" width="100%" style="max-width:960px">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#7c8694"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="960" height="430" fill="#12151b" rx="8"/>
+
+  <!-- 主線階段 -->
+  <!-- P0 -->
+  <rect x="24" y="40" width="160" height="92" rx="9" fill="#13241c" stroke="#36d399" stroke-width="1.5"/>
+  <text x="104" y="64" text-anchor="middle" fill="#36d399" font-size="13" font-weight="700">P0 · 地基整理</text>
+  <text x="104" y="84" text-anchor="middle" fill="#9aa4b2" font-size="11">稽核 · 測試地基</text>
+  <text x="104" y="100" text-anchor="middle" fill="#9aa4b2" font-size="11">後座力修 · 刪影像</text>
+  <text x="104" y="120" text-anchor="middle" fill="#36d399" font-size="11" font-weight="700">✓ 已完成</text>
+
+  <!-- P1 -->
+  <rect x="216" y="40" width="160" height="92" rx="9" fill="#11202e" stroke="#5b9dff" stroke-width="1.5"/>
+  <text x="296" y="64" text-anchor="middle" fill="#5b9dff" font-size="13" font-weight="700">P1 · 機械式清理</text>
+  <text x="296" y="84" text-anchor="middle" fill="#9aa4b2" font-size="11">print→log · 版本註解</text>
+  <text x="296" y="100" text-anchor="middle" fill="#9aa4b2" font-size="11">死碼 · requirements</text>
+  <text x="296" y="120" text-anchor="middle" fill="#9aa4b2" font-size="11">風險低 · 不動邏輯</text>
+
+  <!-- P2 -->
+  <rect x="408" y="40" width="160" height="92" rx="9" fill="#241f10" stroke="#f4a949" stroke-width="1.5"/>
+  <text x="488" y="64" text-anchor="middle" fill="#f4a949" font-size="13" font-weight="700">P2 · 正確性硬化</text>
+  <text x="488" y="84" text-anchor="middle" fill="#9aa4b2" font-size="11">鎖分層 · 時鐘分流</text>
+  <text x="488" y="100" text-anchor="middle" fill="#9aa4b2" font-size="11">cache LRU · buffer 上限</text>
+  <text x="488" y="120" text-anchor="middle" fill="#9aa4b2" font-size="11">風險中 · 動併發</text>
+
+  <!-- P3 -->
+  <rect x="600" y="40" width="160" height="92" rx="9" fill="#1d1630" stroke="#b08cff" stroke-width="1.5"/>
+  <text x="680" y="64" text-anchor="middle" fill="#b08cff" font-size="13" font-weight="700">P3 · 核心 + CLI</text>
+  <text x="680" y="84" text-anchor="middle" fill="#9aa4b2" font-size="11">抽 headless 核心 API</text>
+  <text x="680" y="100" text-anchor="middle" fill="#9aa4b2" font-size="11">Typer CLI 薄客戶端</text>
+  <text x="680" y="120" text-anchor="middle" fill="#9aa4b2" font-size="11">NiceGUI 暫留</text>
+
+  <!-- P4 -->
+  <rect x="792" y="40" width="150" height="92" rx="9" fill="#191b20" stroke="#7c8694" stroke-width="1.5"/>
+  <text x="867" y="64" text-anchor="middle" fill="#c9d4e3" font-size="13" font-weight="700">P4 · 前端汰換</text>
+  <text x="867" y="84" text-anchor="middle" fill="#9aa4b2" font-size="11">NiceGUI 逐步棄用</text>
+  <text x="867" y="100" text-anchor="middle" fill="#9aa4b2" font-size="11">新前端選型</text>
+  <text x="867" y="120" text-anchor="middle" fill="#9aa4b2" font-size="11">CLI 完成後</text>
+
+  <!-- 箭頭 -->
+  <line x1="184" y1="86" x2="212" y2="86" stroke="#7c8694" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="376" y1="86" x2="404" y2="86" stroke="#7c8694" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="568" y1="86" x2="596" y2="86" stroke="#7c8694" stroke-width="2" marker-end="url(#arr)"/>
+  <line x1="760" y1="86" x2="788" y2="86" stroke="#7c8694" stroke-width="2" marker-end="url(#arr)"/>
+
+  <text x="24" y="172" fill="#9aa4b2" font-size="12">P1 與 P2 可部分並行（清理不擋硬化）；P3 需要 P2 的穩定核心；P4 嚴格在 P3 之後。</text>
+
+  <!-- 停車場：大主題 -->
+  <rect x="24" y="210" width="918" height="180" rx="9" fill="#1a1710" stroke="#4a4030" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="40" y="236" fill="#f4a949" font-size="13" font-weight="700">🅿️ 另開的大主題（不夾帶進上面任何階段，需從頭專門討論）</text>
+
+  <rect x="48" y="252" width="280" height="118" rx="8" fill="#15171d" stroke="#3a3a44"/>
+  <text x="64" y="276" fill="#e6e9ef" font-size="13" font-weight="700">訓練重構</text>
+  <text x="64" y="298" fill="#9aa4b2" font-size="11">• 是否換訓練框架/軟體</text>
+  <text x="64" y="316" fill="#9aa4b2" font-size="11">• 座標正規化（動 obs→需重訓）</text>
+  <text x="64" y="334" fill="#9aa4b2" font-size="11">• 場域生成整批重設計</text>
+  <text x="64" y="356" fill="#f4a949" font-size="11">↳ 走路走不好的根本，從這裡解</text>
+
+  <rect x="344" y="252" width="280" height="118" rx="8" fill="#15171d" stroke="#3a3a44"/>
+  <text x="360" y="276" fill="#e6e9ef" font-size="13" font-weight="700">新前端選型</text>
+  <text x="360" y="298" fill="#9aa4b2" font-size="11">• FastAPI+WS+HTML / rerun.io …</text>
+  <text x="360" y="316" fill="#9aa4b2" font-size="11">• 等 CLI 完成、NiceGUI 退場再選</text>
+  <text x="360" y="356" fill="#9aa4b2" font-size="11">↳ 對應 P4</text>
+
+  <rect x="640" y="252" width="278" height="118" rx="8" fill="#15171d" stroke="#3a3a44"/>
+  <text x="656" y="276" fill="#e6e9ef" font-size="13" font-weight="700">硬體時間穩定</text>
+  <text x="656" y="298" fill="#9aa4b2" font-size="11">• 真機綁牆鐘的穩定機制</text>
+  <text x="656" y="316" fill="#9aa4b2" font-size="11">• 實體機器狗到手後再設計</text>
+  <text x="656" y="356" fill="#9aa4b2" font-size="11">↳ Harrison 主責（下位機）</text>
+</svg>
+</div>
+
+<h2>② 各階段細節</h2>
+
+<div class="phase p0">
+  <h3>P0 · 地基整理 <span class="pill done">已完成</span></h3>
+  <div class="meta">風險 <span class="risk-low">低</span> · T01 / T02 批次</div>
+  <ul>
+    <li>稽核三件（死碼 / config / 依賴）+ 韌體盤點 + 後座力斷線深查報告。</li>
+    <li>pytest 地基（13 passed）、工作區根 README。</li>
+    <li>後座力接線修復、影像伺服器移除、後座力旗標改正向命名——<b>全已併 main</b>。</li>
+    <li>terrain_cache 久跑實測（T03-1）：確認無上限成長、但記憶體小、卡頓另有真因。</li>
+  </ul>
+</div>
+
+<div class="phase p1">
+  <h3>P1 · 機械式清理 <span class="pill next">建議下一步</span></h3>
+  <div class="meta">風險 <span class="risk-low">低</span> · 不動邏輯、可機械式提交、易回退 · 可與 P2 並行</div>
+  <ul>
+    <li><b>print→log</b>：滿地 <code>print("✅…")</code> 換成 log（順帶根治 cp950 啟動崩潰的殘餘風險）。純機械式、單獨提交。</li>
+    <li><b>版本註解 / 歷史萃取</b>：把 <code>【vX.X.X】</code> 行內註解萃取成一份版本歷史文件後刪除（決策 7）。</li>
+    <li><b>死碼移除</b>：依 AUDIT 報告清孤兒（已刪 tree_demo_server；其餘如 README 失效引用、test/ 混入的非測試腳本移 <code>tools/</code>）。</li>
+    <li><b>requirements.txt</b>：依依賴稽核產生（剔 scipy、補 glfw、psutil 視需要）。</li>
+  </ul>
+</div>
+
+<div class="phase p2">
+  <h3>P2 · 正確性 / 效能硬化</h3>
+  <div class="meta">風險 <span class="risk-mid">中</span> · 動到併發與核心狀態，每項配回歸測試</div>
+  <ul>
+    <li><b>中央鎖改分層</b>（決策 4 / C4-1）：公開方法自鎖、私有 <code>_xxx_locked</code> 假定持鎖；根治非重入鎖自我死鎖風險。</li>
+    <li><b>terrain_cache LRU 上界</b>（決策 5 / C5-1）：架構衛生（成長無上限屬實）。<span class="risk-mid">優先級下修</span>——實測證明不是卡頓主因。</li>
+    <li><b>查卡頓真因 C5-4</b>：每次網格滑動重跑 25 個 generator + 重填 501×501 hfield + 同步，疑為「久跑超卡」來源；用真實物理+渲染情境量測。</li>
+    <li><b>data_capture_buffer 上限</b>（C5-2）、<b>時鐘分流</b>（決策 2：sim 綁模擬時鐘、硬體綁牆鐘的軟體部分）。</li>
+  </ul>
+</div>
+
+<div class="phase p3">
+  <h3>P3 · headless 核心 API + Typer CLI</h3>
+  <div class="meta">風險 <span class="risk-mid">中</span> · 需要 P2 的穩定核心；NiceGUI 暫留為過渡客戶端</div>
+  <ul>
+    <li>把模擬/控制邏輯抽成<b>無 UI 依賴的核心 API</b>（現況 run loop 與視窗/渲染耦合，headless 只走 mock 無真物理——這正是要解的）。</li>
+    <li>用 <b>Typer</b> 寫薄 CLI 客戶端（PowerShell 跑），驅動核心 API。</li>
+    <li>NiceGUI 與 CLI 並存一段，核心邏輯只有一份。</li>
+  </ul>
+</div>
+
+<div class="phase p4">
+  <h3>P4 · 前端汰換</h3>
+  <div class="meta">風險 <span class="risk-hi">高</span>（大改） · 嚴格在 P3 之後</div>
+  <ul>
+    <li>CLI 穩定後<b>逐步棄用 NiceGUI</b>，再選新前端（大主題，另議）。</li>
+  </ul>
+</div>
+
+<h2>③ 優先序速查</h2>
+<div class="card">
+<table>
+  <thead><tr><th>順位</th><th>項目</th><th>風險</th><th>依賴</th><th>為什麼這個順位</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>P1 print→log / 死碼 / requirements</td><td class="risk-low">低</td><td>無</td><td>零風險、立即降噪，讓後續 diff 乾淨</td></tr>
+    <tr><td>2</td><td>P2 鎖分層</td><td class="risk-mid">中</td><td>無</td><td>併發正確性是物理系統安全底線，越早越好</td></tr>
+    <tr><td>3</td><td>P2 查卡頓真因 C5-4</td><td class="risk-low">低</td><td>無</td><td>實測導向；先量再改，避免修錯地方（LRU）</td></tr>
+    <tr><td>4</td><td>P2 LRU / buffer / 時鐘</td><td class="risk-mid">中</td><td>C5-4 結論</td><td>確認真因後一起做效能類</td></tr>
+    <tr><td>5</td><td>P3 核心 API + CLI</td><td class="risk-mid">中</td><td>P2</td><td>需要穩定核心才好抽離</td></tr>
+    <tr><td>6</td><td>P4 前端汰換</td><td class="risk-hi">高</td><td>P3</td><td>CLI 成熟後才動 GUI</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <b>需要你定案的取捨：</b>
+  <ul>
+    <li>P1 與 P2 要<b>並行</b>還是<b>串行</b>？（並行快、但 diff 交錯；串行乾淨、但慢）</li>
+    <li>terrain_cache LRU 既然非卡頓主因，<b>仍要在 P2 做</b>，還是<b>降到 P3 之後</b>當純衛生項？</li>
+    <li>下一步要先動哪個——我建議 <b>P1 的 print→log + 死碼</b>（最安全、立即見效）。</li>
+  </ul>
+</div>
+
+<div class="sub" style="margin-top:16px">權威決策見 <code>docs/REFACTOR_DECISIONS.md</code>；問題盤點見 <code>REFACTOR_SCOPE.md</code>；本 HTML 為視覺化路線圖快照。</div>
+
+</div></body></html>

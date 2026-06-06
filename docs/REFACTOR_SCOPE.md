@@ -75,10 +75,15 @@
 - 建議全域 lint：稽核「`with state.lock` 區塊內是否有 `event_bus.publish`」（持鎖 publish → 回呼再取鎖＝死鎖）。
 
 ### C5. 效能 / 記憶體（T8 專題，詳見 reports/REVIEW_performance_2026-06-04.md）
-- **🔴 C5-1 terrain_cache 無上限成長（「久跑超卡」最強嫌疑）**：INFINITE 地形的 `terrain_cache`
-  (terrain_manager.py:74) 是「持久性」設計，走過的每個網格 tile(含 heightfield 陣列)只增不刪，
-  僅 reset 才 clear、無 eviction → 記憶體隨行走距離單調成長、dict 越大越慢。
+- **🟡 C5-1 terrain_cache 無上限成長（T03-1 實測：成長屬實但非卡頓主因）**：INFINITE 地形的 `terrain_cache`
+  (terrain_manager.py:74) 是「持久性」設計，走過的每個網格 tile 只增不刪，僅 reset 才 clear、無 eviction。
+  **2026-06-07 實測**（`reports/TERRAIN_CACHE_2026-06-07.html`，走 20km）：地塊數 25→20,020 **線性無上限**確認，
+  但 `TerrainTile` 極輕（~224B/塊），Python heap 僅 +4.5MB → **單純快取記憶體不是「久跑超卡」的合理主因**，
+  降級為 🟡。仍建議上 **LRU 上界**（架構衛生）。⚠️ 卡頓真因改查 C5-4。
   解：窗口外 tile evict / LRU 上限，或改「種子重生」免快取整塊。
+- **🔴 C5-4 每次網格滑動的固定重繪開銷（卡頓新嫌疑）**：`shift_grid_center`→`update_hfield` 每次滑動
+  對 5×5 視窗**每塊都重跑地形 generator（25 次）**、重填 ~501×501 `full_hfield_data`、寫回
+  `model.hfield_data` 並觸發物理/渲染同步。此固定成本與行走頻率相關，比快取大小更可能是「久跑超卡」來源。待真實物理+渲染情境量測佐證。
 - **🟡 C5-2 data_capture_buffer 無硬上限**：捕獲中每幀 append，靠時長/手動停止結束；漏關即成長。加最大幀數保護。
 - **🟡 C5-3（呼應 T7）高頻物理步持鎖 + 大量 `.copy()`**：GC churn + 鎖競爭，筆電上拖慢。縮小臨界區/重用緩衝/批次寫回。
 - 已確認有界良好(非洩漏)：log_queue(500)、freq deque(100)、obs_histories(history_length)、
