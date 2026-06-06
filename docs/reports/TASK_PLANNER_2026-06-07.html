@@ -224,6 +224,10 @@ function genPrompt(){
   lines.push('• 遇阻塞/需我決策→標記原因、跳下一個，絕不卡死。');
   lines.push('• 所有「將就/理所當然」設計一律記進 REFACTOR_SCOPE.md。');
   lines.push('• 喚醒節奏：'+cad+'。');
+  lines.push('');
+  lines.push('── compact 前歸檔（每項跑完 + 全部結束都要做）──');
+  lines.push('• 每跑完一項：在 TASK_QUEUE 打勾+一句結果，發現寫進對應文件(REFACTOR_SCOPE/REFACTOR_DECISIONS/reports/)，並注記「需歸檔/記憶」重點。');
+  lines.push('• 全部結束：更新 restart-progress 記憶、git commit 全部變更(不push)、確認工作樹乾淨，讓我可直接 compact。');
   if(note){lines.push('');lines.push('── 我的補充指示 ──');lines.push(note);}
   lines.push('');
   lines.push('（本 prompt 由 TASK_PLANNER_2026-06-07.html 產生）');
