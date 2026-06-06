@@ -59,7 +59,7 @@
 ## T03 批次（2026-06-07 規劃）
 > 聚焦走路/控制（後座力短期內多半停用）。重構決策權威見 `REFACTOR_DECISIONS.md`。
 - [x] **T03-1 情境A terrain_cache 久跑實測** ✅ → `reports/TERRAIN_CACHE_2026-06-07.html` + `tools/measure_terrain_cache.py`。走 20km：地塊 25→20,020 線性無上限，但 heap 僅 +4.5MB → **卡頓主因非快取記憶體**（C5-1 降 🟡、新增 C5-4 嫌疑）。
-  - [ ] T03-1b 情境B **平地**走路品質 baseline：需真實物理+policy 的 headless eval harness（現 run loop 與視窗耦合、headless 僅 mock 無真物理）→ 併入 P3「抽核心」一起設計，暫緩單獨做。
+  - [暫緩] T03-1b 情境B **平地**走路品質 baseline：需真實物理+policy 的 headless eval harness（現 run loop 與視窗耦合、headless 僅 mock 無真物理）→ 併入 P3「抽核心」一起設計，**暫緩、夜班勿取**。
 - [x] **T03-2 第一輪重構完整路線圖** ✅ → `reports/REFACTOR_ROADMAP_2026-06-07.html`（HTML+SVG）。✅ 定案：P1/P2 **串行**、terrain LRU **降 P3**、下一步 **P1 起步**。
 
 ## T04 批次 = P1 機械式清理（2026-06-07 規劃，今晚自動執行）
