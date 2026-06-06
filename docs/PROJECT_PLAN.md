@@ -35,19 +35,30 @@
 - [ ] **roll/pitch 後續**：(a) 實體機台確認 Teensy AHRS roll 正負號/軸向；(b) 修 sim 模擬模式 pitch 公式使與訓練一致；(c) 三方正名 pitch→roll。⚠️ (a) 需實體機器狗
 - [ ] **角速度正負號驗證**（座標系已確認一致；剩軸對應/符號）— ⚠️ 需實體機器狗在場
 - [ ] **（評估）訓練流程是否重做** — 見下節
-- [ ] 過時文件修正 — ✅ 已做(本機 commit 未 push)：fw README/platformio baud→921600、sim readme 移除 main.py/tennsy.md 過時引用
-- [ ] **🔴 修 `hardware_controller._execute_stop` self-join bug**（不需實體機，純軟體）— 見 `reports/REVIEW_hardware_stability_2026-06-04.md` F1，疑似「進出硬體卡死」主因
-- [ ] hardware 交接 try/finally 保證 resume_control（REVIEW F2）
-- [ ] 建立機器狗 Python 環境（conda 在 `C:\Users\Harrison\miniconda3`、未 init；sim 與訓練各一 env，釘 3.11/3.12）→ 讓 AI 能自主跑 sim 測試
-- [ ] **重構：採「headless 控制核心 + 薄客戶端(CLI/API/web)」分離架構**（已採納，見 REFACTOR_SCOPE「目標架構決策」）；CLI/API 優先以利測試與 AI 自主操作，再決定即時 UI（FastAPI+WS+HTML 或 rerun.io），逐步汰換 NiceGUI
-- [ ] 建立測試 SOP（核心 API 單元/整合 + CLI/GUI smoke/e2e）與需 Harrison 介入的操作 SOP
-- [ ] feature inventory：記錄現有所有功能後再重構
+- [x] 過時文件修正 — ✅ 已做(本機 commit 未 push)：fw README/platformio baud→921600、sim readme 移除 main.py/tennsy.md 過時引用
+- [x] **`_execute_stop` self-join** — ✅ 釐清：現行碼(v4.14.0)已移除，舊報告過時；改加回歸測試鎖死。見 reports/FIX_hardware_handoff_2026-06-04.md(分支)
+- [x] hardware 交接 try/finally 保證 resume_control（F2/T3b）— ✅ 已修於分支 `fix/hardware-stop-selfjoin`，待 review
+- [x] 建立機器狗 Python 環境（T1）— ✅ env `pupper-sim` (py3.11) 已建；訓練 env 仍待建
+- [~] **重構：headless 控制核心 + 薄客戶端** — 提案草稿完成(T9, `ARCHITECTURE_PROPOSAL.md`)；尚未動工
+- [x] 建立測試 SOP（T9）— ✅ 草稿 `TEST_SOP.md`
+- [x] feature inventory（T4）— ✅ `FEATURE_INVENTORY.md`
 
-## 夜間自動任務成果（2026-06-04，本機 commit 未 push）
+## 夜間自動任務成果（第一批，2026-06-04 凌晨，本機 commit 未 push）
 - `reports/INVESTIGATION_2026-06-04.md`：recoil 是 +Y 側向力（解釋 roll）、command_4d=目標側傾(非 pitch)、訓練時 vx/vy/omega 恆為零（recoil 模型是站立吸力模型）、e2e_fixed 為子元重匯的不同權重、teensy 輸出問題線索。
 - `reports/REVIEW_hardware_stability_2026-06-04.md`：靜態審查，F1 self-join bug（🔴）、F2 resume_control 洩漏風險。
 - `ARCHITECTURE.md`：sim 架構 onboarding。
-- 早上待辦：review 後決定 push；F1 是不需實體機就能修的高價值項。
+
+## 自動續跑成果（第二批，2026-06-04 03:11–06:00，循環喚醒逐項處理，本機 commit 未 push）
+> 完整逐項紀錄見 `TASK_QUEUE.md`（各項已打勾 + 一句結果）。主任務 T1–T9 + T3b 全完成；備選 B1–B2 完成。
+- **T1** env `pupper-sim`；**T2** sim 啟動 smoke（揪 cp950 編碼 bug C-S1）。
+- **T3/T3b**（分支 `fix/hardware-stop-selfjoin`，唯一控制碼改動，**待 review/push**）：序列埠交接洩漏修復 + 4 回歸測試；釐清 F1 已修。
+- **T4** `FEATURE_INVENTORY.md`；**T5** 將就設計 sweep(REFACTOR C2，含雙鍵盤系統)。
+- **T6** `REVIEW_timing`(證實非單一時鐘；`_update_recoil_warning_timer` 疑無呼叫者)。
+- **T7** `REVIEW_concurrency`(非重入鎖地雷)；**T8** `REVIEW_performance`(terrain_cache 洩漏=久跑超卡主嫌)。
+- **T9** `ARCHITECTURE_PROPOSAL.md` + `TEST_SOP.md`。
+- **B1** `GLOSSARY.md`；**B2** `INVESTIGATION_git_archaeology`(control_mode 是放棄的列舉遷移殘存物)。
+- 循環喚醒 cron 已於 06:00 後自刪。**剩 B3–B8 未做**。
+- 早上待辦：① review 分支 `fix/hardware-stop-selfjoin` 決定併/push；② 確認 `_update_recoil_warning_timer` 是否真未被呼叫(OPEN_THREADS A8)。
 
 ## 訓練流程評估（mujoco_playground_recoil，待決策）
 現況：MuJoCo Playground（DeepMind/brax PPO）的 **fork**，pupper 環境改自 Go1。
