@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四足機器狗 · 任務清點 & 今晚 T02 排程器</title>
+<style>
+  :root{
+    --bg:#0f1115;--panel:#171a21;--panel2:#1d2129;--ink:#e6e9ef;--muted:#9aa4b2;
+    --line:#2a3039;--accent:#5b9dff;--green:#36d399;--amber:#fbbd23;--red:#f87272;--gray:#7c8694;--chip:#222732;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Segoe UI","Microsoft JhengHei",system-ui,sans-serif;line-height:1.65}
+  .wrap{max-width:1060px;margin:0 auto;padding:30px 22px 90px}
+  header.top{border-bottom:1px solid var(--line);padding-bottom:20px}
+  h1{font-size:25px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:40px 0 6px;padding-left:10px;border-left:4px solid var(--accent)}
+  .h2note{color:var(--muted);font-size:13px;margin:0 0 14px;padding-left:14px}
+  code{background:#0b0d11;padding:2px 6px;border-radius:5px;font-size:12.5px;color:#c9d4e3}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin:10px 0}
+  .pill{display:inline-block;font-size:11.5px;padding:1px 9px;border-radius:20px;font-weight:600}
+  .p-done{background:rgba(54,211,153,.15);color:var(--green)}
+  .p-todo{background:rgba(124,134,148,.18);color:var(--gray)}
+  .p-rev{background:rgba(251,189,35,.15);color:var(--amber)}
+  .p-fu{background:rgba(248,114,114,.15);color:var(--red)}
+  .trow{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)}
+  .trow:last-child{border-bottom:none}
+  .tid{flex:0 0 64px;font-weight:700;font-size:13px;color:var(--accent)}
+  .tbody{flex:1}
+  .tbody .name{font-weight:600;font-size:14.5px}
+  .tbody .desc{color:var(--muted);font-size:13px;margin-top:2px}
+  .tstat{flex:0 0 90px;text-align:right}
+  .fu{margin-top:5px;font-size:12.5px;color:#f8a8a8}
+  .fu b{color:#ffb4b4}
+  .legend{font-size:12.5px;color:var(--muted);margin:4px 0 0}
+  /* interactive */
+  label.opt{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border:1px solid var(--line);border-radius:10px;margin:8px 0;cursor:pointer;background:var(--panel2);transition:.15s}
+  label.opt:hover{border-color:#3a567f}
+  label.opt input{margin-top:3px;transform:scale(1.25);accent-color:var(--accent)}
+  label.opt .ol{flex:1}
+  label.opt .ot{font-weight:600;font-size:14px}
+  label.opt .od{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .tag{font-size:11px;color:var(--muted);background:var(--chip);padding:1px 7px;border-radius:5px;margin-left:6px}
+  .tag.safe{color:var(--green);background:rgba(54,211,153,.12)}
+  .tag.new{color:var(--amber);background:rgba(251,189,35,.12)}
+  .tag.heavy{color:var(--red);background:rgba(248,114,114,.12)}
+  textarea,input[type=text]{width:100%;background:#0b0d11;border:1px solid var(--line);border-radius:9px;color:var(--ink);padding:10px 12px;font-family:inherit;font-size:13.5px}
+  textarea{min-height:90px;resize:vertical;font-family:ui-monospace,Consolas,monospace}
+  .radiorow{display:flex;flex-direction:column;gap:0}
+  .btn{background:var(--accent);color:#06101f;border:none;border-radius:9px;padding:11px 20px;font-weight:700;font-size:14.5px;cursor:pointer}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.sec{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  .out{margin-top:14px}
+  .copied{color:var(--green);font-size:13px;margin-left:12px;opacity:0;transition:.2s}
+  .copied.show{opacity:1}
+  .callout{background:linear-gradient(180deg,#1a2230,#171a21);border:1px solid #2c3a52;border-radius:11px;padding:14px 16px;margin:12px 0;font-size:13.5px}
+  .callout.warn{border-color:#5a4a1e;background:linear-gradient(180deg,#221d10,#1a1710)}
+  .barwrap{height:9px;background:#0b0d11;border-radius:6px;overflow:hidden;margin:6px 0}
+  .bar{height:100%;background:linear-gradient(90deg,var(--green),#2bbd86)}
+  .mini{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+  @media(max-width:640px){.mini{grid-template-columns:repeat(2,1fr)}}
+  .mini .b{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+  .mini .n{font-size:24px;font-weight:700}.mini .l{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>🐕 任務清點 &amp; 今晚自動執行排程器</h1>
+  <div class="sub">上次批次 <b>T01-x</b>（2026-06-04 凌晨）清點　·　規劃本日批次 <b>T02-x</b>（2026-06-07 今晚）　·　勾完按底部按鈕產生 prompt 交回給 AI</div>
+</header>
+
+<div class="mini">
+  <div class="b"><div class="n green">9/9</div><div class="l">T01 主任務完成</div></div>
+  <div class="b"><div class="n green">2/8</div><div class="l">T01 備選完成 (B1–B2)</div></div>
+  <div class="b"><div class="n" style="color:var(--amber)">1</div><div class="l">待你 review/併 (硬體)</div></div>
+  <div class="b"><div class="n" style="color:var(--red)">3</div><div class="l">需後續處理的發現</div></div>
+</div>
+<div class="barwrap"><div class="bar" style="width:65%"></div></div>
+<div class="legend">整體進度：環境＋全面盤點＋問題挖掘已完成（make-it-right 的「盤點」階段）。下一步＝動手重構（待一起定計畫）＋清剩餘佇列。</div>
+
+<!-- ============ PART A: T01 清點 ============ -->
+<h2>① 上次批次 T01-x 逐項清點</h2>
+<p class="h2note">綠＝完成且收尾；黃＝待你處理；紅標＝有需要後續追的發現。</p>
+
+<div class="card">
+  <div class="trow"><div class="tid">T01-1</div><div class="tbody"><div class="name">建 sim Python 環境</div><div class="desc">conda env <code>pupper-sim</code>(py3.11)，依賴裝齊、import 全過；剔除沒人用的 scipy。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-2</div><div class="tbody"><div class="name">sim 啟動冒煙測試</div><div class="desc">可完整啟動到 NiceGUI、9 個 ONNX 全載入＋預熱成功。</div><div class="fu">⮑ <b>後續</b>：🔴 cp950 emoji 啟動 bug（C-S1）；NanoOwl 硬塞主入口（C-S2）。已記 REFACTOR_SCOPE。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-3</div><div class="tbody"><div class="name">退出硬體卡死 bug（含 T3b）</div><div class="desc">唯一控制碼改動：序列埠交接洩漏修復 + 4 回歸測試。零信任修正：原報告的 self-join 早已在 v4.14.0 移除。</div><div class="fu">⮑ <b>待你</b>：分支 <code>fix/hardware-stop-selfjoin</code> 跑測試→決定併 main。</div></div><div class="tstat"><span class="pill p-rev">待 review</span></div></div>
+
+  <div class="trow"><div class="tid">T01-4</div><div class="tbody"><div class="name">功能全盤點</div><div class="desc">FEATURE_INVENTORY.md：6 模式、鍵盤+Xbox、所有面板、硬體狀態機。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-5</div><div class="tbody"><div class="name">「將就設計」系統 sweep</div><div class="desc">REFACTOR_SCOPE C2（8 條）。</div><div class="fu">⮑ <b>後續</b>：🔴 雙鍵盤系統重複（C2-1）等待重構。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-6</div><div class="tbody"><div class="name">時間 / 單一時鐘專題</div><div class="desc">證實 sim 非單一時鐘（物理 vs AI 牆鐘漂移）。</div><div class="fu">⮑ <b>後續(已深查)</b>：🔴 <b>後座力整條斷線</b> — 自動計時器 <code>_update_recoil_warning_timer</code> 無呼叫者；「抑制自動預警」switch 發的事件無人 subscribe。<u>只有手動觸發/重置按鈕能動</u>。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-7</div><div class="tbody"><div class="name">防死鎖 / 併發專題</div><div class="desc">中央鎖是非重入 Lock + 隱性持鎖約定＝地雷（C4）。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-8</div><div class="tbody"><div class="name">效能 / 記憶體洩漏獵查</div><div class="desc">「久跑超卡」最強嫌疑：terrain_cache 無上限成長（C5-1）。</div><div class="fu">⮑ <b>後續</b>：建議實測佐證（印 cache 長度 + RSS）。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-9</div><div class="tbody"><div class="name">重構架構提案 + 測試 SOP</div><div class="desc">ARCHITECTURE_PROPOSAL.md（headless 核心+薄客戶端）+ TEST_SOP.md。</div><div class="fu">⮑ <b>後續</b>：這是「待一起定的完整新計畫」的草稿基礎。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-B1</div><div class="tbody"><div class="name">術語正規化文件</div><div class="desc">GLOSSARY.md 三方命名對照。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-B2</div><div class="tbody"><div class="name">git 歷史考古</div><div class="desc">control_mode 是失敗遷移（OperatingMode 列舉）的殘存物。</div></div><div class="tstat"><span class="pill p-done">完成</span></div></div>
+
+  <div class="trow"><div class="tid">T01-B3~B8</div><div class="tbody"><div class="name">死碼偵測 / config 稽核 / 依賴稽核 / pytest 基礎 / 韌體盤點 / 根 README</div><div class="desc">06:00 到點 cron 自刪、尚未輪到 → <b>順延至今晚 T02</b>（見下方可勾選）。</div></div><div class="tstat"><span class="pill p-todo">未做</span></div></div>
+</div>
+
+<!-- ============ PART B: T02 排程 ============ -->
+<h2>② 今晚自動執行 T02-x — 勾選要跑的任務</h2>
+<p class="h2note"><span class="tag safe">純讀/安全</span> 只讀碼或產文件，零風險　<span class="tag new">新增</span> 會新增檔案但不動既有邏輯　<span class="tag heavy">較重</span> 需長時間佔資源或要你決策。預設已勾安全項。</p>
+
+<div id="tasklist">
+  <label class="opt"><input type="checkbox" data-id="T02-1" data-label="死碼/未使用偵測（只報告不刪，原 B3）" checked>
+    <span class="ol"><span class="ot">T02-1　死碼 / 未使用偵測<span class="tag safe">純讀</span></span><span class="od">找未使用函式 / 孤兒檔（如舊 observation.py、tree_demo_server.py），只寫報告不刪除。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-2" data-label="config.yaml 逐鍵稽核（原 B4）" checked>
+    <span class="ol"><span class="ot">T02-2　config.yaml 逐鍵稽核<span class="tag safe">純讀</span></span><span class="od">逐鍵記錄用途、標出過時/未用鍵（如註解掉的 recipes、warmup_duration）。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-3" data-label="依賴稽核 import vs readme（原 B5）" checked>
+    <span class="ol"><span class="ot">T02-3　依賴稽核<span class="tag safe">純讀</span></span><span class="od">實際 import vs README pip 清單，找缺漏/未用、建議版本釘選。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-4" data-label="pytest 基礎架構 conftest/目錄/trivial（原 B6）" checked>
+    <span class="ol"><span class="ot">T02-4　pytest 基礎架構<span class="tag new">新增</span></span><span class="od">建 pytest 設定 / conftest / test 目錄 / 一個 trivial 測試（僅 infra）。順手處理 test_joystick.py import 期 exit() 炸全套收集的問題（D-1）。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-5" data-label="韌體 pupper_recoil 盤點+sweep（原 B7）" checked>
+    <span class="ol"><span class="ot">T02-5　韌體 pupper_recoil 盤點<span class="tag safe">純讀</span></span><span class="od">指令集 inventory + smell sweep → 報告放 sim docs。純讀另一個 repo。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-6" data-label="工作區根 README（原 B8）" checked>
+    <span class="ol"><span class="ot">T02-6　工作區根 README<span class="tag new">新增</span></span><span class="od">根目錄寫 README 說明三 repo + quickstart（含本次釐清的 conda 啟動方式、PYTHONUTF8）。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-7" data-label="後座力斷線端到端深查報告（manual ok/switch 無 subscriber/auto timer 孤兒，含修復建議，純讀寫報告）" checked>
+    <span class="ol"><span class="ot">T02-7　後座力斷線端到端深查<span class="tag safe">純讀</span> <span class="tag new">高價值</span></span><span class="od">把「自動後座力 + 抑制開關」整條接線追到底，對照訓練端期望，寫一份「現況 vs 應然 + 修復方案」報告（不動控制碼，只出報告供你拍板怎麼修）。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-8" data-label="terrain_cache 久跑超卡實測佐證（長跑 sim 印 cache 長度+RSS）">
+    <span class="ol"><span class="ot">T02-8　terrain_cache 久跑實測佐證<span class="tag heavy">較重</span></span><span class="od">自動啟動 sim 走 INFINITE 地形數分鐘，定時印 cache 長度與記憶體，坐實 C5-1。會長時間佔用機器資源（你睡覺時跑 OK 才勾）。</span></span></label>
+
+  <label class="opt"><input type="checkbox" data-id="T02-9" data-label="重構新計畫草稿 PROJECT_PLAN_v2（只擬草稿待 Harrison 校，不動碼）">
+    <span class="ol"><span class="ot">T02-9　重構新計畫草稿<span class="tag safe">純讀</span></span><span class="od">把 ARCHITECTURE_PROPOSAL + 所有 REFACTOR_SCOPE 問題編號，排成有優先序/階段的重構路線圖草稿，供你明天校。<b>（你說「待會一起定完整計畫」——若想自己主導可不勾）</b></span></span></label>
+</div>
+
+<!-- ============ PART C: 決策 ============ -->
+<h2>③ 需要你拍板的決策</h2>
+<p class="h2note">這些會寫進交回給 AI 的 prompt。</p>
+
+<div class="card">
+  <div class="ot" style="font-weight:600;margin-bottom:6px">硬體修復分支 <code>fix/hardware-stop-selfjoin</code></div>
+  <div class="radiorow" id="hwdecision">
+    <label class="opt"><input type="radio" name="hw" value="我已跑過 4 個測試且通過，請把那 3 個程式碼檔乾淨地併進 main（不要併到雜訊文件）" checked><span class="ol"><span class="ot">我會先跑測試，通過就請你併 main</span><span class="od">推薦：跑 pytest 看綠 → AI 用 cherry-pick 乾淨併入。</span></span></label>
+    <label class="opt"><input type="radio" name="hw" value="先別併，我還沒測，下次再說"><span class="ol"><span class="ot">先別併，我還沒測</span><span class="od">分支留著，等我有空驗證。</span></span></label>
+    <label class="opt"><input type="radio" name="hw" value="我信任測試，請你直接併進 main 並準備好讓我 push"><span class="ol"><span class="ot">我信任測試，直接併</span><span class="od">AI 直接併入 main（仍不 push，等你最後確認）。</span></span></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ot" style="font-weight:600;margin-bottom:6px">後座力斷線（自動循環 + 開關都沒接線）要怎麼處理？</div>
+  <div class="radiorow" id="recoildecision">
+    <label class="opt"><input type="radio" name="rc" value="今晚只出深查報告(T02-7)，修法等我看完報告再決定" checked><span class="ol"><span class="ot">今晚只出報告，修法我看完再決定</span><span class="od">安全。AI 不動控制碼。</span></span></label>
+    <label class="opt"><input type="radio" name="rc" value="授權今晚順便把後座力接線修好(自動計時器接回主迴圈+switch 事件接 subscriber)並加測試，放在獨立分支待我 review"><span class="ol"><span class="ot">授權今晚順便修（獨立分支待 review）</span><span class="od">AI 會改控制碼但隔離在分支＋加測試，不併 main。</span></span></label>
+    <label class="opt"><input type="radio" name="rc" value="後座力暫不處理"><span class="ol"><span class="ot">暫不處理</span><span class="od">先擱著。</span></span></label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ot" style="font-weight:600;margin-bottom:6px">其他補充指示（自由輸入，可留空）</div>
+  <textarea id="freenote" placeholder="例如：今晚也幫我查 XXX / 韌體那邊重點看 YYY / 重構優先想先動 terrain_cache …"></textarea>
+</div>
+
+<div class="card">
+  <div class="ot" style="font-weight:600;margin-bottom:6px">喚醒節奏（自動執行的循環設定）</div>
+  <input type="text" id="cadence" value="閒置觸發、逐項處理，跑到清單清空或天亮 06:00 後自刪" >
+</div>
+
+<!-- ============ 產生 ============ -->
+<h2>④ 產生今晚 prompt</h2>
+<p class="h2note">按下後會組好一段 prompt，複製貼回給 AI（我會據此確認清單並設定今晚的自動執行）。</p>
+<div>
+  <button class="btn" onclick="genPrompt()">⚙️ 產生 prompt</button>
+  <button class="btn sec" onclick="copyPrompt()">📋 複製</button>
+  <span id="copied" class="copied">已複製 ✓</span>
+</div>
+<div class="out">
+  <textarea id="output" placeholder="（按「產生 prompt」後內容會出現在這裡，可直接編輯再複製）"></textarea>
+</div>
+
+<div class="callout warn" style="margin-top:24px">
+  <b>提醒：</b>自動執行仍遵守原規則——本機 commit 不 push、控制碼改動一律隔離在分支、遇阻塞標記跳過不卡死、所有將就設計記進 REFACTOR_SCOPE。除非你在上面明確授權（如後座力修復），否則不動控制路徑。
+</div>
+
+<div class="legend" style="margin-top:20px">本檔為互動規劃工具（artifact）。權威任務紀錄仍以 <code>docs/TASK_QUEUE.md</code> 為準；你產生的 prompt 交回後，AI 會把選定項正式寫入佇列。</div>
+
+</div>
+
+<script>
+function genPrompt(){
+  const picked=[...document.querySelectorAll('#tasklist input:checked')]
+    .map((c,i)=>({id:c.dataset.id,label:c.dataset.label}));
+  const hw=document.querySelector('input[name=hw]:checked').value;
+  const rc=document.querySelector('input[name=rc]:checked').value;
+  const note=document.getElementById('freenote').value.trim();
+  const cad=document.getElementById('cadence').value.trim();
+
+  let lines=[];
+  lines.push('【四足機器狗｜今晚自動執行批次 T02-x｜規劃確認】');
+  lines.push('');
+  lines.push('我已用排程器選好今晚要自動跑的任務，請你：(a) 把下列選定任務正式寫進 docs/TASK_QUEUE.md（編號 T02-x），(b) 設定今晚的循環喚醒自動執行，(c) 開跑前先簡述你的理解讓我確認。');
+  lines.push('');
+  lines.push('── 選定任務（依序）──');
+  if(picked.length===0){lines.push('（未選任何任務）');}
+  else{picked.forEach(p=>lines.push('• '+p.id+'　'+p.label));}
+  lines.push('');
+  lines.push('── 決策 ──');
+  lines.push('• 硬體分支 fix/hardware-stop-selfjoin：'+hw);
+  lines.push('• 後座力斷線：'+rc);
+  lines.push('');
+  lines.push('── 自動執行規則（沿用 T01）──');
+  lines.push('• 本機 commit、不 push（push 等我回來確認）。');
+  lines.push('• 不改控制路徑程式碼；若上方授權修改，一律隔離在獨立分支＋加測試，不併 main。');
+  lines.push('• 遇阻塞/需我決策→標記原因、跳下一個，絕不卡死。');
+  lines.push('• 所有「將就/理所當然」設計一律記進 REFACTOR_SCOPE.md。');
+  lines.push('• 喚醒節奏：'+cad+'。');
+  if(note){lines.push('');lines.push('── 我的補充指示 ──');lines.push(note);}
+  lines.push('');
+  lines.push('（本 prompt 由 TASK_PLANNER_2026-06-07.html 產生）');
+
+  document.getElementById('output').value=lines.join('\n');
+}
+function copyPrompt(){
+  const ta=document.getElementById('output');
+  if(!ta.value){genPrompt();}
+  ta.select();ta.setSelectionRange(0,99999);
+  const done=()=>{const c=document.getElementById('copied');c.classList.add('show');setTimeout(()=>c.classList.remove('show'),1500);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(ta.value).then(done).catch(()=>{try{document.execCommand('copy');done();}catch(e){}});
+  }else{try{document.execCommand('copy');done();}catch(e){}}
+}
+</script>
+</body>
+</html>

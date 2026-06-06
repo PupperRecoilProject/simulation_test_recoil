@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>四足機器狗 · 夜間自動執行成果（2026-06-04）</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d2129; --ink:#e6e9ef; --muted:#9aa4b2;
+    --line:#2a3039; --accent:#5b9dff; --green:#36d399; --amber:#fbbd23; --red:#f87272;
+    --gray:#7c8694; --chip:#222732;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI","Microsoft JhengHei",system-ui,sans-serif;line-height:1.7;}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 22px 80px;}
+  header.top{border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:10px}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:42px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:16px;margin:22px 0 8px}
+  p{margin:8px 0}
+  code{background:#0b0d11;padding:2px 6px;border-radius:5px;font-size:13px;color:#c9d4e3}
+  .grid{display:grid;gap:14px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:780px){.g3,.g2{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .stat{text-align:center}
+  .stat .n{font-size:32px;font-weight:700}
+  .stat .l{color:var(--muted);font-size:13px;margin-top:2px}
+  .green{color:var(--green)} .amber{color:var(--amber)} .red{color:var(--red)} .muted{color:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin:8px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:13px}
+  tr:hover td{background:#1b1f27}
+  .pill{display:inline-block;font-size:12px;padding:1px 9px;border-radius:20px;font-weight:600}
+  .p-done{background:rgba(54,211,153,.15);color:var(--green)}
+  .p-todo{background:rgba(124,134,148,.18);color:var(--gray)}
+  .p-rev{background:rgba(251,189,35,.15);color:var(--amber)}
+  .sev{font-weight:700;margin-right:6px}
+  .finding{border-left:4px solid var(--line);background:var(--panel2);border-radius:0 10px 10px 0;
+    padding:12px 16px;margin:12px 0}
+  .finding.r{border-left-color:var(--red)}
+  .finding.a{border-left-color:var(--amber)}
+  .finding h4{margin:0 0 4px;font-size:15px}
+  .finding .why{color:var(--muted);font-size:13.5px}
+  .tag{font-size:11px;color:var(--muted);background:var(--chip);padding:1px 7px;border-radius:5px;margin-left:6px}
+  .callout{background:linear-gradient(180deg,#1a2230,#171a21);border:1px solid #2c3a52;border-radius:12px;padding:16px 18px;margin:14px 0}
+  .callout.warn{border-color:#5a4a1e;background:linear-gradient(180deg,#221d10,#1a1710)}
+  ul{margin:6px 0;padding-left:22px} li{margin:4px 0}
+  .legend{font-size:13px;color:var(--muted);margin:6px 0 0}
+  .next{counter-reset:step}
+  .next .item{display:flex;gap:14px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
+  .next .num{flex:0 0 30px;height:30px;border-radius:50%;background:var(--accent);color:#06101f;
+    font-weight:700;display:flex;align-items:center;justify-content:center}
+  .footer{color:var(--muted);font-size:12.5px;margin-top:40px;border-top:1px solid var(--line);padding-top:16px}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>🐕 四足機器狗 · 夜間自動執行成果報告</h1>
+  <div class="sub">執行區間 2026-06-04 凌晨（循環喚醒逐項處理）　·　階段：make it right（重啟整理）　·　所有變更皆<b>本機 commit、尚未 push</b></div>
+</header>
+
+<!-- ===== 數字總覽 ===== -->
+<div class="grid g3" style="margin-top:22px">
+  <div class="card stat"><div class="n green">11<span style="font-size:18px">/17</span></div><div class="l">任務完成（主 T1–T9 全完成 + 備選 B1–B2）</div></div>
+  <div class="card stat"><div class="n">20</div><div class="l">main 本機 commit（未 push）</div></div>
+  <div class="card stat"><div class="n red">5</div><div class="l">🔴 高嚴重度問題（含 1 個已修）</div></div>
+</div>
+
+<div class="callout">
+  <b>一句話總結：</b>這晚沒有亂動控制邏輯——主要是<b>把整個 sim 摸了一遍、建好可跑的環境、把所有「將就/壞掉」的設計都挖出來記錄成文件</b>。
+  唯一動到的控制碼是修一個你實際遇過的「退出硬體後連不上」的 bug，而且是<b>隔離在分支上等你 review</b>，沒有併進主線。
+</div>
+
+<!-- ===== 規則 ===== -->
+<h2>它在無人看管時遵守的規則</h2>
+<div class="card">
+  <ul>
+    <li>每次醒來取佇列最上面一個未完成任務做，做完打勾並留一句結果。</li>
+    <li><b>只本機 commit，絕不 push</b>；push 一律等你回來確認。</li>
+    <li><b>不改控制路徑程式碼、不做高風險變更</b>（唯一例外：你明確授權的硬體 bug 任務）。</li>
+    <li>遇阻塞或需你決策 → 標記原因、跳下一個，<b>絕不卡死</b>。</li>
+    <li>任何發現的「將就/理所當然」設計 → <b>一律記進 REFACTOR_SCOPE.md</b>（你交代「一定要有紀錄」）。</li>
+    <li>過今天 06:00 後自動刪除停止（已自刪）。</li>
+  </ul>
+</div>
+
+<!-- ===== 任務清單 ===== -->
+<h2>做了哪些任務</h2>
+<table>
+  <thead><tr><th style="width:64px">編號</th><th>任務</th><th style="width:96px">狀態</th><th>產出 / 重點</th></tr></thead>
+  <tbody>
+    <tr><td>T1</td><td>建 sim Python 環境</td><td><span class="pill p-done">完成</span></td><td>conda env <code>pupper-sim</code>（py3.11），依賴裝齊、import 全過。剔除清單裡沒人用的 scipy。</td></tr>
+    <tr><td>T2</td><td>sim 啟動冒煙測試</td><td><span class="pill p-done">完成</span></td><td>可完整啟動到 NiceGUI，9 個 ONNX 全載入＋預熱成功。揪出 🔴 cp950 啟動 bug。</td></tr>
+    <tr><td>T3 / T3b</td><td>退出硬體卡死 bug</td><td><span class="pill p-rev">待 review</span></td><td><b>唯一控制碼改動</b>：序列埠交接洩漏修復 + 4 個回歸測試。在分支 <code>fix/hardware-stop-selfjoin</code>。</td></tr>
+    <tr><td>T4</td><td>功能全盤點</td><td><span class="pill p-done">完成</span></td><td><code>FEATURE_INVENTORY.md</code>：6 模式、鍵盤+Xbox 綁定、所有面板、硬體狀態機。</td></tr>
+    <tr><td>T5</td><td>「將就設計」系統 sweep</td><td><span class="pill p-done">完成</span></td><td>REFACTOR_SCOPE C2（8 條），含 🔴 雙鍵盤系統重複。</td></tr>
+    <tr><td>T6</td><td>時間 / 單一時鐘專題</td><td><span class="pill p-done">完成</span></td><td>證實 sim <b>非單一時鐘</b>；發現後座力倒數計時器疑似沒接線。</td></tr>
+    <tr><td>T7</td><td>防死鎖 / 併發專題</td><td><span class="pill p-done">完成</span></td><td>中央鎖是非重入 Lock + 隱性持鎖約定＝地雷。</td></tr>
+    <tr><td>T8</td><td>效能 / 記憶體洩漏獵查</td><td><span class="pill p-done">完成</span></td><td>找到「久跑超卡」最強嫌疑：terrain_cache 無上限成長。</td></tr>
+    <tr><td>T9</td><td>重構架構提案 + 測試 SOP</td><td><span class="pill p-done">完成</span></td><td><code>ARCHITECTURE_PROPOSAL.md</code>（headless 核心+薄客戶端）+ <code>TEST_SOP.md</code>。</td></tr>
+    <tr><td>B1</td><td>術語正規化文件</td><td><span class="pill p-done">完成</span></td><td><code>GLOSSARY.md</code>：關節命名/馬達方向/roll-pitch/座標軸三方對照。</td></tr>
+    <tr><td>B2</td><td>git 歷史考古</td><td><span class="pill p-done">完成</span></td><td>發現 <code>control_mode</code> 字串是一次「想做乾淨列舉但失敗回退」的殘存物。</td></tr>
+    <tr><td>B3–B8</td><td>死碼偵測 / config 稽核 / 依賴稽核 / pytest 基礎 / 韌體盤點 / 根 README</td><td><span class="pill p-todo">未做</span></td><td>06:00 到點 cron 自刪，尚未輪到。等你決定要不要繼續。</td></tr>
+  </tbody>
+</table>
+
+<!-- ===== 關鍵發現 ===== -->
+<h2>你最該知道的發現（依嚴重度）</h2>
+<p class="legend">🔴 高信心 / 嚴重　·　🟡 中等　·　以下每條都已寫進對應的審查報告與 REFACTOR_SCOPE.md。</p>
+
+<div class="finding r">
+  <h4><span class="sev red">🔴</span>「久跑超卡、要重開」找到主嫌了 <span class="tag">T8 · C5-1</span></h4>
+  <p>INFINITE 地形的 <code>terrain_cache</code> 是「只增不刪」設計——你每走過一格地形就永久存一塊高度場，從不淘汰。走越久記憶體越大、dict 越查越慢。</p>
+  <p class="why">這跟你回報的症狀高度吻合。漂亮解：窗口外的地塊直接淘汰（LRU/上限），或改「種子重生」不存整塊。建議實測佐證（印 cache 長度 + 記憶體）。</p>
+</div>
+
+<div class="finding r">
+  <h4><span class="sev red">🔴</span> sim 其實「不是單一時鐘」 <span class="tag">T6 · C3-1</span></h4>
+  <p>物理走的是「模擬時間」，但 AI 決策節奏綁的是「真實牆鐘」，兩者不同源。筆電負載一高，物理被夾成慢動作、AI 卻照牆鐘跑 → 每模擬步的 AI 次數會漂移，脫離訓練時的固定 dt 假設。</p>
+  <p class="why">這正是你「印象中時鐘怪怪的」的根。漂亮解：AI 決策也改綁物理步數，整個收斂成單一模擬時鐘。</p>
+</div>
+
+<div class="finding r">
+  <h4><span class="sev red">🔴</span> 後座力倒數計時器疑似「沒接線」 <span class="tag">T6 · OPEN_THREADS A8</span></h4>
+  <p><code>_update_recoil_warning_timer()</code>（唯一遞減後座力倒數的函式）<b>全 repo 找不到任何呼叫者</b>。若屬實，sim 的隨機後座力事件根本不會觸發——而後座力正是這隻狗的核心賣點。</p>
+  <p class="why"><b>需要你 / 實測確認。</b>這是典型「設計過但接線斷掉」的功能。</p>
+</div>
+
+<div class="finding r">
+  <h4><span class="sev red">🔴</span> 中央鎖是非重入 Lock + 靠人工紀律的隱性約定 <span class="tag">T7 · C4-1</span></h4>
+  <p><code>state.lock</code> 是 <code>threading.Lock</code>（非 RLock），而一堆 helper「假定呼叫者已持鎖、自己不鎖」。哪天有人給 helper 加回鎖 → 同執行緒自我死鎖；有人忘了先鎖 → 靜默資料競態。</p>
+  <p class="why">目前靠紀律維持，很脆弱。建議改 RLock，或拆「公開自鎖 / 私有 _locked」分層。</p>
+</div>
+
+<div class="finding r">
+  <h4><span class="sev red">🔴</span> 雙鍵盤系統重複 <span class="tag">T5 · C2-1</span></h4>
+  <p>同時存在兩套鍵盤處理：GLFW（MuJoCo 視窗）與 GlobalKeyboardDriver（NiceGUI 瀏覽器端），兩邊都綁了重疊的 WASD/QE/IK。行為可能不一致、維護成本翻倍，疑為「視窗→瀏覽器」遷移的中間遺留。</p>
+</div>
+
+<div class="grid g2">
+  <div class="finding a"><h4><span class="sev amber">🟡</span> cp950 啟動編碼 bug <span class="tag">T2 · C-S1</span></h4><p class="why">滿地 <code>print("✅…")</code> emoji 無編碼保護，非 UTF-8 終端（log 導向檔/CI/自動化）一啟動就 <code>UnicodeEncodeError</code> 直接退出。治本：改用既有 log logger。目前靠 <code>PYTHONUTF8=1</code> 繞過。</p></div>
+  <div class="finding a"><h4><span class="sev amber">🟡</span> NanoOwl 子程序硬塞主入口 <span class="tag">T2 · C-S2</span></h4><p class="why">啟動時無條件拉起 <code>tree_demo_server.py</code>（缺 cv2 即崩），且無旗標可關。與機器狗核心無關的功能耦合進主入口，應移出成可選外掛。</p></div>
+  <div class="finding a"><h4><span class="sev amber">🟡</span> control_mode 是失敗遷移的殘存物 <span class="tag">B2</span></h4><p class="why">git 考古顯示曾想遷移到乾淨的 OperatingMode/ControlSubMode 列舉，但失敗被整個回退，現在的字串模式是過渡相容用的殘留。重構模式系統時別重蹈覆轍（先測試再動）。</p></div>
+  <div class="finding a"><h4><span class="sev amber">🟡</span> 持鎖跨重活、裝置連接阻塞發布者 <span class="tag">T7 · C4-2/3</span></h4><p class="why">hard_reset/切模式在鎖內跑重活 → 快速操作時 UI 凍結；裝置掃描在事件回呼裡同步 sleep → 卡住鍵盤/UI 執行緒。應縮小臨界區、耗時連接背景化。</p></div>
+</div>
+
+<!-- ===== 零信任修正 ===== -->
+<h2>一個重要的「自我糾錯」</h2>
+<div class="callout warn">
+  <p><b>原本的報告寫錯，這晚把它修正了。</b>更早一份硬體穩定性報告把「退出硬體卡死」歸因於 <code>_execute_stop</code> 的 self-join。但這晚實際翻現行碼，發現 <b>v4.14.0 早就移除了那段</b>——舊報告過時。</p>
+  <p>處理方式符合「基於事實的零信任除錯」：<b>沒有去動已經正確的程式碼</b>，改加回歸測試把「不可 self-join」鎖死；同時找出真正的兇手——序列埠交接洩漏（最吻合你「退出後連不上」的症狀），才動手修。</p>
+</div>
+
+<!-- ===== 唯一控制碼改動 ===== -->
+<h2>唯一動到控制碼的地方（等你 review）</h2>
+<div class="card">
+  <p>分支 <code>fix/hardware-stop-selfjoin</code>（commit <code>e9fbf02</code>），<b>未併 main、未 push</b>。修的是你實際遇過的「退出硬體模式後連不上」：</p>
+  <table>
+    <thead><tr><th>檔案</th><th>改了什麼</th></tr></thead>
+    <tbody>
+      <tr><td><code>hardware_controller.py</code></td><td><code>_execute_start</code> 改用 <code>started_ok</code> + try/finally，保證<b>任何例外都把序列埠控制權歸還</b>（不再洩漏）。</td></tr>
+      <tr><td><code>serial_communicator.py</code></td><td><code>close()</code> 在「暫停中」狀態也確實關閉序列埠（修埠洩漏）。</td></tr>
+      <tr><td><code>test/test_hardware_handoff.py</code></td><td><b>新增</b> 4 個回歸測試（不 self-join / 例外歸還控制 / 成功保留控制 / 暫停時也釋放埠），全綠。</td></tr>
+    </tbody>
+  </table>
+  <p class="legend">⚠️ 注意：這分支是在那批文件 commit <b>之前</b>切的，所以 <code>git diff main..分支</code> 會誤顯示一堆文件被「刪除」——那只是分支落後於 main，不是真的刪除。實際要看的只有上面 3 個程式碼檔。Review 時建議直接看分支的那一個 commit，或把這 3 檔 cherry-pick 到新分支。</p>
+</div>
+
+<!-- ===== 需要你做的決策 ===== -->
+<h2>需要你拍板 / 接下來的選項</h2>
+<div class="next">
+  <div class="item"><div class="num">1</div><div><b>Review 硬體修復分支，決定併 main / push。</b><br><span class="muted">這是唯一控制碼改動。建議先看那一個 commit 的 diff，跑一次 4 個測試確認綠，再決定。</span></div></div>
+  <div class="item"><div class="num">2</div><div><b>確認後座力計時器是否真的沒人呼叫。</b><br><span class="muted">若屬實，sim 後座力事件根本沒在跑——對這隻狗影響重大，值得優先釐清。</span></div></div>
+  <div class="item"><div class="num">3</div><div><b>挑第一個重構項動工。</b><br><span class="muted">高 CP 候選：terrain_cache 有界化（解久跑超卡）、或 logging 統一（解 cp950＋日誌失效）。</span></div></div>
+  <div class="item"><div class="num">4</div><div><b>要不要繼續跑剩餘佇列 B3–B8。</b><br><span class="muted">死碼偵測 / config 稽核 / 依賴稽核 / pytest 基礎 / 韌體盤點 / 根 README。皆為純讀或附加性、安全。</span></div></div>
+</div>
+
+<!-- ===== 文件導覽 ===== -->
+<h2>產出文件去哪找</h2>
+<div class="card">
+  <table>
+    <tbody>
+      <tr><td><code>docs/README.md</code></td><td>文件地圖（恢復脈絡的入口）</td></tr>
+      <tr><td><code>docs/PROJECT_PLAN.md</code></td><td>計畫表 + 進度勾選（看整體進度）</td></tr>
+      <tr><td><code>docs/TASK_QUEUE.md</code></td><td>逐項任務結果 + 自主執行規則</td></tr>
+      <tr><td><code>docs/REFACTOR_SCOPE.md</code></td><td><b>所有「將就設計」問題總表</b>（C-S / C2 / C3 / C4 / C5 編號）</td></tr>
+      <tr><td><code>docs/FEATURE_INVENTORY.md</code></td><td>現有功能完整盤點</td></tr>
+      <tr><td><code>docs/ARCHITECTURE_PROPOSAL.md</code> · <code>TEST_SOP.md</code> · <code>GLOSSARY.md</code></td><td>重構目標架構 / 測試 SOP / 術語對照</td></tr>
+      <tr><td><code>docs/reports/SMOKE · REVIEW_timing · REVIEW_concurrency · REVIEW_performance · INVESTIGATION_git_archaeology</code></td><td>各專題的當日快照報告</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="footer">
+  本報告由夜間自動執行成果彙整而成 · 2026-06-04 · 所有結論的權威來源為上表各 Markdown 文件，本 HTML 僅為導覽呈現。
+</div>
+
+</div>
+</body>
+</html>
