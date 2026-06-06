@@ -66,15 +66,15 @@
 > **路線圖 P1**。原則：低風險、不動控制路徑邏輯、可回退。決策權威 `REFACTOR_DECISIONS.md`。
 > **自動執行規則**（沿用上方「自主執行規則」，並強化）：
 > - 取最上面 `[ ]` 任務做；本機 commit、**絕不 push**。
-> - **加檔/改文件類在 main**；**動程式碼一律開分支 + 跑測試**；**刪除核心碼一律只列清單不動手**（刪除留 Harrison review）。
+> - **加檔/改文件類在 main**；**動程式碼一律開分支 + 跑測試**；**刪除（死碼/版本註解）允許在隔離分支上做 + 加/跑測試**，待 Harrison 併（2026-06-07 授權）。**不在 main 上直接刪程式碼**。
 > - **防阻塞**：遇歧義/需決策/環境問題 → 標 `[BLOCKED]` 寫因、**跳下一個**，絕不卡死。
 >   分支類若測試 3 次內修不綠 → `git restore` 該任務變更、標 `[BLOCKED]`、繼續下一個。
 > - 每改一檔跑 `PYTHONUTF8=1 python -m pytest -q`（須維持綠）+ 受影響入口 `ast.parse`/import smoke。
 > - 新發現的將就設計記 `REFACTOR_SCOPE.md`。
 - [ ] **T04-1 建 requirements.txt**（main，加檔最安全）：依 T02-3 稽核——剔 scipy、補 glfw、列 pytest/Pillow/psutil(視用到否)；版本 pin 用 `pupper-sim` env 實際版本。不改任何程式碼。
-- [ ] **T04-2 萃取版本歷史**（main，加檔安全）：把散落的 `【vX.X.X】` 行內註解 + git tag 萃取成 `docs/VERSION_HISTORY.md` 時間線。**只萃取、本批不刪註解**（刪除動到全 repo，留 P1 後續 review 步驟）。
+- [ ] **T04-2 萃取版本歷史**：① 先萃取成 `docs/VERSION_HISTORY.md` 時間線（main，加檔）；② 再於分支 `chore/strip-version-comments` **刪除 `【vX.X.X】` 行內註解**（只刪註解、不動程式邏輯），每檔 import smoke + 全套 pytest 綠才提交。fallback：某檔刪後測試掛 → restore 該檔、記 BLOCKED。
 - [ ] **T04-3 print→log 轉換**（分支 `chore/print-to-log`）：把 `print(...)` 機械式換成對應 log 等級（依 CLAUDE.md 語義：狀態變更=info、診斷=debug）。逐檔轉、逐檔測；全套 pytest 綠才提交。fallback：某檔轉後測試掛且修不動 → restore 該檔、記 BLOCKED、續其他檔。
-- [ ] **T04-4 死碼保守處理**（分支 `chore/deadcode-tidy`）：只做**高信度可逆**動作——`test/` 內非測試腳本移 `tools/`、修 README 對已刪檔的失效引用。**核心程式碼疑似死碼只更新清單於 AUDIT 報告、不刪**。
+- [ ] **T04-4 死碼清理**（分支 `chore/deadcode-tidy`）：`test/` 內非測試腳本移 `tools/`、修 README 失效引用；**高信度死碼（AUDIT 已點名的孤兒、無呼叫者）在分支上刪除 + 跑測試**。⚠️ 信度不足/可能被動態引用的 → 只列清單不刪、記 BLOCKED。每步全套 pytest 須綠。
 - [ ] **T04-5 收尾歸檔**（main）：產 `reports/OVERNIGHT_SUMMARY_2026-06-08.html`（**字級加大、最小 ≥13px**）；更新 `restart-progress` 記憶；確認工作樹乾淨、列出當晚所有 commit 與待 review 分支；**不 push**。
 
 ## 已完成 / 已封存
