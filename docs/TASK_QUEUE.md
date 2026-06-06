@@ -27,12 +27,13 @@
 ## 備選池（主任務做完才做；同樣依序、同規則）
 - [x] **B1 術語正規化文件** ✅ → `docs/GLOSSARY.md`：關節命名(hip 兩邊不同義→用軸序/ID)、馬達編號(三方一致)+方向(只翻 sim)、roll/pitch(韌體送 roll 正確、建議正名 lean)、座標軸(Y 前後非標準)、command 佈局、控制模式、baud 921600、縮寫。已加入 README。
 - [x] **B2 git 歷史考古** ✅ → `reports/INVESTIGATION_git_archaeology_2026-06-04.md`。最大發現：🔴 今日 `control_mode` 字串模式系統其實是一次「想遷移到 OperatingMode/ControlSubMode 乾淨列舉但失敗被回退」的殘存物(a8a723e 引入+legacy shim，現已全移除，周邊一串「加回 X 避免 crash」)。另：「多執行緒重構=完全穩定」宣稱被後續硬體修補打臉、物理/求解參數反覆 revert、pyserial 腳本刪又還原。
-- [ ] **B3 死碼/未使用偵測（只報告、不刪）**：找未使用函式/孤兒檔(如舊 observation.py)→REFACTOR_SCOPE。**不自動刪除**。
-- [ ] **B4 config.yaml 稽核**：逐鍵記錄用途、標出過時/未用鍵(如註解掉的 recipes、warmup_duration)→reports/REFACTOR_SCOPE。
-- [ ] **B5 依賴稽核**：實際 import vs readme pip 清單，找缺漏/未用、建議版本釘選→reports。
-- [ ] **B6 pytest 基礎架構**：建 pytest 設定/conftest/test 目錄/一個 trivial 測試(僅 infra，不大量寫測試)。附加性、安全。
-- [ ] **B7 韌體 pupper_recoil 盤點+sweep**：指令集 inventory + smell sweep→reports(放 sim docs)。純讀。
-- [ ] **B8 工作區根 README**：根目錄寫一份 README 說明三 repo + quickstart(目前根只有 CLAUDE.md+workspace)。
+> ⬇️ B3–B8 已於 2026-06-07 改名搬入 T02 批次並全數完成（見下方 T02 段落）。此處保留對照、勿重跑。
+- [x] **B3 死碼/未使用偵測** ✅ = **T02-1**（→ reports/AUDIT_2026-06-07.md）
+- [x] **B4 config.yaml 稽核** ✅ = **T02-2**（→ AUDIT 報告 + REFACTOR C-CFG）
+- [x] **B5 依賴稽核** ✅ = **T02-3**（→ AUDIT 報告 + REFACTOR C-DEP）
+- [x] **B6 pytest 基礎架構** ✅ = **T02-4**（pytest.ini/conftest/test_smoke，13 passed）
+- [x] **B7 韌體 pupper_recoil 盤點+sweep** ✅ = **T02-5**（→ reports/INVENTORY_firmware_2026-06-07.md）
+- [x] **B8 工作區根 README** ✅ = **T02-6**（工作區根 README.md）
 
 ## T02 批次（2026-06-07 規劃，待 compact 後自動執行）
 > 由 `TASK_PLANNER_2026-06-07.html` 規劃 + 第一輪重構討論授權。決策權威見 `REFACTOR_DECISIONS.md`。
