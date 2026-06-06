@@ -49,14 +49,18 @@
 - [x] **T02-6 工作區根 README** ✅：根目錄 `README.md`(三 repo + quickstart + conda/PYTHONUTF8 + 跨 repo 陷阱)。註：根非 git repo，此檔未版控。
 - [x] **T02-7 後座力斷線端到端深查報告** ✅ → `reports/INVESTIGATION_recoil_wiring_2026-06-07.md`。確認三路徑兩斷(timer 孤兒+switch 無 subscriber)，僅手動按鈕活；含修復方案。
 
-授權的程式碼變更（**獨立分支 + 測試，不併 main**）：
-- [x] **T02-8 後座力接線修復** ✅（分支 `fix/recoil-wiring`，commit 8961fa7，**待 review**）：timer 接回 run loop + state.frw_auto_inhibit runtime 旗標 + switch subscriber + 5 測試。全套 13 passed。⚠️ config 預設 auto_inhibit 是否改 false 待 Harrison 決定。
-- [x] **T02-9 移除 NanoOwl 影像伺服器** ✅（分支 `chore/remove-nanoowl`，commit ce10ff5，**待 review**）：刪 Popen/tree_demo_server.py/nanoowl_process/subprocess import；main_nicegui 匯入 OK、8 passed。
+授權的程式碼變更（原隔離分支，已 review 併 main）：
+- [x] **T02-8 後座力接線修復** ✅ **已併 main**（commit f4e4237，撿碼跳 docs 雜訊）：timer 接回 run loop + runtime 旗標 + switch subscriber + 5 測試。
+- [x] **T02-9 移除 NanoOwl 影像伺服器** ✅ **已併 main**（commit d4796a2）：刪 Popen/tree_demo_server.py/nanoowl_process/subprocess import。
+- [x] **T02-10 後座力旗標改正向命名** ✅ **已併 main**（commit ba439e9）：`auto_inhibit`(true=抑制)→`auto_warning_enabled`(false=不啟用)，去雙重否定；預設 false=只保留手動。涵蓋 config/state/event/controller/ui/測試。
 
-未納入本批（待決/較重）：
-- terrain_cache 久跑實測佐證（較重、長跑佔資源）；重構新計畫草稿（待 T02 稽核完一起定，見 REFACTOR_DECISIONS「待續」）。
+**T02 收尾（2026-06-07）**：全項完成且**全部已併 main**（兩分支已 review 併入、過期分支已刪）。皆本機 commit、未 push。
 
-**T02 收尾（2026-06-07）**：全 9 項完成。安全項(報告+pytest+根README)已併 main；兩個程式碼變更在分支 `fix/recoil-wiring`、`chore/remove-nanoowl` **待 Harrison review**。皆本機 commit、未 push。
+## T03 批次（2026-06-07 規劃）
+> 聚焦走路/控制（後座力短期內多半停用）。重構決策權威見 `REFACTOR_DECISIONS.md`。
+- [ ] **T03-1 terrain_cache 久跑實測 + 數據圖表**：兩情境長跑——(A) 地形模式量 terrain_cache 大小與記憶體成長（佐證該上 LRU 上界）、(B) **平地**量走路品質 baseline（存活時間/前進速度/傾角；金字塔目前全策略走不上去故不取非平地成績）。順帶取每 tick 耗時分布。產出 HTML+SVG 數據分析圖表。
+- [ ] **T03-2 第一輪重構完整路線圖**：把 REFACTOR_DECISIONS「待續」收斂成可執行路線圖（HTML+SVG 呈現）。
+- [ ] （排程）建 requirements.txt（源自 T02-3 依賴稽核）。
 
 ## 已完成 / 已封存
 （完成的任務移到這裡保留紀錄）
