@@ -84,6 +84,18 @@
 - 已確認有界良好(非洩漏)：log_queue(500)、freq deque(100)、obs_histories(history_length)、
   rendering 的 scene/context/cam 重用、事件訂閱一次性。
 
+### C6. T02 稽核補充（2026-06-07，詳見 reports/AUDIT_2026-06-07.md）
+- **C-CFG config.yaml 將就項**：被註解掉的 `observation_recipes`(死 config)、`warmup_duration:0` 疑未用死鍵、
+  `command_scaling_factors` 註解過時(寫「[vy,vx,wz]」3軸實為4值)、`auto_inhibit` 預設 true(自動預警預設關)。
+- **C-DEP 依賴**：README pip 清單 scipy 多餘、glfw 漏列、mujoco 應升核心、onnxruntime-directml 屬選配；
+  建議建 `requirements.txt`/`environment.yml` 取代散落 pip 行（排 T03）。
+- **C-TEST test/ 目錄混雜**：多支非測試工具腳本(dump_project/project_overview/pyserial_*/verify_model_mode/test_teensy_connection)
+  與真單元測試混放；建議分到 `tools/`，pytest 只掃真測試。`test_joystick.py` import 期 `exit()` 已用 --ignore 暫隔離(根治待移目錄)。
+
+### ✅ 已於 T02 處理（記錄存證）
+- **C-S2 / C2-7 NanoOwl 硬塞主入口** → 已移除（分支 `chore/remove-nanoowl`，待 review）。
+- **後座力斷線**（timer 孤兒 + switch 無 subscriber）→ 已接回（分支 `fix/recoil-wiring`，待 review）。
+
 ## D. 測試 / 品質（從零建立，工程化）
 - 當時幾乎沒寫 pytest → 必有運行 bug、以及「原本設計但被改壞」的功能。
 - 目前無完整測試 SOP：需涵蓋 (1) 程式單元/整合測試 (2) GUI 介面測試 (3) 模擬測試。

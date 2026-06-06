@@ -40,21 +40,22 @@
 > **跑完每項要注記「需歸檔/記憶」的重點，確保可直接 compact。**
 
 純讀 / 文件類（安全，依序）：
-- [ ] **T02-1 死碼/未使用偵測**（原 B3，只報告不刪）：找未使用函式/孤兒檔 → REFACTOR_SCOPE/報告。
-- [ ] **T02-2 config.yaml 逐鍵稽核**（原 B4）：逐鍵記用途、標過時/未用鍵 → 報告。
-- [ ] **T02-3 依賴稽核**（原 B5）：實際 import vs README pip 清單，缺漏/未用/版本釘選 → 報告。
-- [ ] **T02-4 pytest 基礎架構**（原 B6）：conftest/test 目錄/一個 trivial 測試；順手處理 test_joystick.py import 期 exit() 炸收集（D-1）。
-- [ ] **T02-5 韌體 pupper_recoil 盤點+sweep**（原 B7，純讀）：指令集 inventory + smell sweep → 報告（放 sim docs）。
-- [ ] **T02-6 工作區根 README**（原 B8）：根目錄寫 README 說明三 repo + quickstart（含 conda 啟動、PYTHONUTF8）。
-- [ ] **T02-7 後座力斷線端到端深查報告**：把「自動計時器孤兒 + switch 無 subscriber + 手動按鈕正常」整條追到底，
-  對照訓練端期望，寫「現況 vs 應然 + 修復方案」報告（純讀寫，先不改碼）。
+- [x] **T02-1 死碼/未使用偵測** ✅ → `reports/AUDIT_2026-06-07.md`。孤兒：tree_demo_server.py、_update_recoil_warning_timer、README 引用已不存在的 observation.py；test/ 混入多支非測試工具腳本(建議移 tools/)。只報告未刪。
+- [x] **T02-2 config.yaml 逐鍵稽核** ✅ → AUDIT 報告。死鍵：被註解的 observation_recipes、warmup_duration=0 疑未用；command_scaling_factors 註解過時(寫3軸實為4值)；auto_inhibit 預設 true。記 REFACTOR C-CFG。
+- [x] **T02-3 依賴稽核** ✅ → AUDIT 報告。scipy 多餘(剔除)、glfw 漏列、mujoco 應升核心、onnxruntime-directml 屬選配。建議建 requirements.txt(排 T03)。
+- [x] **T02-4 pytest 基礎架構** ✅：`pytest.ini`+`conftest.py`+`test/test_smoke.py`；--ignore 隔離 test_joystick/test_teensy_connection(會炸收集，D-1)。全套 8→13 passed。
+- [x] **T02-5 韌體 pupper_recoil 盤點+sweep** ✅ → `reports/INVENTORY_firmware_2026-06-07.md`。指令集/模組/baud921600 齊；氣味：除錯指令未隔離、homing_main 命名。純讀。
+- [x] **T02-6 工作區根 README** ✅：根目錄 `README.md`(三 repo + quickstart + conda/PYTHONUTF8 + 跨 repo 陷阱)。註：根非 git repo，此檔未版控。
+- [x] **T02-7 後座力斷線端到端深查報告** ✅ → `reports/INVESTIGATION_recoil_wiring_2026-06-07.md`。確認三路徑兩斷(timer 孤兒+switch 無 subscriber)，僅手動按鈕活；含修復方案。
 
 授權的程式碼變更（**獨立分支 + 測試，不併 main**）：
-- [ ] **T02-8 後座力接線修復**：自動計時器接回主迴圈 + switch 事件接 subscriber + 加測試。**前置：先完成 T02-7 報告再動手。**
-- [ ] **T02-9 移除 NanoOwl 影像伺服器**：刪主入口 `Popen`、`tree_demo_server.py`、全域 `nanoowl_process`（已授權刪除）。
+- [x] **T02-8 後座力接線修復** ✅（分支 `fix/recoil-wiring`，commit 8961fa7，**待 review**）：timer 接回 run loop + state.frw_auto_inhibit runtime 旗標 + switch subscriber + 5 測試。全套 13 passed。⚠️ config 預設 auto_inhibit 是否改 false 待 Harrison 決定。
+- [x] **T02-9 移除 NanoOwl 影像伺服器** ✅（分支 `chore/remove-nanoowl`，commit ce10ff5，**待 review**）：刪 Popen/tree_demo_server.py/nanoowl_process/subprocess import；main_nicegui 匯入 OK、8 passed。
 
 未納入本批（待決/較重）：
 - terrain_cache 久跑實測佐證（較重、長跑佔資源）；重構新計畫草稿（待 T02 稽核完一起定，見 REFACTOR_DECISIONS「待續」）。
+
+**T02 收尾（2026-06-07）**：全 9 項完成。安全項(報告+pytest+根README)已併 main；兩個程式碼變更在分支 `fix/recoil-wiring`、`chore/remove-nanoowl` **待 Harrison review**。皆本機 commit、未 push。
 
 ## 已完成 / 已封存
 （完成的任務移到這裡保留紀錄）
