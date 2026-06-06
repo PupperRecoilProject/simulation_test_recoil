@@ -71,7 +71,7 @@
 >   分支類若測試 3 次內修不綠 → `git restore` 該任務變更、標 `[BLOCKED]`、繼續下一個。
 > - 每改一檔跑 `PYTHONUTF8=1 python -m pytest -q`（須維持綠）+ 受影響入口 `ast.parse`/import smoke。
 > - 新發現的將就設計記 `REFACTOR_SCOPE.md`。
-- [ ] **T04-1 建 requirements.txt**（main，加檔最安全）：依 T02-3 稽核——剔 scipy、補 glfw、列 pytest/Pillow/psutil(視用到否)；**版本精確釘 `==`**，用 `pupper-sim` env 實際版本。不改任何程式碼。
+- [x] **T04-1 建 requirements.txt** ✅（main，commit `d596da4`，已 push）：剔 scipy、補 glfw、版本依 pupper-sim env 精確釘 `==`（numpy2.4.6/mujoco3.9/onnxruntime1.26/nicegui3.12.1/pygame2.6.1/pyserial3.5/Pillow12.2/glfw2.10/PyYAML6.0.3 + pytest9.0.3）；psutil 未列(src 未 import)；onnxruntime-directml 列選配註解。13 passed。
 - [ ] **T04-2 萃取版本歷史**：① 先萃取成 `docs/VERSION_HISTORY.md` 時間線（main，加檔）；② 再於分支 `chore/strip-version-comments` **刪除 `【vX.X.X】` 行內註解**（只刪註解、不動程式邏輯），每檔 import smoke + 全套 pytest 綠才提交。fallback：某檔刪後測試掛 → restore 該檔、記 BLOCKED。
 - [ ] **T04-3 print→log 轉換**（分支 `chore/print-to-log`）：**只轉 `src/` 運行碼**（保留 `tools/` CLI 腳本的 print），把 `print(...)` 機械式換成對應 log 等級（依 CLAUDE.md 語義：狀態變更=info、診斷=debug）。逐檔轉、逐檔測；全套 pytest 綠才提交。fallback：某檔轉後測試掛且修不動 → restore 該檔、記 BLOCKED、續其他檔。
 - [ ] **T04-4 死碼清理**（分支 `chore/deadcode-tidy`）：`test/` 內非測試腳本移 `tools/`、修 README 失效引用；**高信度死碼（AUDIT 已點名的孤兒、無呼叫者）在分支上刪除 + 跑測試**。⚠️ 信度不足/可能被動態引用的 → 只列清單不刪、記 BLOCKED。每步全套 pytest 須綠。
