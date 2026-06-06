@@ -1,0 +1,26 @@
+# simulation_test_recoil — 上位機（高階控制軟體）相依套件
+#
+# 版本依 conda env `pupper-sim`（python 3.11）實際安裝版本精確釘住，
+# 確保重建環境可重現。安裝：  PYTHONUTF8=1 pip install -r requirements.txt
+#
+# 稽核依據：docs/reports/AUDIT_2026-06-07.md（T02-3 依賴稽核）
+#   - scipy 已剔除：全 repo 無任何 import。
+#   - glfw 補列：src/ 直接 import，舊清單漏列。
+#   - psutil 未列：src/ 未 import（量測工具改用標準庫 tracemalloc）。
+
+# --- 執行期（src/ 直接 import）---
+numpy==2.4.6
+mujoco==3.9.0
+onnxruntime==1.26.0
+nicegui==3.12.1
+pygame==2.6.1
+pyserial==3.5
+Pillow==12.2.0
+glfw==2.10.0
+PyYAML==6.0.3
+
+# --- 測試 ---
+pytest==9.0.3
+
+# --- 選配（GPU 推論，依硬體自行安裝，與 onnxruntime 擇一）---
+# onnxruntime-directml
